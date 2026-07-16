@@ -1,0 +1,51 @@
+[workspace]
+members = [
+    "crates/codingest",
+    "crates/codingest-cli",
+    "crates/codingest-mcp",
+    "crates/codingest-py",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/kkollsga/codingest"
+
+[workspace.dependencies]
+# kglite engine + MCP server — imported as cargo libraries. Local dev uses
+# the sister-checkout path dep; `cargo publish` / a checkout WITHOUT `../KGLite`
+# strips the path and falls back to the version requirement (crates.io).
+#
+# VERSION STORY (read before bumping). codingest needs 0.14-only engine APIs
+# (`kglite::api::code_entities`, `kglite_mcp_server::run_with_code_tree_hooks`)
+# that are NOT in any 0.13.x crates.io release — they live only in the
+# unreleased 0.14 tree. The fallback below is deliberately kept at `0.13`, NOT
+# `0.14`, for ONE reason: the local sister checkout is still versioned 0.13.4
+# (it carries the 0.14 APIs on a pre-release branch but hasn't bumped its
+# version), and a path dep's version requirement must be satisfied by the path
+# crate — pinning `0.14` makes `cargo build` fail locally with
+# "candidate versions found which didn't match: 0.13.4". So `0.13` is the only
+# value that builds today. CI against crates.io therefore cannot pass until
+# kglite 0.14.0 publishes (0.13.4 lacks the symbols) — the CI workflow is gated
+# on the `CODINGEST_KGLITE_READY` repo variable for exactly this reason.
+#
+# AT KGLITE 0.14.0 RELEASE (one flip): bump both `version = "0.13"` below to
+# `"0.14"` and set the repo variable `CODINGEST_KGLITE_READY = true`. Then
+# publishing here (crates.io + PyPI) works and CI resolves 0.14 from crates.io.
+kglite = { version = "0.13", path = "../KGLite/crates/kglite", default-features = false }
+kglite-mcp-server = { version = "0.13", path = "../KGLite/crates/kglite-mcp-server", default-features = false }
+
+# Mirror KGLite's release codegen so the standalone builder has
+# performance parity with the in-tree component (see KGLite
+# workspace Cargo.toml).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"

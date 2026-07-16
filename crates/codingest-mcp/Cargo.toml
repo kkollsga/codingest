@@ -1,0 +1,18 @@
+[package]
+name = "codingest-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP server for codingest code graphs — thin frontend over the kglite-mcp-server library (cypher_query / graph_overview / read_code_source / set_root_dir)"
+keywords = ["mcp", "code-graph", "cypher", "kglite", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "codingest-mcp"
+path = "src/main.rs"
+
+[dependencies]
+codingest = { path = "../codingest" }
+kglite-mcp-server = { workspace = true }
+anyhow = "1"

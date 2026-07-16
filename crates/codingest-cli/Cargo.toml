@@ -1,0 +1,23 @@
+[package]
+name = "codingest-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for the standalone codingest builder — build/status a .kgl code graph from a checkout or git revisions"
+keywords = ["cli", "code-graph", "tree-sitter", "cypher", "kglite"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "codingest"
+path = "src/main.rs"
+
+[dependencies]
+codingest = { path = "../codingest" }
+kglite = { workspace = true }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

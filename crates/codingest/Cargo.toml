@@ -1,0 +1,78 @@
+[package]
+name = "codingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "codingest — standalone extraction of KGLite's code-tree component: parse polyglot codebases into kglite knowledge graphs (tree-sitter parsers, call/type/route edges, docs pass, multi-rev merge)"
+keywords = ["knowledge-graph", "code-analysis", "tree-sitter", "cypher", "kglite"]
+categories = ["development-tools", "parser-implementations"]
+
+# Requires the kglite 0.14 engine API (`kglite::api::code_entities`,
+# `run_with_code_tree_hooks`) that is NOT in the 0.13.x crates.io release.
+# See the workspace Cargo.toml dependency note and README for the version
+# story and the CI gate.
+
+[lib]
+name = "codingest"
+doctest = false
+
+# codingest accuracy harness — reports CALLS-resolution stats + node/edge
+# counts for a repo as JSON. Run with
+# `cargo run -p codingest --bin codingest_stats --release -- <path>`.
+[[bin]]
+name = "codingest_stats"
+path = "src/bin/codingest_stats.rs"
+
+# codingest Cypher query/traversal benchmark — builds a repo TWICE with the
+# codingest builder and runs an identical Cypher workload against each build,
+# reporting per-query medians + cross-build query-result parity (determinism).
+# `cargo run -p codingest --bin codingest_bench --release -- <path> [--json]`
+[[bin]]
+name = "codingest_bench"
+path = "src/bin/codingest_bench.rs"
+
+[features]
+# Docs pass — ingests a repo's markdown as `:Doc` nodes and links them to
+# code symbols. Reuses kglite's OKF parser, hence the `kglite/okf` gate.
+# (This is the feature named `okf` inside kglite's in-tree code_tree.)
+# Default ON for parity with the kglite wheel + mcp-server builds.
+default = ["docs"]
+docs = ["kglite/okf"]
+
+[dependencies]
+kglite = { workspace = true }
+
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+regex = "1"
+rayon = "1.10"
+tree-sitter = "0.26.8"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-c = "0.24.1"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-swift = "0.7.2"
+tree-sitter-php = "0.24.2"
+tree-sitter-html = "0.23.2"
+tree-sitter-css = "0.25.0"
+tree-sitter-dart = "0.2.0"
+toml = "1.1.2"
+roxmltree = "0.21.1"
+walkdir = "2.5.0"
+tempfile = "3"
+aho-corasick = "1.1.4"
+memchr = "2"
+rustc-hash = "2"
+indexmap = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+# Golden-parity oracle: SHA-256 of the canonical graph rendering. No network,
+# pure-Rust; already present transitively in the workspace lockfile.
+sha2 = "0.10"

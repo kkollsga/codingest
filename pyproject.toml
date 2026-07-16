@@ -1,0 +1,49 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "codingest"
+description = "Parse polyglot codebases into queryable kglite knowledge graphs — `import codingest; g = codingest.build('.')` returns a real kglite.KnowledgeGraph."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    {name = "Kristian dF Kollsgård", email = "kkollsg@gmail.com"}
+]
+keywords = ["knowledge-graph", "code-analysis", "tree-sitter", "cypher", "kglite", "ast"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Libraries",
+]
+dynamic = ["version"]
+
+# The wheel bundles codingest's native builder (tree-sitter grammars included —
+# nothing else to install) but reuses the kglite engine for the returned graph:
+# `build()` serializes to `.kgl` and hands off to the installed `kglite` wheel's
+# `load()`. So the returned object is a real `kglite.KnowledgeGraph`, and the
+# wheel depends on kglite at runtime. The loader works on both sides of the
+# kglite 0.14 break, hence the >=0.13 floor.
+dependencies = [
+    "kglite>=0.13",
+]
+
+[tool.pytest.ini_options]
+# Only the live codingest-py suite. The dormant `tests/python-legacy/` tree
+# imports the removed `kglite.code_tree` module and must NOT be collected.
+testpaths = ["tests/python"]
+
+[tool.maturin]
+manifest-path = "crates/codingest-py/Cargo.toml"
+# Rename the wheel's extension so the package's `from .codingest import *`
+# finds it (maturin's default would use the crate's `[lib] name`).
+module-name = "codingest.codingest"
+# extension-module is added here (not as a Cargo default) so plain
+# `cargo build` / `cargo test` still link. Default features (abi3 + docs)
+# are kept, so the wheel ships the docs pass. Mirrors kglite-datasets-py.
+features = ["python-extension"]
+python-source = "."

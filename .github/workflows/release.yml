@@ -1,0 +1,276 @@
+name: Release
+
+# Publishes on a version-tag push (e.g. `git tag v0.1.0 && git push --tags`).
+#
+# PREREQUISITE — kglite 0.14.0 must already be on crates.io / PyPI. codingest
+# depends on 0.14-only engine APIs, so both publish paths (the ordered crates.io
+# publish and the wheel build) will fail to resolve/compile against 0.13.x. Do
+# not tag a release until 0.14 is live and the root Cargo.toml fallbacks read
+# `version = "0.14"` (see the CI workflow header + workspace Cargo.toml note).
+#
+# Order: crates.io first (`codingest` → `codingest-cli` → `codingest-mcp`,
+# dependency order), then the wheels + sdist → PyPI, then the GitHub Release.
+# Every publish path is idempotent-safe: the crate job skips a version already on
+# crates.io (HTTP-404 guard), the PyPI publish uses `skip-existing: true`, and
+# softprops updates an existing release — so a re-run after a partial failure is
+# safe.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---- crates.io first, in dependency order ----
+  publish-crate:
+    name: Publish crates to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Python (libpython for the workspace's PyO3 crate)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: publish-crate
+          workspaces: ". -> target"
+
+      - name: Check which crates need publishing
+        id: check
+        run: |
+          # Version is single-sourced in [workspace.package] (root Cargo.toml);
+          # codingest, codingest-cli, codingest-mcp all inherit it.
+          VERSION=$(grep -m 1 '^version' Cargo.toml | cut -d '"' -f 2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # HTTP 404 is the only "publish" signal — 200 means already there,
+          # anything else (403 rate-limit, 5xx) means "can't tell → skip
+          # safely". A contact-email User-Agent is required by crates.io policy.
+          UA="codingest-ci/0.1.0 (https://github.com/kkollsga/codingest)"
+          for crate in codingest codingest-cli codingest-mcp; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -A "$UA" "https://crates.io/api/v1/crates/$crate/$VERSION")
+            key=$(echo "$crate" | tr '-' '_')
+            if [ "$STATUS" = "404" ]; then
+              echo "$crate $VERSION not on crates.io (HTTP 404) — will publish"
+              echo "publish_$key=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$crate $VERSION already on crates.io or unverifiable (HTTP $STATUS) — skipping"
+              echo "publish_$key=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      # 1. codingest (the builder library — codingest-cli/mcp depend on it).
+      - name: Publish codingest
+        if: steps.check.outputs.publish_codingest == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p codingest --locked
+
+      # 2. Let crates.io's sparse index surface the new codingest version so the
+      # downstream `cargo publish -p codingest-cli/-mcp` can resolve it. Fixed
+      # sleep + a `cargo search` readiness probe (polling the JSON API hits the
+      # 403 rate limit; `cargo search` uses the same resolver the next publish
+      # will). Only needed when a dependent is also publishing this run.
+      - name: Wait for crates.io index propagation (codingest)
+        if: steps.check.outputs.publish_codingest == 'true' && (steps.check.outputs.publish_codingest_cli == 'true' || steps.check.outputs.publish_codingest_mcp == 'true')
+        run: |
+          VERSION="${{ steps.check.outputs.version }}"
+          echo "Sleeping 90s for crates.io index propagation of codingest $VERSION..."
+          sleep 90
+          for i in $(seq 1 5); do
+            if cargo search codingest --limit 1 2>&1 | grep -E "^codingest = \"$VERSION\""; then
+              echo "codingest $VERSION visible to cargo resolver (attempt $i)"; exit 0
+            fi
+            echo "Not yet visible (attempt $i), waiting 30s..."; sleep 30
+          done
+          echo "WARNING: cargo search didn't find codingest $VERSION; proceeding — the"
+          echo "next cargo publish will surface a real error if the index isn't ready."
+
+      # 3. codingest-cli (depends on codingest).
+      - name: Publish codingest-cli
+        if: steps.check.outputs.publish_codingest_cli == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p codingest-cli --locked
+
+      # 4. codingest-mcp (depends on codingest). Cosmetic settling window when
+      # both cli and mcp publish this run (mcp doesn't depend on cli).
+      - name: Wait before publishing codingest-mcp
+        if: steps.check.outputs.publish_codingest_cli == 'true' && steps.check.outputs.publish_codingest_mcp == 'true'
+        run: sleep 60
+      - name: Publish codingest-mcp
+        if: steps.check.outputs.publish_codingest_mcp == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p codingest-mcp --locked
+
+  # ---- then the wheels + sdist (the `codingest` PyPI distribution) ----
+  build-wheels:
+    name: Build wheel - ${{ matrix.os }} - ${{ matrix.target }}
+    needs: [publish-crate]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux (manylinux/musllinux containers via maturin-action).
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: '2014'
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: '2_28'
+          # macOS — native arm64 + cross x86_64 (Apple ships both SDKs).
+          - os: macos-latest
+            target: aarch64
+          - os: macos-latest
+            target: x86_64
+          # Windows.
+          - os: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  build-sdist:
+    name: Build sdist
+    needs: [publish-crate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish-pypi:
+    name: Publish to PyPI + GitHub Release
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Trusted Publishing (OIDC): no API token — the maintainer registers this
+    # repo + workflow as a PyPI publisher, and id-token:write mints the
+    # short-lived credential at publish time. `contents: write` lets the same
+    # job cut the GitHub Release.
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: List artifacts
+        run: ls -la dist
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-runs: a file already on PyPI is skipped, not an error.
+          skip-existing: true
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            echo "has_notes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_notes=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$NOTES" > /tmp/release_notes.md
+          fi
+      - name: Create GitHub Release (with changelog body)
+        if: steps.changelog.outputs.has_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: /tmp/release_notes.md
+      - name: Create GitHub Release (auto-generated notes)
+        if: steps.changelog.outputs.has_notes != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  # ---- best-effort: attach standalone codingest-cli / codingest-mcp binaries ----
+  # Convenience for users who want the CLI / MCP server without `cargo install`
+  # or the wheel. Best-effort: a build hiccup here must not block the crates.io
+  # or PyPI publish, so the job never gates them (it only `needs` publish-crate
+  # to run after the version is confirmed publishable) and tolerates failures.
+  release-binaries:
+    name: Release binaries - ${{ matrix.os }}
+    needs: [publish-crate]
+    continue-on-error: true
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: linux-x86_64
+          - os: macos-latest
+            suffix: macos-aarch64
+          - os: windows-latest
+            suffix: windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-bins-${{ matrix.os }}
+          workspaces: ". -> target"
+      - name: Build codingest-cli + codingest-mcp (release)
+        run: cargo build --release -p codingest-cli -p codingest-mcp
+      - name: Package binaries (unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          tar -C target/release -czf "out/codingest-${GITHUB_REF_NAME}-${{ matrix.suffix }}.tar.gz" codingest codingest-mcp
+      - name: Package binaries (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Compress-Archive -Path target/release/codingest.exe, target/release/codingest-mcp.exe `
+            -DestinationPath "out/codingest-$env:GITHUB_REF_NAME-${{ matrix.suffix }}.zip"
+      - name: Attach to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*

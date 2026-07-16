@@ -1,0 +1,48 @@
+# Rust build artifacts
+/target/
+
+# Generated graph files (regenerable; heavy). The small .sha256 golden
+# digests under crates/codingest/tests/goldens/ are text, tracked normally.
+**/*.kgl
+**/*.kgl.lock
+
+# Python / maturin build artifacts. `maturin develop` drops the compiled
+# extension (`codingest/codingest.abi3.so`) and bytecode into the source
+# package dir; the wheel builds land in build/ dist/ *.egg-info.
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+/build/
+/dist/
+/wheels/
+*.egg-info/
+
+# Python virtualenvs / test + lint caches
+/.venv/
+/.venv*/
+/venv/
+/.pytest_cache/
+/.ruff_cache/
+/.mypy_cache/
+/.hypothesis/
+/.benchmarks/
+
+# Coverage
+.coverage
+coverage.xml
+
+# Sphinx docs build output
+docs/_build/
+docs/autoapi/
+
+# Claude Code local settings (skills / working config; local state, never
+# committed — mirrors kglite's .gitignore).
+/.claude/
+
+# Local dev working state — never committed (see dev-docs/README.md, inbox/README.md).
+/dev-docs/
+/inbox/
+
+# macOS
+.DS_Store

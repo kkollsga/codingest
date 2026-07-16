@@ -1,0 +1,49 @@
+[package]
+# PyO3 wrapper crate. Built by maturin into the `codingest` wheel
+# (`pip install codingest`). The engine-free builder lives in the sibling
+# `codingest` crate; this crate exposes it to Python (mirrors kglite's
+# polars-style `kglite` core + `kglite-py` wrapper split, and the sibling
+# `kglite-datasets-py` layout).
+name = "codingest-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyO3 wrapper for codingest — `import codingest; g = codingest.build('.')` returning a real kglite.KnowledgeGraph."
+# NOT for crates.io — this crate is the source for the Python wheel
+# (built by maturin → `pip install codingest`). Rust embedders depend on the
+# sibling `codingest` crate directly.
+publish = false
+
+[features]
+# `abi3` (single cdylib for Python 3.10+) is default-on so `cargo build` /
+# `maturin develop` behave normally. `python-extension` toggles pyo3's
+# extension-module feature — off for plain `cargo build` (so the rlib is
+# reusable and the workspace builds without a libpython link surprise), on
+# for the maturin wheel build. Same pattern as kglite-datasets-py.
+default = ["abi3", "docs"]
+python-extension = ["pyo3/extension-module"]
+abi3 = ["pyo3/abi3-py310"]
+# Docs pass (`include_docs=True` → `:Doc` nodes). Default ON for parity with
+# the old kglite wheel + the codingest MCP server; maturin keeps default
+# features, so the wheel ships with docs enabled.
+docs = ["codingest/docs"]
+
+[lib]
+# `name = codingest_py` avoids an rlib filename collision with the core
+# crate's `libcodingest.rlib`. The wheel's .so name is set by
+# `pyproject.toml`'s `[tool.maturin] module-name = "codingest.codingest"`.
+name = "codingest_py"
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+pyo3 = { version = "0.29" }
+# The engine-free builder (parsers, call/type/route edges, rev merge, repo
+# clone, manifest reader). Docs pass gated by this crate's `docs` feature.
+codingest = { path = "../codingest", default-features = false }
+# `.kgl` persistence (`kglite::api::io::save_graph`) for the serialize half of
+# the build-then-load handoff, plus the `DirGraph` type the builder returns.
+kglite = { workspace = true }
+# Temp `.kgl` path for the handoff when the caller passes no `save_to`.
+tempfile = "3"
