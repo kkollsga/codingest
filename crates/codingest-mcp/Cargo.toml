@@ -13,6 +13,6 @@ name = "codingest-mcp"
 path = "src/main.rs"
 
 [dependencies]
-codingest = { path = "../codingest" }
+codingest = { version = "0.1.0", path = "../codingest" }
 kglite-mcp-server = { workspace = true }
 anyhow = "1"

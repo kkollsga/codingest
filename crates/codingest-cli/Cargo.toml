@@ -13,7 +13,7 @@ name = "codingest"
 path = "src/main.rs"
 
 [dependencies]
-codingest = { path = "../codingest" }
+codingest = { version = "0.1.0", path = "../codingest" }
 kglite = { workspace = true }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
