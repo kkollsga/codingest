@@ -34,8 +34,8 @@ repository = "https://github.com/kkollsga/codingest"
 # AT KGLITE 0.14.0 RELEASE (one flip): bump both `version = "0.14"` below to
 # `"0.14"` and set the repo variable `CODINGEST_KGLITE_READY = true`. Then
 # publishing here (crates.io + PyPI) works and CI resolves 0.14 from crates.io.
-kglite = { version = "0.14", path = "../KGLite/crates/kglite", default-features = false }
-kglite-mcp-server = { version = "0.14", path = "../KGLite/crates/kglite-mcp-server", default-features = false }
+kglite = { version = "0.14", default-features = false }
+kglite-mcp-server = { version = "0.14", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

@@ -46,3 +46,4 @@ docs/autoapi/
 
 # macOS
 .DS_Store
+/.cargo/
