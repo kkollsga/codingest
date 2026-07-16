@@ -1,0 +1,10 @@
+# LOCAL DEVELOPMENT ONLY — activate by copying to .cargo/config.toml
+# (gitignored). NOTE: while active, cargo records the patch in Cargo.lock —
+# do NOT commit that lock churn; deactivate + rebuild before committing
+# lock changes.: resolve kglite from the sibling
+# checkout instead of crates.io. Committed manifests are version-only so
+# CI/publish resolve from the registry — a committed path dep breaks every
+# cargo command on runners (no ../KGLite there). Learned 2026-07-16.
+[patch.crates-io]
+kglite = { path = "../KGLite/crates/kglite" }
+kglite-mcp-server = { path = "../KGLite/crates/kglite-mcp-server" }
