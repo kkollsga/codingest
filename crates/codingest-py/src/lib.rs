@@ -230,6 +230,21 @@ pub fn read_manifest<'py>(
     Ok(Some(d))
 }
 
+/// Run the shared `codingest` CLI in-process and block until it exits.
+///
+/// The standalone `codingest-cli` binary and the `codingest` console script
+/// bundled in this wheel both call the same pure-Rust library. `argv` excludes
+/// the program name, which is synthesized here for clap. The Python shim owns
+/// only console-script error formatting; all command behavior remains Rust-side.
+#[pyfunction]
+fn _run_cli(py: Python<'_>, argv: Vec<String>) -> PyResult<()> {
+    let mut full = Vec::with_capacity(argv.len() + 1);
+    full.push("codingest".to_string());
+    full.extend(argv);
+    py.detach(|| codingest_cli::run(full))
+        .map_err(|e| PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 /// The native extension module. Renamed to `codingest.codingest` by maturin's
 /// `module-name`; the package `__init__.py` re-exports from it. The fn itself
 /// is *not* named `codingest` — that would shadow the `codingest` core crate in
@@ -243,5 +258,6 @@ fn codingest_ext(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(repo_tree, m)?)?;
     m.add_function(wrap_pyfunction!(read_manifest, m)?)?;
     m.add_function(wrap_pyfunction!(language_for_path, m)?)?;
+    m.add_function(wrap_pyfunction!(_run_cli, m)?)?;
     Ok(())
 }

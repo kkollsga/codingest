@@ -31,11 +31,11 @@ repository = "https://github.com/kkollsga/codingest"
 # kglite 0.14.0 publishes (0.13.4 lacks the symbols) — the CI workflow is gated
 # on the `CODINGEST_KGLITE_READY` repo variable for exactly this reason.
 #
-# AT KGLITE 0.14.0 RELEASE (one flip): bump both `version = "0.13"` below to
+# AT KGLITE 0.14.0 RELEASE (one flip): bump both `version = "0.14"` below to
 # `"0.14"` and set the repo variable `CODINGEST_KGLITE_READY = true`. Then
 # publishing here (crates.io + PyPI) works and CI resolves 0.14 from crates.io.
-kglite = { version = "0.13", path = "../KGLite/crates/kglite", default-features = false }
-kglite-mcp-server = { version = "0.13", path = "../KGLite/crates/kglite-mcp-server", default-features = false }
+kglite = { version = "0.14", path = "../KGLite/crates/kglite", default-features = false }
+kglite-mcp-server = { version = "0.14", path = "../KGLite/crates/kglite-mcp-server", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

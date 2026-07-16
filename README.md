@@ -37,12 +37,20 @@ its in-tree builder. **These are not in any 0.13.x release.**
 ## Install
 
 ```bash
-pip install codingest          # Python wheel (grammars bundled) + the CLI/MCP via cargo:
-cargo install codingest-cli    # the `codingest` builder CLI
+pip install codingest          # Python wheel (grammars bundled) — ALSO installs the `codingest` CLI
+cargo install codingest-cli    # pure-Rust `codingest` builder CLI (no Python)
 cargo install codingest-mcp    # the code-graph MCP server
 ```
 
-(All three become available once kglite 0.14.0 is published — see
+The Python wheel bundles the `codingest` terminal command (the `codingest-cli`
+Rust library is linked into the wheel's extension), so `pip install codingest`
+alone gives you both `import codingest` and `codingest build`/`status` — the
+`cargo install codingest-cli` route is only needed for a pure-Rust install.
+This makes the pip-only flow `pip install kglite codingest && kglite skill
+install` self-sufficient (the installed code-review skill shells out to
+`codingest build`/`status`).
+
+(All become available once kglite 0.14.0 is published — see
 [Requirements](#requirements--kglite--014).)
 
 ## Quick start
@@ -94,6 +102,11 @@ separate compiled extensions and can't share live Rust objects, so `build()`
 constructs the graph with codingest's native builder, serializes it to a `.kgl`,
 then calls the *installed* `kglite` wheel's `load()` and returns **that** object
 — a genuine `kglite.KnowledgeGraph`, so every downstream kglite API works.
+
+**Bundled CLI.** The same wheel also provides the `codingest` terminal command
+(a `codingest/cli.py` console-script shim forwarding into the linked
+`codingest-cli` library), so `codingest build`/`status` works straight after
+`pip install codingest` — identical semantics to `cargo install codingest-cli`.
 
 ### Rust crate
 

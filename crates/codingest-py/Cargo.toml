@@ -47,3 +47,9 @@ codingest = { path = "../codingest", default-features = false }
 kglite = { workspace = true }
 # Temp `.kgl` path for the handoff when the caller passes no `save_to`.
 tempfile = "3"
+# Shared CLI implementation. The standalone `codingest-cli` package builds the
+# same crate as a libpython-free binary; this wheel calls its Rust library
+# through `_run_cli`, so `pip install codingest` also installs the `codingest`
+# command without a second wheel or a duplicated builder build. Mirrors
+# kglite-py's `kglite-cli` bundling.
+codingest-cli = { path = "../codingest-cli" }

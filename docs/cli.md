@@ -1,12 +1,23 @@
 # CLI
 
-`codingest-cli` installs the `codingest` binary — build a `.kgl` code graph from
-a checkout or from git revision(s), and check whether an existing graph is stale.
-It's a port of KGLite's former `kglite code-tree` subcommand.
+The `codingest` command builds a `.kgl` code graph from a checkout or from git
+revision(s), and checks whether an existing graph is stale. It's a port of
+KGLite's former `kglite code-tree` subcommand.
+
+Two ways to install the exact same command:
 
 ```bash
-cargo install codingest-cli    # provides the `codingest` binary
+pip install codingest           # the Python wheel bundles the `codingest` command
+# or
+cargo install codingest-cli     # pure-Rust binary, no Python
 ```
+
+The wheel links the `codingest-cli` Rust library into its extension and exposes
+it through a console-script shim, so `pip install codingest` gives you the same
+`codingest build`/`status` command as `cargo install codingest-cli` — no
+separate install. This makes the pip-only flow
+`pip install kglite codingest && kglite skill install` self-sufficient (the
+installed code-review skill shells out to `codingest build`/`status`).
 
 (Requires kglite 0.14.0 on crates.io — see [the home page](index.md).)
 

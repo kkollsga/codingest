@@ -48,7 +48,15 @@ component, extracted so the kglite engine can ship without tree-sitter grammars.
   `kglite.KnowledgeGraph` via a `.kgl`-bytes handoff (build native → serialize →
   the installed `kglite` wheel's `load()`), so every downstream kglite API works.
   Ships type stubs (`codingest/__init__.pyi`) and the `tests/python` acceptance
-  suite.
+  suite. The wheel also **bundles the `codingest` terminal command** — the
+  `codingest-cli` Rust library is linked into the wheel's extension and a thin
+  `codingest/cli.py` shim (`[project.scripts] codingest = "codingest.cli:main"`)
+  forwards `sys.argv[1:]` into it via `codingest._run_cli`. So `pip install
+  codingest` provides the same `codingest build`/`status` command as `cargo
+  install codingest-cli`, with no second wheel or duplicated builder build;
+  cargo remains the pure-Rust route. This makes the pip-only workflow
+  `pip install kglite codingest && kglite skill install` self-sufficient (the
+  installed code-review skill shells out to `codingest build`/`status`).
 
 ### Parity & provenance
 - Full feature- and performance-parity with the (now-removed) in-tree
