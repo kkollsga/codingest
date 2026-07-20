@@ -142,7 +142,10 @@ pub fn build_file_import_edges(
     files: &[FileInfo],
     module_to_file: &HashMap<String, String>,
 ) -> Vec<FileImportEdge> {
-    let mut counts: HashMap<(String, String), i64> = HashMap::new();
+    // The rows are fed directly to `add_connections`, so their order becomes
+    // part of the persisted graph topology. Keep aggregation key-sorted to
+    // make independently-built `.kgl` files byte-identical.
+    let mut counts: BTreeMap<(String, String), i64> = BTreeMap::new();
     for f in files {
         let sep = get_separator(&f.language);
         for use_path in &f.imports {
@@ -304,7 +307,8 @@ pub fn build_uses_type_edges(
             // semantic positions; signature is the fallback. If two or more
             // semantic positions fire (e.g. receiver + return on a chaining
             // method), collapse to "both". Pure receiver-only stays "receiver".
-            seen.into_iter()
+            let mut matches: Vec<_> = seen
+                .into_iter()
                 .map(|(pat_id, bits)| {
                     let semantic_count = (bits & POS_PARAM != 0) as u8
                         + (bits & POS_RETURN != 0) as u8
@@ -325,7 +329,11 @@ pub fn build_uses_type_edges(
                     let (qname, target) = &pattern_meta[pat_id as usize];
                     (pat_id, *target, qname.clone(), position)
                 })
-                .collect()
+                .collect();
+            // `seen` is a HashMap. Stable pattern order is required because
+            // these rows are inserted into the graph in this sequence.
+            matches.sort_unstable_by_key(|(pat_id, _, _, _)| *pat_id);
+            matches
         })
         .collect();
 
@@ -722,4 +730,76 @@ pub fn build_ffi_exposes_edges(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+    use crate::models::{ClassInfo, FileInfo, FunctionInfo, ParameterInfo};
+
+    #[test]
+    fn file_import_edges_are_key_sorted() {
+        let source = FileInfo {
+            path: "src/lib.rs".into(),
+            language: "rust".into(),
+            imports: vec!["crate::beta".into(), "crate::alpha".into()],
+            ..FileInfo::default()
+        };
+        let module_to_file = HashMap::from([
+            ("crate::alpha".into(), "src/alpha.rs".into()),
+            ("crate::beta".into(), "src/beta.rs".into()),
+        ]);
+
+        let edges = build_file_import_edges(&[source], &module_to_file);
+        let pairs: Vec<_> = edges
+            .iter()
+            .map(|edge| (edge.source.as_str(), edge.target.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("src/lib.rs", "src/alpha.rs"),
+                ("src/lib.rs", "src/beta.rs"),
+            ]
+        );
+    }
+
+    #[test]
+    fn uses_type_edges_are_pattern_sorted() {
+        let function = FunctionInfo {
+            qualified_name: "crate::combine".into(),
+            parameters: vec![
+                ParameterInfo {
+                    type_annotation: Some("Beta".into()),
+                    ..ParameterInfo::default()
+                },
+                ParameterInfo {
+                    type_annotation: Some("Alpha".into()),
+                    ..ParameterInfo::default()
+                },
+            ],
+            ..FunctionInfo::default()
+        };
+        let classes = vec![
+            ClassInfo {
+                name: "Beta".into(),
+                qualified_name: "crate::beta::Beta".into(),
+                kind: "struct".into(),
+                ..ClassInfo::default()
+            },
+            ClassInfo {
+                name: "Alpha".into(),
+                qualified_name: "crate::alpha::Alpha".into(),
+                kind: "struct".into(),
+                ..ClassInfo::default()
+            },
+        ];
+
+        let edges = build_uses_type_edges(&[function], &classes, &[], &[]);
+        let targets: Vec<_> = edges["Struct"]
+            .iter()
+            .map(|edge| edge.type_name.as_str())
+            .collect();
+        assert_eq!(targets, vec!["crate::alpha::Alpha", "crate::beta::Beta"]);
+    }
 }

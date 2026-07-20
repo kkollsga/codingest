@@ -20,19 +20,13 @@ ship from one workspace: a **CLI**, an **MCP server**, a **Python wheel**, and a
 
 Documentation: **[codingest.readthedocs.io](https://codingest.readthedocs.io)**
 
-## Requirements — kglite ≥ 0.14
+## Requirements — kglite ≥ 0.14.4
 
 codingest builds against 0.14-only engine APIs (`kglite::api::code_entities`,
 `kglite_mcp_server::run_with_code_tree_hooks`) that KGLite added when it removed
-its in-tree builder. **These are not in any 0.13.x release.**
-
-- **Rust / crates.io:** codingest cannot be published, and a checkout without a
-  sibling `../KGLite` cannot build, until **kglite 0.14.0 is on crates.io**.
-  Local development uses a path dependency on the sister checkout (see
-  [Dependency policy](#dependency-policy)).
-- **Python wheel:** `pip install codingest` pulls `kglite>=0.13` for the
-  loader half of the handoff, but the *builder* half needs a kglite that
-  understands 0.14 graphs. Install **`kglite>=0.14`** alongside it.
+its in-tree builder. The 0.14.4 floor also aligns codingest with KGLite's
+current Postcard-only persistence and MCP fixes. Cargo and pip install this
+compatible engine automatically.
 
 ## Install
 
@@ -49,9 +43,6 @@ alone gives you both `import codingest` and `codingest build`/`status` — the
 This makes the pip-only flow `pip install kglite codingest && kglite skill
 install` self-sufficient (the installed code-review skill shells out to
 `codingest build`/`status`).
-
-(All become available once kglite 0.14.0 is published — see
-[Requirements](#requirements--kglite--014).)
 
 ## Quick start
 
@@ -112,8 +103,8 @@ then calls the *installed* `kglite` wheel's `load()` and returns **that** object
 
 ```toml
 [dependencies]
-codingest = "0.1"   # needs kglite 0.14 on crates.io (see Requirements)
-kglite = "0.14"
+codingest = "0.1"
+kglite = "0.14.4"
 ```
 
 ```rust
@@ -156,14 +147,9 @@ goldens only for deliberate builder-behavior changes:
 
 ## Dependency policy
 
-`kglite` and `kglite-mcp-server` are path dependencies on the sister checkout
-`../KGLite` with a `version = "0.13"` crates.io fallback. The fallback is kept
-at `0.13` (not `0.14`) **only** because the local sister checkout is still
-versioned 0.13.4 while carrying the 0.14 APIs — a path dep's version requirement
-must be satisfiable by the path crate, so `0.14` would break the local build
-today. When kglite 0.14.0 ships, the maintainer bumps both fallbacks to `0.14`
-and flips the `CODINGEST_KGLITE_READY` CI variable (see the workspace
-`Cargo.toml` note and `.github/workflows/ci.yml`).
+`kglite` and `kglite-mcp-server` use matching crates.io requirements with a
+0.14.4 minimum and a shared lockfile. This keeps the builder, persistence
+handoff, and embedded MCP server on one compatible engine patch line.
 
 ## Parity with the (now-removed) in-tree component
 

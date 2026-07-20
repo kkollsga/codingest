@@ -1,8 +1,7 @@
 # codingest — CI-equivalent local gate
 #
-# codingest has no CI. `make gate` mirrors the relevant parts of KGLite's
-# CI/lint gate (cargo fmt --check, clippy with -D warnings, workspace build,
-# workspace test) and adds codingest-specific checks:
+# `make gate` mirrors codingest CI (cargo fmt --check, clippy with -D warnings,
+# workspace build, workspace test) and adds codingest-specific checks:
 #   * a determinism reproducer for the DEFINES-edge nondeterminism bug,
 #   * a codingest_bench parity smoke against this workspace's own source, and
 #   * the Python-wheel gate — build the `codingest` wheel via maturin and run

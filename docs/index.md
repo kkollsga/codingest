@@ -12,21 +12,19 @@ this project owns only the code-tree component. It ships four surfaces from one
 workspace: a **CLI**, an **MCP server**, a **Python wheel**, and a **Rust
 crate**.
 
-## Requires kglite ≥ 0.14
+## Requires kglite ≥ 0.14.4
 
 codingest builds against 0.14-only engine APIs (`kglite::api::code_entities`,
 `kglite_mcp_server::run_with_code_tree_hooks`) that KGLite added when it removed
-its in-tree builder. These are **not** in any 0.13.x release, so:
-
-- The Rust crates cannot resolve, and `pip install codingest`'s builder half
-  cannot function, until **kglite 0.14.0** is published.
-- Keep `kglite` installed for the graph engine; codingest adds the builder on
-  top and returns ordinary `kglite.KnowledgeGraph` objects.
+its in-tree builder. The 0.14.4 floor also brings the current persistence and
+MCP fixes. Cargo and pip install this compatible engine automatically;
+codingest adds the builder and returns ordinary `kglite.KnowledgeGraph`
+objects.
 
 ## Install
 
 ```bash
-pip install codingest          # Python wheel (grammars bundled); install kglite>=0.14 too
+pip install codingest          # Python wheel + compatible kglite engine
 cargo install codingest-cli    # the `codingest` builder CLI
 cargo install codingest-mcp    # the code-graph MCP server
 ```

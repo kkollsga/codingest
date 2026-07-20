@@ -358,11 +358,62 @@ pub fn build_type_edges(
         }
     }
 
+    let mut external_traits: Vec<_> = external_traits.into_values().collect();
+    external_traits.sort_unstable_by(|a, b| {
+        a.qualified_name
+            .cmp(&b.qualified_name)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    let mut external_classes: Vec<_> = external_classes.into_values().collect();
+    external_classes.sort_unstable_by(|a, b| {
+        a.qualified_name
+            .cmp(&b.qualified_name)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
     TypeEdgeOutput {
         implements,
         extends,
         has_method,
-        external_traits: external_traits.into_values().collect(),
-        external_classes: external_classes.into_values().collect(),
+        external_traits,
+        external_classes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_nodes_are_qualified_name_sorted() {
+        let relationships = vec![
+            TypeRelationship {
+                source_type: "Demo".into(),
+                target_type: Some("Default".into()),
+                relationship: "implements".into(),
+                ..TypeRelationship::default()
+            },
+            TypeRelationship {
+                source_type: "Demo".into(),
+                target_type: Some("Clone".into()),
+                relationship: "implements".into(),
+                ..TypeRelationship::default()
+            },
+        ];
+        let classes = vec![ClassInfo {
+            name: "Demo".into(),
+            qualified_name: "crate::Demo".into(),
+            kind: "struct".into(),
+            ..ClassInfo::default()
+        }];
+        let mut names = HashMap::from([("Demo".into(), "crate::Demo".into())]);
+
+        let output = build_type_edges(&relationships, &[], &classes, &[], &mut names);
+        let traits: Vec<_> = output
+            .external_traits
+            .iter()
+            .map(|node| node.qualified_name.as_str())
+            .collect();
+        assert_eq!(traits, vec!["Clone", "Default"]);
     }
 }

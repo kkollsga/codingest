@@ -2,11 +2,8 @@ name: Release
 
 # Publishes on a version-tag push (e.g. `git tag v0.1.0 && git push --tags`).
 #
-# PREREQUISITE — kglite 0.14.0 must already be on crates.io / PyPI. codingest
-# depends on 0.14-only engine APIs, so both publish paths (the ordered crates.io
-# publish and the wheel build) will fail to resolve/compile against 0.13.x. Do
-# not tag a release until 0.14 is live and the root Cargo.toml fallbacks read
-# `version = "0.14"` (see the CI workflow header + workspace Cargo.toml note).
+# PREREQUISITE — the matching minimum kglite release in the root Cargo.toml
+# must already be available on crates.io and PyPI before tagging codingest.
 #
 # Order: crates.io first (`codingest` → `codingest-cli` → `codingest-mcp`,
 # dependency order), then the wheels + sdist → PyPI, then the GitHub Release.
@@ -163,6 +160,13 @@ jobs:
         with:
           command: sdist
           args: --out dist
+      - name: Verify sdist license payload
+        shell: bash
+        run: |
+          archive=$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)
+          test -n "$archive"
+          count=$(tar -tzf "$archive" | grep -Ec '/LICENSE$')
+          test "$count" -eq 1
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:

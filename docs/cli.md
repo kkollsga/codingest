@@ -19,8 +19,6 @@ separate install. This makes the pip-only flow
 `pip install kglite codingest && kglite skill install` self-sufficient (the
 installed code-review skill shells out to `codingest build`/`status`).
 
-(Requires kglite 0.14.0 on crates.io — see [the home page](index.md).)
-
 ## `codingest build`
 
 Parse a directory into a graph and write it to a `.kgl`:

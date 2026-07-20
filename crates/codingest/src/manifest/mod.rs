@@ -5,6 +5,7 @@
 //! not yet implemented upstream.
 
 use crate::models::{DependencyInfo, ProjectInfo, SourceRoot};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use toml::Value;
 
@@ -108,7 +109,48 @@ fn read_pyproject(manifest_path: &Path, project_root: &Path) -> Result<ProjectIn
         info.source_roots.extend(supplemental);
     }
 
+    info.dependencies = consolidate_dependencies(std::mem::take(&mut info.dependencies));
+
     Ok(info)
+}
+
+/// Collapse dependency variants that share the graph's logical dependency ID
+/// (`name` or `name::group`). This occurs for PEP 508 environment markers and
+/// for mixed maturin projects that name the same package/crate in both
+/// manifests. Preserve every distinct constraint without emitting duplicate
+/// graph node IDs.
+fn consolidate_dependencies(deps: Vec<DependencyInfo>) -> Vec<DependencyInfo> {
+    let mut by_id: BTreeMap<(String, Option<String>), DependencyInfo> = BTreeMap::new();
+    for dep in deps {
+        let key = (dep.name.clone(), dep.group.clone());
+        match by_id.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(dep);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let current = entry.get_mut();
+                current.version_spec = match (&current.version_spec, &dep.version_spec) {
+                    (Some(left), Some(right)) if left != right => {
+                        let mut variants = left
+                            .split(" || ")
+                            .chain(right.split(" || "))
+                            .map(str::to_string)
+                            .collect::<Vec<_>>();
+                        variants.sort();
+                        variants.dedup();
+                        Some(variants.join(" || "))
+                    }
+                    (None, Some(right)) => Some(right.clone()),
+                    (value, _) => value.clone(),
+                };
+                // The consolidated dependency is dev/optional only when every
+                // occurrence has that narrower classification.
+                current.is_dev &= dep.is_dev;
+                current.is_optional &= dep.is_optional;
+            }
+        }
+    }
+    by_id.into_values().collect()
 }
 
 /// Project name with PEP 621 `[project].name` taking priority, then
@@ -814,5 +856,40 @@ fn parse_cargo_dep(name: &str, spec: &Value, is_dev: bool) -> DependencyInfo {
         is_dev,
         is_optional: false,
         group: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dependency_variants_share_one_graph_id_without_losing_constraints() {
+        let deps = vec![
+            DependencyInfo {
+                name: "pandas".into(),
+                version_spec: Some(">=3; python_version >= '3.11'".into()),
+                is_optional: true,
+                group: Some("dataframe".into()),
+                ..DependencyInfo::default()
+            },
+            DependencyInfo {
+                name: "pandas".into(),
+                version_spec: Some(">=2,<3; python_version < '3.11'".into()),
+                is_optional: true,
+                group: Some("dataframe".into()),
+                ..DependencyInfo::default()
+            },
+        ];
+
+        let merged = consolidate_dependencies(deps);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].name, "pandas");
+        assert_eq!(merged[0].group.as_deref(), Some("dataframe"));
+        assert_eq!(
+            merged[0].version_spec.as_deref(),
+            Some(">=2,<3; python_version < '3.11' || >=3; python_version >= '3.11'")
+        );
+        assert!(merged[0].is_optional);
     }
 }

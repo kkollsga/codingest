@@ -10,6 +10,22 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-20
+
+### Changed
+- Raised the Rust and Python engine floor to KGLite 0.14.4, adopting its
+  Postcard-only persistence stack and current MCP override/context fixes.
+- Enabled the full GitHub Actions test matrix now that the required KGLite
+  release is available from crates.io and PyPI.
+
+### Fixed
+- Stabilized codingest-owned graph insertion order for external type stubs,
+  file-import aggregates, `USES_TYPE` matches, and documentation edge groups.
+- Consolidated marker-specific and mixed-manifest dependency variants by their
+  logical graph ID, preserving every constraint without duplicate nodes/edges.
+- Corrected the Python sdist license payload and added a release check requiring
+  exactly one packaged `LICENSE` file.
+
 ## [0.1.0] - 2026-07-16
 Initial public release. codingest is the standalone home of KGLite's code-tree
 component, extracted so the kglite engine can ship without tree-sitter grammars.

@@ -14,7 +14,7 @@ graphs are ordinary kglite graphs.
 ## Install
 
 ```bash
-pip install codingest          # the builder; install kglite>=0.14 for the engine
+pip install codingest          # the builder + compatible kglite engine
 ```
 
 You keep `kglite` for the graph engine (querying, `.kgl` persistence, the MCP
@@ -31,8 +31,8 @@ graph tools). codingest adds the builder back on top and returns
 | `kglite::api::code_tree::*` (Rust) | the `codingest` crate (`codingest::build_code_tree`, …) |
 
 The **read-side** code-entity helpers stayed in kglite, at
-`kglite::api::code_entities` — codingest depends on them (hence the kglite ≥ 0.14
-requirement).
+`kglite::api::code_entities` — codingest depends on them (and currently
+requires kglite ≥ 0.14.4).
 
 ## Python import changes
 
@@ -57,7 +57,7 @@ from kglite import KnowledgeGraph, load   # unchanged
 
 ```toml
 [dependencies]
-kglite = "0.14"        # the engine (graph build, persistence, code_entities)
+kglite = "0.14.4"      # the engine (graph build, persistence, code_entities)
 codingest = "0.1"      # the builder
 ```
 

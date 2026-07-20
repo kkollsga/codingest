@@ -11,8 +11,6 @@ cargo install codingest-mcp
 codingest-mcp --root-dir /path/to/repo    # stdio MCP server
 ```
 
-(Requires kglite 0.14.0 on crates.io — see [the home page](index.md).)
-
 ## codingest-mcp is the builder; `kglite-mcp-server` alone is not
 
 When KGLite removed its in-tree `code_tree` builder (2026-07-16), the MCP server

@@ -6,7 +6,7 @@ extension — nothing else to install — and every function returns a real
 `kglite.KnowledgeGraph`.
 
 ```bash
-pip install codingest        # also install kglite>=0.14 for the engine
+pip install codingest        # includes a compatible kglite>=0.14.4 engine
 ```
 
 ```python

@@ -40,7 +40,7 @@ use kglite::api::DirGraph;
 use kglite::datatypes::values::{DataFrame, Value};
 use kglite::okf;
 use regex::Regex;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 // Copied verbatim from kglite's `okf::build::column_value`
@@ -104,7 +104,7 @@ const STOP_WORDS: &[&str] = &[
 ];
 
 /// `(source_label, target_label, conn_type)` → `[(source_id, target_id)]`.
-type EdgeGroups = HashMap<(String, String, String), Vec<(String, String)>>;
+type EdgeGroups = BTreeMap<(String, String, String), Vec<(String, String)>>;
 
 /// Markup format of an ingested doc — selects the title / heading / mention /
 /// link extractor.
@@ -633,7 +633,7 @@ fn link_docs_to_code(graph: &mut DirGraph, docs: &[DocEntry]) -> Result<usize, S
     if index.is_empty() {
         return Ok(0);
     }
-    let mut groups: EdgeGroups = HashMap::new();
+    let mut groups: EdgeGroups = BTreeMap::new();
     for d in docs {
         let mut hits: BTreeSet<(String, &'static str)> = BTreeSet::new();
         for c in mention_candidates(d) {
@@ -673,7 +673,7 @@ fn link_docs_to_docs_and_files(graph: &mut DirGraph, docs: &[DocEntry]) -> Resul
     let doc_ids: BTreeSet<&str> = docs.iter().map(|d| d.concept_id.as_str()).collect();
     let file_by_basename = file_basename_index(graph);
 
-    let mut groups: EdgeGroups = HashMap::new();
+    let mut groups: EdgeGroups = BTreeMap::new();
     for d in docs {
         let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
         for target in doc_link_targets(d) {

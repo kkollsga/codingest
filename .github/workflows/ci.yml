@@ -1,28 +1,5 @@
 name: CI
 
-# ─────────────────────────────────────────────────────────────────────────────
-# THE kglite-0.14 GATE (read before wondering why the real jobs are "skipped").
-#
-# codingest builds against 0.14-only engine APIs (`kglite::api::code_entities`,
-# `kglite_mcp_server::run_with_code_tree_hooks`) that are NOT in any 0.13.x
-# crates.io release. A CI checkout has no sibling `../KGLite`, so the kglite
-# path dep falls back to the crates.io version — which today is 0.13.4 and
-# LACKS these symbols. The Rust + Python jobs would therefore fail to compile
-# no matter what we pin (`0.13` resolves but misses symbols; `0.14` doesn't
-# resolve at all yet). Rather than fake green (`continue-on-error` would paint a
-# passing check over a real failure) or ship a permanently-red repo, the
-# resolve/compile jobs are GATED behind a repository variable. Until it's set
-# they are honestly *skipped* — not passed — and the always-on `preflight` job
-# makes the gate state explicit on every run.
-#
-# TO ENABLE CI (one-time, at kglite 0.14.0 release):
-#   1. Bump both `version = "0.13"` fallbacks in the root Cargo.toml to "0.14".
-#   2. In the repo: Settings → Secrets and variables → Actions → Variables →
-#      New repository variable → name `CODINGEST_KGLITE_READY`, value `true`.
-#   3. (Optional cleanup) once 0.14 is stable, delete this gate: drop the
-#      `preflight` job and the `if:` guards below so the real jobs always run.
-# ─────────────────────────────────────────────────────────────────────────────
-
 on:
   push:
     branches: [main]
@@ -33,25 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  preflight:
-    name: Preflight (kglite-0.14 gate status)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Report gate state
-        run: |
-          if [ "${{ vars.CODINGEST_KGLITE_READY }}" = "true" ]; then
-            echo "✅ CODINGEST_KGLITE_READY=true — Rust + Python jobs will run."
-          else
-            echo "⏳ CODINGEST_KGLITE_READY is not 'true' — Rust + Python jobs are"
-            echo "   intentionally SKIPPED until kglite 0.14.0 is on crates.io."
-            echo "   See the header comment in .github/workflows/ci.yml to enable."
-          fi
-
   rust-checks:
     name: Rust checks (${{ matrix.os }})
-    needs: [preflight]
-    if: vars.CODINGEST_KGLITE_READY == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -94,8 +54,6 @@ jobs:
 
   python:
     name: Python (${{ matrix.os }})
-    needs: [preflight]
-    if: vars.CODINGEST_KGLITE_READY == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -121,13 +79,13 @@ jobs:
           workspaces: ". -> target"
 
       - name: Create venv and install build + runtime deps
-        # `kglite>=0.14` is the runtime engine (the `.kgl`-bytes handoff loads
+        # `kglite>=0.14.4,<0.15` is the runtime engine (the `.kgl`-bytes handoff loads
         # the built graph through the installed kglite wheel). maturin builds
         # the codingest extension into the venv.
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install maturin pytest "kglite>=0.14"
+          .venv/bin/python -m pip install maturin pytest "kglite>=0.14.4,<0.15"
 
       - name: Build the codingest extension into the venv (maturin develop)
         run: .venv/bin/maturin develop --release
