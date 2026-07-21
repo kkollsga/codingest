@@ -26,7 +26,7 @@ pub struct FileInfo {
     pub loc: u32,
     /// Language-specific qualified path (e.g. `foo::bar::baz`, `foo.bar.baz`).
     pub module_path: String,
-    /// "rust" | "python" | "typescript" | "javascript" | "go" | "java" | "cpp" | "c" | "csharp"
+    /// Canonical identifier from `parsers::registry::LANGUAGES`.
     pub language: String,
     pub submodule_declarations: Vec<String>,
     pub imports: Vec<String>,

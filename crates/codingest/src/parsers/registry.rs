@@ -1,4 +1,24 @@
 //! Canonical registry for language-level parser metadata.
+//!
+//! # Adding a language
+//!
+//! 1. Add its parser module beside this file, expose the module from
+//!    `parsers/mod.rs`, and implement [`LanguageParser`] with matching
+//!    `language_name()`, `file_extensions()`, and emitted
+//!    [`FileInfo::language`](crate::models::FileInfo::language).
+//! 2. Add one entry to `language_registry!` below: canonical id, extensions,
+//!    both separators, noise names, and parser factory. New languages should
+//!    use the same module/edge separator; legacy differences are preserved only
+//!    for frozen-output compatibility.
+//! 3. Add focused parser/edge tests and a representative parity corpus. Capture
+//!    a new golden only for that additive corpus; never regenerate an existing
+//!    golden to silence an unexplained digest change.
+//!
+//! Three behavior-sensitive seams deliberately remain outside the registry:
+//! `.h` files are rerouted from C to C++ when C++ sources are present in
+//! `builder/mod.rs`; call resolution infers broad language groups from qualified
+//! name separators in `builder/call_edges.rs`; and manifests describe project
+//! languages independently in `manifest/mod.rs`.
 
 use super::{
     cpp, csharp, css, dart, go, html, java, php, python, rust_lang, swift, typescript,
