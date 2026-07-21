@@ -92,7 +92,20 @@ pub fn build_module_contains_file_edges(files: &[FileInfo]) -> Vec<ModuleContain
 /// Module CONTAINS Module edges from file submodule declarations.
 pub fn build_contains_edges(files: &[FileInfo]) -> Vec<ContainsEdge> {
     let mut out = Vec::new();
+    let mut implicit_seen = HashSet::new();
     for f in files {
+        if registry::has_implicit_module_hierarchy(&f.language) {
+            let sep = registry::module_sep(&f.language);
+            let parts: Vec<_> = f.module_path.split(sep).collect();
+            for end in 2..=parts.len() {
+                let parent = parts[..end - 1].join(sep);
+                let child = parts[..end].join(sep);
+                if implicit_seen.insert((parent.clone(), child.clone())) {
+                    out.push(ContainsEdge { parent, child });
+                }
+            }
+        }
+
         let sep = get_separator(&f.language);
         for sub in &f.submodule_declarations {
             out.push(ContainsEdge {
@@ -104,12 +117,112 @@ pub fn build_contains_edges(files: &[FileInfo]) -> Vec<ContainsEdge> {
     out
 }
 
+fn normalize_import_path(base: &str, raw: &str) -> Option<String> {
+    let mut parts: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
+    for part in raw.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            value => parts.push(value),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
+    if !registry::uses_path_imports(&file.language) {
+        return Vec::new();
+    }
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("//")
+        || trimmed.contains("://")
+        || trimmed.to_ascii_lowercase().starts_with("data:")
+    {
+        return Vec::new();
+    }
+
+    let without_suffix = trimmed
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .replace('\\', "/");
+    if without_suffix.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    let root_path = without_suffix.trim_start_matches('/');
+    if !without_suffix.starts_with('/') {
+        let parent = file.path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        if let Some(candidate) = normalize_import_path(parent, root_path) {
+            candidates.push(candidate);
+        }
+    }
+    if let Some(candidate) = normalize_import_path("", root_path) {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+
+    if file.language == "css" {
+        let extensionless: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| {
+                candidate
+                    .rsplit_once('/')
+                    .map_or(candidate.as_str(), |(_, name)| name)
+                    .rsplit_once('.')
+                    .is_none()
+            })
+            .map(|candidate| format!("{candidate}.css"))
+            .collect();
+        candidates.extend(extensionless);
+    }
+    candidates
+}
+
+fn resolve_path_import(
+    file: &FileInfo,
+    raw: &str,
+    file_to_module: &HashMap<&str, &str>,
+) -> Option<(String, String)> {
+    for candidate in path_import_candidates(file, raw) {
+        if let Some(module) = file_to_module.get(candidate.as_str()) {
+            return Some((candidate, (*module).to_string()));
+        }
+    }
+    None
+}
+
 /// File IMPORTS Module edges — resolve each import string against known modules.
 pub fn build_import_edges(files: &[FileInfo], known_modules: &HashSet<String>) -> Vec<ImportEdge> {
     let mut out = Vec::new();
+    let file_to_module: HashMap<&str, &str> = if files
+        .iter()
+        .any(|file| registry::uses_path_imports(&file.language))
+    {
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.module_path.as_str()))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     for f in files {
         let sep = get_separator(&f.language);
         for use_path in &f.imports {
+            if let Some((_, module)) = resolve_path_import(f, use_path, &file_to_module) {
+                out.push(ImportEdge {
+                    file_path: f.path.clone(),
+                    module,
+                });
+                continue;
+            }
             let parts: Vec<&str> = use_path.split(sep).collect();
             for end in (1..=parts.len()).rev() {
                 let candidate = parts[..end].join(sep);
@@ -142,9 +255,26 @@ pub fn build_file_import_edges(
     // part of the persisted graph topology. Keep aggregation key-sorted to
     // make independently-built `.kgl` files byte-identical.
     let mut counts: BTreeMap<(String, String), i64> = BTreeMap::new();
+    let file_to_module: HashMap<&str, &str> = if files
+        .iter()
+        .any(|file| registry::uses_path_imports(&file.language))
+    {
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.module_path.as_str()))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     for f in files {
         let sep = get_separator(&f.language);
         for use_path in &f.imports {
+            if let Some((target_file, _)) = resolve_path_import(f, use_path, &file_to_module) {
+                if target_file != f.path {
+                    *counts.entry((f.path.clone(), target_file)).or_insert(0) += 1;
+                }
+                continue;
+            }
             let parts: Vec<&str> = use_path.split(sep).collect();
             for end in (1..=parts.len()).rev() {
                 let candidate = parts[..end].join(sep);
@@ -732,6 +862,104 @@ pub fn build_ffi_exposes_edges(
 mod determinism_tests {
     use super::*;
     use crate::models::{ClassInfo, FileInfo, FunctionInfo, ParameterInfo};
+
+    fn source_file(path: &str, module: &str, language: &str, imports: &[&str]) -> FileInfo {
+        FileInfo {
+            path: path.into(),
+            module_path: module.into(),
+            language: language.into(),
+            imports: imports.iter().map(|value| (*value).to_string()).collect(),
+            ..FileInfo::default()
+        }
+    }
+
+    #[test]
+    fn implicit_module_hierarchy_uses_parser_module_separator() {
+        let files = vec![
+            source_file("Foo/Bar.php", "Foo\\Bar", "php", &[]),
+            source_file("Foo/Other.php", "Foo\\Bar", "php", &[]),
+            source_file("src/net/client.c", "src/net/client", "c", &[]),
+        ];
+        let pairs: Vec<_> = build_contains_edges(&files)
+            .into_iter()
+            .map(|edge| (edge.parent, edge.child))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("Foo".into(), "Foo\\Bar".into()),
+                ("src".into(), "src/net".into()),
+                ("src/net".into(), "src/net/client".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn path_imports_resolve_relative_root_and_extensionless_css() {
+        let files = vec![
+            source_file(
+                "examples/main.c",
+                "examples/main",
+                "c",
+                &["../include/header.h"],
+            ),
+            source_file("include/header.h", "include/header", "c", &[]),
+            source_file(
+                "index.html",
+                "site.index",
+                "html",
+                &["styles/site.css?rev=1", "https://cdn.example/x.css"],
+            ),
+            source_file("styles/site.css", "site.site", "css", &["theme"]),
+            source_file("styles/theme.css", "site.theme", "css", &[]),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
+        let module_edges = build_import_edges(&files, &known_modules);
+        let module_pairs: Vec<_> = module_edges
+            .iter()
+            .map(|edge| (edge.file_path.as_str(), edge.module.as_str()))
+            .collect();
+        assert_eq!(
+            module_pairs,
+            vec![
+                ("examples/main.c", "include/header"),
+                ("index.html", "site.site"),
+                ("styles/site.css", "site.theme"),
+            ]
+        );
+
+        let module_to_file = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_edges = build_file_import_edges(&files, &module_to_file);
+        let file_pairs: Vec<_> = file_edges
+            .iter()
+            .map(|edge| (edge.source.as_str(), edge.target.as_str()))
+            .collect();
+        assert_eq!(
+            file_pairs,
+            vec![
+                ("examples/main.c", "include/header.h"),
+                ("index.html", "styles/site.css"),
+                ("styles/site.css", "styles/theme.css"),
+            ]
+        );
+    }
+
+    #[test]
+    fn swift_target_import_resolves_as_a_namespace() {
+        let files = vec![source_file(
+            "Sources/Helpers/Test.swift",
+            "Helpers.Test",
+            "swift",
+            &["ArgumentParser"],
+        )];
+        let known_modules = HashSet::from(["ArgumentParser".to_string()]);
+        let edges = build_import_edges(&files, &known_modules);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].module, "ArgumentParser");
+    }
 
     #[test]
     fn file_import_edges_are_key_sorted() {

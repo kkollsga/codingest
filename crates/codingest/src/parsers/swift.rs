@@ -451,6 +451,32 @@ impl SwiftParser {
     }
 }
 
+fn swift_module_path(filepath: &Path, src_root: &Path) -> String {
+    let rel = filepath.strip_prefix(src_root).unwrap_or(filepath);
+    let components: Vec<_> = rel
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    let root_is_swiftpm = src_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "Sources" | "Tests"));
+    let target = if root_is_swiftpm {
+        components.first().copied()
+    } else {
+        components
+            .iter()
+            .position(|component| matches!(*component, "Sources" | "Tests"))
+            .and_then(|index| components.get(index + 1).copied())
+    };
+    let stem = filepath.file_stem().and_then(|stem| stem.to_str());
+
+    match (target, stem) {
+        (Some(target), Some(stem)) => format!("{target}.{stem}"),
+        _ => file_to_module_path(filepath, src_root, '.'),
+    }
+}
+
 impl LanguageParser for SwiftParser {
     fn language_name(&self) -> &'static str {
         "swift"
@@ -469,7 +495,7 @@ impl LanguageParser for SwiftParser {
             .unwrap_or(filepath)
             .to_string_lossy()
             .to_string();
-        let module_path = file_to_module_path(filepath, src_root, '.');
+        let module_path = swift_module_path(filepath, src_root);
 
         let Some(tree) = self.parse_tree(source_bytes) else {
             return result;
@@ -511,5 +537,36 @@ impl LanguageParser for SwiftParser {
 
         result.files.push(file_info);
         result
+    }
+}
+
+#[cfg(test)]
+mod module_path_tests {
+    use super::*;
+
+    #[test]
+    fn swiftpm_sources_are_rooted_at_the_target() {
+        assert_eq!(
+            swift_module_path(
+                Path::new("/repo/Sources/ArgumentParser/Parsing/Parser.swift"),
+                Path::new("/repo"),
+            ),
+            "ArgumentParser.Parser"
+        );
+        assert_eq!(
+            swift_module_path(
+                Path::new("/repo/Sources/ArgumentParser/Parser.swift"),
+                Path::new("/repo/Sources"),
+            ),
+            "ArgumentParser.Parser"
+        );
+    }
+
+    #[test]
+    fn non_swiftpm_layout_keeps_the_legacy_fallback() {
+        assert_eq!(
+            swift_module_path(Path::new("/repo/Parser.swift"), Path::new("/repo")),
+            "repo.Parser"
+        );
     }
 }

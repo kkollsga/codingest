@@ -7,9 +7,9 @@
 //!    `language_name()`, `file_extensions()`, and emitted
 //!    [`FileInfo::language`](crate::models::FileInfo::language).
 //! 2. Add one entry to `language_registry!` below: canonical id, extensions,
-//!    both separators, noise names, and parser factory. New languages should
-//!    use the same module/edge separator; legacy differences are preserved only
-//!    for frozen-output compatibility.
+//!    both separators, noise names, and parser factory. Separators may differ
+//!    when a language uses distinct file-path and namespace grammars (C++ is
+//!    the canonical example).
 //! 3. Add focused parser/edge tests and a representative parity corpus. Capture
 //!    a new golden only for that additive corpus; never regenerate an existing
 //!    golden to silence an unexplained digest change.
@@ -174,14 +174,14 @@ language_registry! {
     },
     "c" => {
         extensions: ["c", "h"],
-        module_sep: "::",
+        module_sep: "/",
         edge_sep: "/",
         noise_names: cpp::C_NOISE_NAMES,
         make_parser: c_parser,
     },
     "cpp" => {
         extensions: ["cpp", "cc", "cxx", "hpp", "hh", "hxx"],
-        module_sep: "::",
+        module_sep: "/",
         edge_sep: "::",
         noise_names: cpp::CPP_NOISE_NAMES,
         make_parser: cpp_parser,
@@ -189,13 +189,13 @@ language_registry! {
     "swift" => {
         extensions: ["swift"],
         module_sep: ".",
-        edge_sep: "/",
+        edge_sep: ".",
         noise_names: swift::SWIFT_NOISE_NAMES,
         make_parser: swift_parser,
     },
     "php" => {
         extensions: ["php"],
-        module_sep: ".",
+        module_sep: "\\",
         edge_sep: "\\",
         noise_names: php::PHP_NOISE_NAMES,
         make_parser: php_parser,
@@ -203,14 +203,14 @@ language_registry! {
     "html" => {
         extensions: ["html", "htm"],
         module_sep: ".",
-        edge_sep: "/",
+        edge_sep: ".",
         noise_names: &[],
         make_parser: html_parser,
     },
     "css" => {
         extensions: ["css"],
         module_sep: ".",
-        edge_sep: "/",
+        edge_sep: ".",
         noise_names: &[],
         make_parser: css_parser,
     },
@@ -244,6 +244,14 @@ pub fn module_sep(language: &str) -> &'static str {
 
 pub fn edge_sep(language: &str) -> &'static str {
     spec(language).map_or("/", |language| language.edge_sep)
+}
+
+pub fn uses_path_imports(language: &str) -> bool {
+    matches!(language, "c" | "cpp" | "html" | "css")
+}
+
+pub fn has_implicit_module_hierarchy(language: &str) -> bool {
+    matches!(language, "c" | "cpp" | "swift" | "php")
 }
 
 #[cfg(test)]
@@ -303,8 +311,8 @@ mod tests {
 
     #[test]
     fn separator_matrix_is_pinned() {
-        // These values preserve the two legacy switches exactly. The six
-        // disagreements (c/php/swift/html/css/unknown) are pinned, not endorsed.
+        // Separators match the representations emitted by each parser. C++ is
+        // intentionally split: file modules are paths, declared namespaces use ::.
         let expected = [
             ("rust", "::", "::"),
             ("python", ".", "."),
@@ -313,12 +321,12 @@ mod tests {
             ("go", "/", "/"),
             ("java", ".", "."),
             ("csharp", ".", "."),
-            ("c", "::", "/"),
-            ("cpp", "::", "::"),
-            ("swift", ".", "/"),
-            ("php", ".", "\\"),
-            ("html", ".", "/"),
-            ("css", ".", "/"),
+            ("c", "/", "/"),
+            ("cpp", "/", "::"),
+            ("swift", ".", "."),
+            ("php", "\\", "\\"),
+            ("html", ".", "."),
+            ("css", ".", "."),
             ("dart", ".", "."),
             ("unknown", ".", "/"),
         ];
@@ -326,6 +334,27 @@ mod tests {
         for (language, expected_module, expected_edge) in expected {
             assert_eq!(module_sep(language), expected_module, "{language}");
             assert_eq!(edge_sep(language), expected_edge, "{language}");
+        }
+    }
+
+    #[test]
+    fn structural_edge_modes_are_pinned() {
+        let expected = [
+            ("c", true, true),
+            ("cpp", true, true),
+            ("swift", false, true),
+            ("php", false, true),
+            ("html", true, false),
+            ("css", true, false),
+            ("rust", false, false),
+        ];
+        for (language, path_imports, hierarchy) in expected {
+            assert_eq!(uses_path_imports(language), path_imports, "{language}");
+            assert_eq!(
+                has_implicit_module_hierarchy(language),
+                hierarchy,
+                "{language}"
+            );
         }
     }
 
