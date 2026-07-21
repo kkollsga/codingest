@@ -5,12 +5,11 @@ Parse polyglot codebases into queryable
 parsers for 14 languages, call / type / inheritance / route edges, an optional
 markdown-docs pass, and multi-git-revision merged graphs.
 
-codingest is the standalone home of KGLite's former in-tree `code_tree`
-component. The graph engine (storage, the Cypher pipeline, `.kgl` persistence)
-and the MCP protocol server are **imported from kglite as cargo libraries** —
-this project owns only the code-tree component. It ships four surfaces from one
-workspace: a **CLI**, an **MCP server**, a **Python wheel**, and a **Rust
-crate**.
+codingest owns code-graph construction: KGLite's former in-tree `code_tree`
+component, its CLI and Python surfaces, the builder-backed MCP executable, and
+the code-review Agent Skill. KGLite owns the graph engine and reusable
+query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
+reads, and the underlying MCP server.
 
 ## Requires kglite ≥ 0.14.4
 
@@ -27,6 +26,7 @@ objects.
 pip install codingest          # Python wheel + compatible kglite engine
 cargo install codingest-cli    # the `codingest` builder CLI
 cargo install codingest-mcp    # the code-graph MCP server
+codingest skill install        # the code-review Agent Skill
 ```
 
 ## 60-second quickstart

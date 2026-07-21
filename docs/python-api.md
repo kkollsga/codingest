@@ -21,7 +21,7 @@ semantics as `cargo install codingest-cli`) — the `codingest-cli` Rust library
 is linked into the wheel's extension and exposed through a console-script shim.
 So `pip install kglite codingest` provides both the `import codingest` builder
 and the `codingest build`/`status` CLI in one step, and the pip-only flow
-`pip install kglite codingest && kglite skill install` is self-sufficient. See
+`pip install kglite codingest && codingest skill install` is self-sufficient. See
 [the CLI page](cli.md) for the command reference.
 
 ## The `.kgl`-bytes handoff

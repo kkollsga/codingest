@@ -16,8 +16,25 @@ The wheel links the `codingest-cli` Rust library into its extension and exposes
 it through a console-script shim, so `pip install codingest` gives you the same
 `codingest build`/`status` command as `cargo install codingest-cli` — no
 separate install. This makes the pip-only flow
-`pip install kglite codingest && kglite skill install` self-sufficient (the
-installed code-review skill shells out to `codingest build`/`status`).
+`pip install kglite codingest && codingest skill install` self-sufficient.
+
+## `codingest skill`
+
+Codingest owns and distributes the code-review Agent Skill because the skill
+drives Codingest's builder lifecycle. Install it for Codex and Claude Code at
+user scope with:
+
+```bash
+codingest skill install
+```
+
+Use repeated `--host codex` / `--host claude` flags to select hosts, `--project`
+for repository-local installation, and `--dry-run` to preview changes. Use
+`codingest skill uninstall` to remove an installation managed by Codingest.
+
+Installation migrates an old `kglite-code-review` directory only when it bears
+KGLite's managed marker. Codingest refuses to replace its own unmanaged target
+and leaves unmanaged legacy directories untouched.
 
 ## `codingest build`
 
@@ -53,7 +70,7 @@ Report whether a previously-built graph is stale relative to the current tree
 (so a wrapper can decide whether to rebuild):
 
 ```bash
-codingest status /path/to/repo
+codingest status --output /path/to/repo/.kglite/code-review.kgl
 ```
 
 ## Querying the result

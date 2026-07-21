@@ -27,6 +27,7 @@ graph tools). codingest adds the builder back on top and returns
 |---|---|
 | `kglite.code_tree.build(...)` / `kglite.build_code_tree(...)` / `repo_tree(...)` | `import codingest`; `codingest.build(...)` / `codingest.repo_tree(...)` — returns a real `kglite.KnowledgeGraph` |
 | `kglite code-tree build/status` (CLI) | `codingest build` / `codingest status` (`cargo install codingest-cli`) |
+| `kglite skill install` (code-review skill) | `codingest skill install`; managed legacy installs migrate automatically |
 | MCP workspace code-graph building (`set_root_dir`, `repo_management`) | Run **codingest-mcp** instead of `kglite-mcp-server` — it embeds the same server and injects the builder; every graph tool behaves identically |
 | `kglite::api::code_tree::*` (Rust) | the `codingest` crate (`codingest::build_code_tree`, …) |
 

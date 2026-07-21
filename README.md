@@ -11,12 +11,12 @@ Parse polyglot codebases into queryable
 parsers for 14 languages, call / type / inheritance / route edges, an optional
 markdown-docs pass, and multi-git-revision merged graphs.
 
-codingest is the standalone home of KGLite's former in-tree `code_tree`
-component. The graph engine (storage backends, the Cypher pipeline, `.kgl`
-persistence) and the MCP protocol server are **imported from kglite as cargo
-libraries** — this repo owns only the code-tree component itself. Four surfaces
-ship from one workspace: a **CLI**, an **MCP server**, a **Python wheel**, and a
-**Rust crate**.
+codingest owns code-graph construction: the former in-tree `code_tree`
+component, its CLI and Python surfaces, the builder-backed MCP executable, and
+the code-review Agent Skill. KGLite remains the graph engine: storage, Cypher,
+`.kgl` persistence, code-entity reads, and the reusable MCP query/read server
+are imported as cargo libraries. The boundary is build/integration here;
+graph/query infrastructure there.
 
 Documentation: **[codingest.readthedocs.io](https://codingest.readthedocs.io)**
 
@@ -34,15 +34,18 @@ compatible engine automatically.
 pip install codingest          # Python wheel (grammars bundled) — ALSO installs the `codingest` CLI
 cargo install codingest-cli    # pure-Rust `codingest` builder CLI (no Python)
 cargo install codingest-mcp    # the code-graph MCP server
+codingest skill install        # install the code-review Agent Skill
 ```
 
 The Python wheel bundles the `codingest` terminal command (the `codingest-cli`
 Rust library is linked into the wheel's extension), so `pip install codingest`
 alone gives you both `import codingest` and `codingest build`/`status` — the
 `cargo install codingest-cli` route is only needed for a pure-Rust install.
-This makes the pip-only flow `pip install kglite codingest && kglite skill
-install` self-sufficient (the installed code-review skill shells out to
-`codingest build`/`status`).
+This makes the pip-only flow `pip install kglite codingest && codingest skill
+install` self-sufficient. The skill is owned and installed by Codingest; it
+shells out to `codingest build`/`status` and uses KGLite to inspect and query the
+resulting graph. A managed legacy `kglite-code-review` installation is migrated
+safely; unmanaged skill directories are never replaced or removed.
 
 ## Quick start
 
@@ -57,7 +60,7 @@ codingest build /path/to/repo
 codingest build /path/to/repo --revs v1.0 v2.0
 
 # Check whether an existing graph is stale relative to the tree
-codingest status /path/to/repo
+codingest status --output /path/to/repo/.kglite/code-review.kgl
 ```
 
 Then query or describe the `.kgl` with kglite (`kglite.load(...)`, the `kglite`
@@ -119,7 +122,7 @@ let graph = build_code_tree(dir, /*verbose=*/false, /*include_tests=*/true,
 | Crate | What it is |
 |---|---|
 | `crates/codingest` | The component library (`codingest`): builder, parsers, manifest reader, docs pass, multi-rev merge, cross-language edges. Extracted from the former `KGLite/crates/kglite/src/code_tree/` (removed upstream 2026-07-16) and re-targeted at the public `kglite::api` facade. Ships the `codingest_stats` + `codingest_bench` binaries. |
-| `crates/codingest-cli` | `codingest` binary — `build` a checkout or git revision(s) into a `.kgl` graph, `status` to check staleness. |
+| `crates/codingest-cli` | `codingest` binary — `build` a checkout or git revision(s) into a `.kgl` graph, `status` to check staleness, and `skill` to install Codingest's code-review Agent Skill. |
 | `crates/codingest-mcp` | `codingest-mcp` binary — the full MCP tool surface imported from the `kglite-mcp-server` library, with the codingest builder injected. |
 | `crates/codingest-py` | PyO3 wrapper built by maturin into the `codingest` wheel (`pip install codingest`). Python package source is `codingest/`; `pyproject.toml` drives the maturin build. Not published to crates.io (`publish = false`). |
 

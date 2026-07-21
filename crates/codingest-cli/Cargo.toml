@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CLI for the standalone codingest builder — build/status a .kgl code graph from a checkout or git revisions"
+description = "CLI for Codingest code graphs — build/status .kgl artifacts and install the code-review Agent Skill"
 keywords = ["cli", "code-graph", "tree-sitter", "cypher", "kglite"]
 categories = ["command-line-utilities", "development-tools"]
 

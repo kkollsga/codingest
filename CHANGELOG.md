@@ -13,6 +13,13 @@ ship time — it's the only place the version bumps.
 ### Added
 - Added hand-written yaYUL AGC assembly (`.agc`) parsing for program-scoped
   labels, constants, transfers, references, and `$` includes.
+- Added `codingest skill install|uninstall` for user- or project-scoped Codex
+  and Claude Code installations of Codingest's code-review Agent Skill.
+
+### Changed
+- Moved ownership and distribution of the code-review Agent Skill from KGLite
+  to Codingest. Installation safely migrates KGLite-managed legacy copies while
+  preserving unmanaged directories.
 
 ### Fixed
 - Restored PHP, C/C++, and Swift module hierarchy edges and resolved local
