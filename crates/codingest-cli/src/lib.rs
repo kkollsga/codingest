@@ -10,6 +10,8 @@
 //! cannot drift between the cargo binary and the console script.
 
 mod code_tree_cli;
+#[cfg(test)]
+mod skill_assets;
 
 use std::ffi::OsString;
 
