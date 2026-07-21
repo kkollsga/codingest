@@ -12,6 +12,7 @@ pub mod html;
 pub mod java;
 pub mod php;
 pub mod python;
+pub mod registry;
 pub mod rust_lang;
 pub mod shared;
 pub mod swift;
@@ -22,6 +23,8 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use walkdir::WalkDir;
+
+pub use registry::EXTENSION_MAP;
 
 /// Stack size for the parser worker pool.
 ///
@@ -49,42 +52,10 @@ fn parser_pool() -> &'static rayon::ThreadPool {
     })
 }
 
-/// File extension → language identifier (mirrors registry.py::EXTENSION_MAP).
-pub const EXTENSION_MAP: &[(&str, &str)] = &[
-    ("rs", "rust"),
-    ("py", "python"),
-    ("pyi", "python"),
-    ("ts", "typescript"),
-    ("tsx", "typescript"),
-    ("js", "javascript"),
-    ("jsx", "javascript"),
-    ("mjs", "javascript"),
-    ("go", "go"),
-    ("java", "java"),
-    ("cs", "csharp"),
-    ("c", "c"),
-    ("h", "c"),
-    ("cpp", "cpp"),
-    ("cc", "cpp"),
-    ("cxx", "cpp"),
-    ("hpp", "cpp"),
-    ("hh", "cpp"),
-    ("hxx", "cpp"),
-    ("swift", "swift"),
-    ("php", "php"),
-    ("html", "html"),
-    ("htm", "html"),
-    ("css", "css"),
-    ("dart", "dart"),
-];
-
 /// Look up a language identifier for a file path by extension.
 pub fn language_for_path(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?;
-    EXTENSION_MAP
-        .iter()
-        .find(|(e, _)| *e == ext)
-        .map(|(_, lang)| *lang)
+    registry::language_for_extension(ext)
 }
 
 /// Abstract language parser. One implementor per grammar.
@@ -164,23 +135,7 @@ pub fn detect_languages(src_root: &Path) -> Vec<&'static str> {
 /// Returns `None` if the language is unknown. Individual parsers are
 /// slotted in as modules are ported; unimplemented languages return `None`.
 pub fn get_parser(language: &str) -> Option<Box<dyn LanguageParser + Send + Sync>> {
-    match language {
-        "python" => Some(Box::new(python::PythonParser::new())),
-        "rust" => Some(Box::new(rust_lang::RustParser::new())),
-        "typescript" => Some(Box::new(typescript::JstsParser::typescript())),
-        "javascript" => Some(Box::new(typescript::JstsParser::javascript())),
-        "go" => Some(Box::new(go::GoParser::new())),
-        "java" => Some(Box::new(java::JavaParser::new())),
-        "csharp" => Some(Box::new(csharp::CSharpParser::new())),
-        "c" => Some(Box::new(cpp::CppParser::c())),
-        "cpp" => Some(Box::new(cpp::CppParser::cpp())),
-        "swift" => Some(Box::new(swift::SwiftParser::new())),
-        "php" => Some(Box::new(php::PhpParser::new())),
-        "html" => Some(Box::new(html::HtmlParser::new())),
-        "css" => Some(Box::new(css::CssParser::new())),
-        "dart" => Some(Box::new(dart::DartParser::new())),
-        _ => None,
-    }
+    registry::parser(language)
 }
 
 /// Auto-detect languages under `src_root` and return parser instances for each.
