@@ -14,7 +14,7 @@ use kglite::api::io::save_graph;
 use kglite::api::DirGraph;
 use serde_json::{json, Value};
 
-const METADATA_FORMAT: u64 = 1;
+const METADATA_FORMAT: u64 = 2;
 const DEFAULT_GRAPH: &str = ".kglite/code-review.kgl";
 
 #[derive(Subcommand, Debug)]
@@ -192,6 +192,7 @@ fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -
         .map_err(|e| anyhow::anyhow!("failed to save {}: {e}", plan.output.display()))?;
 
     let fingerprint = source_fingerprint(&plan.source, plan.repo_root.as_deref(), &plan.revisions)?;
+    let (artifact_bytes, artifact_fingerprint) = artifact_fingerprint(&plan.output)?;
     let metadata = json!({
         "format": METADATA_FORMAT,
         "source": &plan.source,
@@ -203,11 +204,12 @@ fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -
         "include_docs": args.include_docs,
         "max_loc_per_file": args.max_loc_per_file,
         "fingerprint": fingerprint,
+        "artifact_bytes": artifact_bytes,
+        "artifact_fingerprint": artifact_fingerprint,
     });
     let metadata_path = metadata_path(&plan.output);
     fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)
         .with_context(|| format!("could not write {}", metadata_path.display()))?;
-    let bytes = fs::metadata(&plan.output)?.len();
     Ok(json!({
         "status": "built",
         "fresh": true,
@@ -216,7 +218,7 @@ fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -
         "source": &plan.source,
         "mode": plan.mode,
         "revisions": metadata["revisions"],
-        "bytes": bytes,
+        "bytes": artifact_bytes,
     }))
 }
 
@@ -261,7 +263,22 @@ fn status(output: &Path) -> Result<Value> {
         .collect();
     let current = source_fingerprint(&source, repo_root.as_deref(), &revisions)?;
     let recorded = metadata["fingerprint"].as_str().unwrap_or("");
-    let fresh = current == recorded;
+    let source_fresh = current == recorded;
+    let (artifact_bytes, artifact_fingerprint) = artifact_fingerprint(&output)?;
+    let recorded_bytes = metadata["artifact_bytes"].as_u64();
+    let recorded_artifact = metadata["artifact_fingerprint"].as_str();
+    let artifact_fresh = recorded_bytes == Some(artifact_bytes)
+        && recorded_artifact == Some(artifact_fingerprint.as_str());
+    let fresh = source_fresh && artifact_fresh;
+    let reason = if !source_fresh {
+        "source changed since the graph was built"
+    } else if recorded_bytes != Some(artifact_bytes) {
+        "graph artifact size changed since it was built"
+    } else if !artifact_fresh {
+        "graph artifact contents changed since it was built"
+    } else {
+        "source and graph artifact fingerprints match"
+    };
     Ok(json!({
         "status": if fresh { "fresh" } else { "stale" },
         "fresh": fresh,
@@ -270,7 +287,7 @@ fn status(output: &Path) -> Result<Value> {
         "source": source,
         "mode": metadata["mode"],
         "revisions": revisions,
-        "reason": if fresh { "source fingerprint matches" } else { "source changed since the graph was built" },
+        "reason": reason,
     }))
 }
 
@@ -385,6 +402,21 @@ fn hash_file(path: &Path, relative: &Path, hash: &mut Fnv64) -> Result<()> {
     Ok(())
 }
 
+fn artifact_fingerprint(path: &Path) -> Result<(u64, String)> {
+    let bytes = fs::metadata(path)?.len();
+    let mut hash = Fnv64::new();
+    let mut file = fs::File::open(path)?;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Ok((bytes, format!("fnv1a64:{:016x}", hash.finish())))
+}
+
 struct Fnv64(u64);
 
 impl Fnv64 {
@@ -459,6 +491,42 @@ mod tests {
         .unwrap();
         assert_eq!(result["fresh"], true);
         assert_eq!(status(&output).unwrap()["fresh"], true);
+        let original = fs::read(&output).unwrap();
+        fs::write(&output, &original[..original.len() / 2]).unwrap();
+        let truncated = status(&output).unwrap();
+        assert_eq!(truncated["fresh"], false);
+        assert!(truncated["reason"].as_str().unwrap().contains("size"));
+        fs::write(&output, &original).unwrap();
+        let mut replaced = original.clone();
+        let midpoint = replaced.len() / 2;
+        replaced[midpoint] ^= 1;
+        fs::write(&output, replaced).unwrap();
+        let changed = status(&output).unwrap();
+        assert_eq!(changed["fresh"], false);
+        assert!(changed["reason"].as_str().unwrap().contains("contents"));
+        fs::write(&output, original).unwrap();
+        let sidecar = metadata_path(&output);
+        let mut metadata: Value = serde_json::from_slice(&fs::read(&sidecar).unwrap()).unwrap();
+        metadata["format"] = Value::from(1);
+        fs::write(&sidecar, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert_eq!(
+            status(&output).unwrap()["reason"],
+            "unsupported metadata format"
+        );
+
+        build(&BuildArgs {
+            source: source.clone(),
+            output: Some(output.clone()),
+            rev: None,
+            revs: vec![],
+            repo_root: None,
+            no_tests: false,
+            include_docs: false,
+            max_loc_per_file: None,
+            verbose: false,
+            format: StatusFormat::Json,
+        })
+        .unwrap();
         fs::write(source.join("demo.rs"), "pub fn changed() {}\n").unwrap();
         assert_eq!(status(&output).unwrap()["fresh"], false);
     }

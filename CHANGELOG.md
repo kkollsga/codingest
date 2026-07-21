@@ -22,6 +22,8 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Rebuilt MCP graphs after Markdown/reStructuredText edits and made CLI status
+  detect truncated or replaced graph artifacts as stale.
 - Accepted manifest paths for revision builds, rejected sources outside an
   explicit repository root, and kept duplicate-node provenance lists aligned.
 - Preserved relative directories in fallback module IDs so nested same-name

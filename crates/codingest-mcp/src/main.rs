@@ -15,6 +15,17 @@
 //! identical to the last in-sync in-tree authority.
 
 use kglite_mcp_server::CodeTreeHooks;
+use std::path::Path;
+
+fn is_graph_source(path: &Path) -> bool {
+    codingest::language_for_path(path).is_some()
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("rst")
+            })
+}
 
 fn main() -> anyhow::Result<()> {
     let hooks = CodeTreeHooks {
@@ -42,8 +53,22 @@ fn main() -> anyhow::Result<()> {
             Ok((graph, revs))
         }),
         // Watch predicate: is a change to this path graph-relevant?
-        is_code_file: Box::new(|p| codingest::language_for_path(p).is_some()),
+        is_code_file: Box::new(is_graph_source),
     };
 
     kglite_mcp_server::run_with_code_tree_hooks(std::env::args_os(), Some(hooks))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_source_predicate_includes_code_and_docs_only() {
+        assert!(is_graph_source(Path::new("src/lib.rs")));
+        assert!(is_graph_source(Path::new("README.md")));
+        assert!(is_graph_source(Path::new("GUIDE.RST")));
+        assert!(!is_graph_source(Path::new("notes.txt")));
+        assert!(!is_graph_source(Path::new("artifact.kgl")));
+    }
 }
