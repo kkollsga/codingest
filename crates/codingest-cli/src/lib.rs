@@ -1,8 +1,8 @@
 //! Shared implementation of the `codingest` CLI.
 //!
 //! `codingest` builds/checks a `.kgl` code graph from a checkout or one or more
-//! git revisions. The `CodeTreeCommand` subcommands (Build / Status) are the
-//! binary's top-level commands.
+//! git revisions and installs Codingest's code-review Agent Skill. The
+//! `CodeTreeCommand` variants are the binary's top-level commands.
 //!
 //! Pure-Rust over the sibling `codingest` builder + `kglite::api::io` (no
 //! libpython link in the standalone binary). The `pip install codingest` wheel
@@ -10,7 +10,7 @@
 //! cannot drift between the cargo binary and the console script.
 
 mod code_tree_cli;
-#[cfg(test)]
+mod skill;
 mod skill_assets;
 
 use std::ffi::OsString;

@@ -23,6 +23,11 @@ pub enum CodeTreeCommand {
     Build(BuildArgs),
     /// Check whether a built graph still matches its recorded source state.
     Status(StatusArgs),
+    /// Install or remove the bundled code-review skill for an agent host.
+    Skill {
+        #[command(subcommand)]
+        command: crate::skill::SkillCommand,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -85,6 +90,7 @@ pub fn run(command: &CodeTreeCommand) -> Result<()> {
             let status = status(&args.output)?;
             print_status(&status, args.format);
         }
+        CodeTreeCommand::Skill { command } => crate::skill::run(command)?,
     }
     Ok(())
 }
