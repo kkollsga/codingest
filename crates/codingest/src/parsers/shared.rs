@@ -9,19 +9,31 @@ use std::sync::OnceLock;
 use tree_sitter::Node;
 
 /// Build a module path from a file's location, joining the source-root
-/// directory name and the file stem with `separator` (`.` for Dart /
-/// Swift / HTML / CSS / JS / similar; `\` for PHP namespace style).
+/// directory name, relative directory components, and file stem with
+/// `separator` (`.` for Dart / Swift / HTML / CSS / JS / similar; `\` for
+/// PHP namespace style).
 ///
 /// Phase A.3 / 0.9.53 code-rot cleanup — consolidated from per-parser
 /// copies in `dart.rs`, `html.rs`, `php.rs`, `swift.rs`, `css.rs`.
 pub(super) fn file_to_module_path(filepath: &Path, src_root: &Path, separator: char) -> String {
     let stem = filepath.file_stem().and_then(|o| o.to_str()).unwrap_or("");
     let pkg = src_root.file_name().and_then(|o| o.to_str()).unwrap_or("");
-    match (pkg.is_empty(), stem.is_empty()) {
-        (true, _) => stem.to_string(),
-        (false, true) => pkg.to_string(),
-        (false, false) => format!("{pkg}{separator}{stem}"),
+    let mut parts = Vec::new();
+    if !pkg.is_empty() {
+        parts.push(pkg.to_string());
     }
+    if let Ok(relative) = filepath.strip_prefix(src_root) {
+        if let Some(parent) = relative.parent() {
+            parts.extend(parent.components().filter_map(|component| {
+                let value = component.as_os_str().to_str()?;
+                (!value.is_empty()).then(|| value.to_string())
+            }));
+        }
+    }
+    if !stem.is_empty() {
+        parts.push(stem.to_string());
+    }
+    parts.join(&separator.to_string())
 }
 
 /// Combine module path / owner prefix / name into a single qualified
@@ -646,5 +658,22 @@ mod tests {
         source.extend_from_slice("é".as_bytes());
         source.push(b'\n');
         assert_eq!(is_generated_or_minified(&source), Some("generated"));
+    }
+
+    #[test]
+    fn fallback_module_paths_keep_relative_directories_and_top_level_shape() {
+        let root = Path::new("/repo/site");
+        assert_eq!(
+            file_to_module_path(Path::new("/repo/site/index.html"), root, '.'),
+            "site.index"
+        );
+        assert_eq!(
+            file_to_module_path(Path::new("/repo/site/pages/index.html"), root, '.'),
+            "site.pages.index"
+        );
+        assert_eq!(
+            file_to_module_path(Path::new("/repo/site/pages/index.php"), root, '\\'),
+            "site\\pages\\index"
+        );
     }
 }

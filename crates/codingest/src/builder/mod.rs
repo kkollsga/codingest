@@ -659,6 +659,7 @@ where
 mod tests {
     use super::*;
     use crate::models::{ClassInfo, FileInfo, FunctionInfo, TypeRelationship};
+    use crate::parsers::get_parser;
     use kglite::api::GraphRead;
     use kglite::datatypes::Value;
 
@@ -822,5 +823,115 @@ mod tests {
             languages.as_ref(),
             &Value::String("python, typescript, css".into())
         );
+    }
+
+    #[test]
+    fn fallback_parsers_keep_nested_same_stem_module_identity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        for dir in ["a", "b"] {
+            std::fs::create_dir_all(project.join(dir)).expect("create fixture dir");
+        }
+        let fixtures = [
+            ("html", "html", "<!doctype html><h1>Title</h1>\n", "."),
+            ("css", "css", ".item { color: red; }\n", "."),
+            ("php", "php", "<?php function run() { return 1; }\n", "\\"),
+            ("swift", "swift", "func run() -> Int { return 1 }\n", "."),
+            ("dart", "dart", "int run() { return 1; }\n", "."),
+        ];
+        for (language, extension, source, separator) in fixtures {
+            for dir in ["a", "b"] {
+                std::fs::write(project.join(format!("{dir}/index.{extension}")), source)
+                    .expect("write fixture");
+            }
+            let result = get_parser(language)
+                .expect("registered parser")
+                .parse_directory(&project, false);
+            let mut modules: Vec<_> = result
+                .files
+                .iter()
+                .filter(|file| file.filename == format!("index.{extension}"))
+                .map(|file| file.module_path.clone())
+                .collect();
+            modules.sort();
+            assert_eq!(
+                modules,
+                [
+                    format!("project{separator}a{separator}index"),
+                    format!("project{separator}b{separator}index"),
+                ],
+                "{language}"
+            );
+
+            let leaf_modules: HashSet<_> = load::build_modules(&result.files)
+                .into_iter()
+                .map(|module| module.qualified_name)
+                .collect();
+            assert!(modules.iter().all(|module| leaf_modules.contains(module)));
+            let contains = other_edges::build_module_contains_file_edges(&result.files);
+            assert!(modules
+                .iter()
+                .all(|module| contains.iter().any(|edge| &edge.module == module)));
+        }
+    }
+
+    #[test]
+    fn nested_html_and_css_imports_resolve_to_sibling_directories() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        for dir in ["a", "b"] {
+            std::fs::create_dir_all(project.join(dir)).expect("create fixture dir");
+            std::fs::write(
+                project.join(format!("{dir}/index.html")),
+                "<!doctype html><link rel=\"stylesheet\" href=\"theme.css\">\n",
+            )
+            .expect("write HTML");
+            std::fs::write(
+                project.join(format!("{dir}/index.css")),
+                "@import \"theme.css\";\n.item { color: red; }\n",
+            )
+            .expect("write CSS index");
+            std::fs::write(
+                project.join(format!("{dir}/theme.css")),
+                ".theme { color: blue; }\n",
+            )
+            .expect("write CSS target");
+        }
+
+        let mut result = get_parser("html")
+            .expect("HTML parser")
+            .parse_directory(&project, false);
+        result.merge(
+            get_parser("css")
+                .expect("CSS parser")
+                .parse_directory(&project, false),
+        );
+        let known_modules: HashSet<_> = result
+            .files
+            .iter()
+            .map(|file| file.module_path.clone())
+            .collect();
+        let module_pairs: HashSet<_> =
+            other_edges::build_import_edges(&result.files, &known_modules)
+                .into_iter()
+                .map(|edge| (edge.file_path, edge.module))
+                .collect();
+        let module_to_file = result
+            .files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_pairs: HashSet<_> =
+            other_edges::build_file_import_edges(&result.files, &module_to_file)
+                .into_iter()
+                .map(|edge| (edge.source, edge.target))
+                .collect();
+
+        for dir in ["a", "b"] {
+            for source in [format!("{dir}/index.html"), format!("{dir}/index.css")] {
+                assert!(module_pairs.contains(&(source.clone(), format!("project.{dir}.theme"))));
+                assert!(file_pairs.contains(&(source, format!("{dir}/theme.css"))));
+            }
+        }
     }
 }

@@ -22,6 +22,8 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Preserved relative directories in fallback module IDs so nested same-name
+  HTML, CSS, PHP, Swift, and Dart files no longer collapse together.
 - Made manifest-driven builds reject malformed manifests, avoid overlapping
   source/test walks, honor test exclusion for broad and fallback scans, and
   report every parsed project language.
