@@ -6,14 +6,14 @@ pub mod other_edges;
 pub mod routes;
 pub mod type_edges;
 
-use crate::models::ParseResult;
+use crate::models::{ParseResult, ProjectInfo, SourceRoot};
 use crate::parsers::{detect_languages, get_parser, language_for_path};
 // builder + load both return `Arc<DirGraph>` (not the pyapi
 // `KnowledgeGraph` wrapper) so this subtree stays engine-only.
 // The pyapi callsite (`code_tree.build()` pyfunction) wraps the
 // result via `KnowledgeGraph::from_arc`.
 use kglite::api::DirGraph;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use walkdir::WalkDir;
@@ -86,15 +86,16 @@ pub fn run_with_options_stats(
             .parent()
             .map(PathBuf::from)
             .unwrap_or_else(|| input.clone());
-        let info = crate::manifest::read_manifest_file(&input, &project_root).ok_or_else(|| {
-            format!(
-                "Not a recognised manifest file: {}",
-                input.file_name().and_then(|o| o.to_str()).unwrap_or(""),
-            )
-        })?;
+        let info =
+            crate::manifest::try_read_manifest_file(&input, &project_root)?.ok_or_else(|| {
+                format!(
+                    "Not a recognised manifest file: {}",
+                    input.file_name().and_then(|o| o.to_str()).unwrap_or(""),
+                )
+            })?;
         (project_root, Some(info))
     } else if input.is_dir() {
-        let info = crate::manifest::read_manifest(&input);
+        let info = crate::manifest::try_read_manifest(&input)?;
         (input.clone(), info)
     } else {
         return Err(format!("Not a file or directory: {}", input.display()));
@@ -121,6 +122,7 @@ pub fn run_with_options_stats(
             if include_tests {
                 roots.extend(info.test_roots.iter().cloned());
             }
+            let roots = collapse_covered_roots(roots);
             if verbose {
                 eprintln!(
                     "Manifest: {} ({})",
@@ -165,6 +167,13 @@ pub fn run_with_options_stats(
         }
     }
 
+    if !include_tests {
+        retain_non_test_entities(&mut combined);
+    }
+    if let Some(info) = &mut project_info {
+        reconcile_project_languages(info, &combined);
+    }
+
     finalize_and_load(
         combined,
         project_info,
@@ -173,6 +182,121 @@ pub fn run_with_options_stats(
         verbose,
         save_to,
     )
+}
+
+/// Remove roots already covered by an ancestor walk. Manifest discovery can
+/// legitimately report both `.` and `tests/`; walking both emits duplicate
+/// entities before graph loading.
+fn collapse_covered_roots(roots: Vec<SourceRoot>) -> Vec<SourceRoot> {
+    let mut kept: Vec<(PathBuf, SourceRoot)> = Vec::new();
+    for root in roots {
+        let path = root
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| root.path.clone());
+        if kept.iter().any(|(ancestor, _)| path.starts_with(ancestor)) {
+            continue;
+        }
+        kept.retain(|(candidate, _)| !candidate.starts_with(&path));
+        kept.push((path, root));
+    }
+    kept.into_iter().map(|(_, root)| root).collect()
+}
+
+/// Enforce `include_tests=false` after parsing so it also applies to broad
+/// manifest roots and the whole-repository fallback, not only declared test
+/// roots.
+fn retain_non_test_entities(result: &mut ParseResult) {
+    let test_paths: HashSet<String> = result
+        .files
+        .iter()
+        .filter(|file| file.is_test)
+        .map(|file| file.path.clone())
+        .collect();
+    if test_paths.is_empty() {
+        return;
+    }
+
+    let removed_types: HashSet<String> = result
+        .classes
+        .iter()
+        .filter(|item| test_paths.contains(&item.file_path))
+        .map(|item| item.qualified_name.clone())
+        .chain(
+            result
+                .interfaces
+                .iter()
+                .filter(|item| test_paths.contains(&item.file_path))
+                .map(|item| item.qualified_name.clone()),
+        )
+        .collect();
+
+    result.files.retain(|item| !item.is_test);
+    result
+        .functions
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .classes
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .enums
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .interfaces
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .attributes
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .constants
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .elements
+        .retain(|item| !test_paths.contains(&item.file_path));
+    result
+        .selectors
+        .retain(|item| !test_paths.contains(&item.file_path));
+
+    let retained_types: HashSet<&str> = result
+        .classes
+        .iter()
+        .map(|item| item.qualified_name.as_str())
+        .chain(
+            result
+                .interfaces
+                .iter()
+                .map(|item| item.qualified_name.as_str()),
+        )
+        .collect();
+    result.type_relationships.retain_mut(|relationship| {
+        relationship
+            .methods
+            .retain(|method| !test_paths.contains(&method.file_path));
+        !removed_types.contains(&relationship.source_type)
+            || retained_types.contains(relationship.source_type.as_str())
+    });
+}
+
+/// Manifest-declared languages are useful intent, but the graph metadata must
+/// also describe every language actually retained in the parsed file set.
+fn reconcile_project_languages(project: &mut ProjectInfo, result: &ParseResult) {
+    let present: BTreeSet<&str> = result
+        .files
+        .iter()
+        .map(|file| file.language.as_str())
+        .filter(|language| !language.is_empty())
+        .collect();
+    let mut known: HashSet<String> = project.languages.iter().cloned().collect();
+    for language in crate::parsers::registry::LANGUAGES {
+        if present.contains(language.id) && known.insert(language.id.to_string()) {
+            project.languages.push(language.id.to_string());
+        }
+    }
+    for language in present {
+        if known.insert(language.to_string()) {
+            project.languages.push(language.to_string());
+        }
+    }
 }
 
 /// Walk `walk_dir` for source files and parse them; resulting File-node
@@ -529,4 +653,174 @@ where
         }
     }
     *items = out;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ClassInfo, FileInfo, FunctionInfo, TypeRelationship};
+    use kglite::api::GraphRead;
+    use kglite::datatypes::Value;
+
+    #[test]
+    fn overlapping_roots_collapse_to_the_covering_ancestor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join("tests")).expect("create tests dir");
+        std::fs::write(
+            project.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\n[tool.setuptools.packages.find]\nwhere = [\".\"]\n",
+        )
+        .expect("write manifest");
+        let info = crate::manifest::try_read_manifest(&project)
+            .expect("read manifest")
+            .expect("manifest exists");
+        assert_eq!(info.source_roots.len(), 1);
+        assert_eq!(info.test_roots.len(), 1);
+
+        let collapsed = collapse_covered_roots(
+            info.source_roots
+                .into_iter()
+                .chain(info.test_roots)
+                .collect(),
+        );
+        assert_eq!(collapsed.len(), 1);
+        assert_eq!(collapsed[0].label.as_deref(), Some("setuptools-find"));
+    }
+
+    #[test]
+    fn test_filter_removes_test_files_and_every_owned_entity() {
+        let source = FileInfo {
+            path: "src/app.py".into(),
+            language: "python".into(),
+            ..FileInfo::default()
+        };
+        let test = FileInfo {
+            path: "tests/test_app.py".into(),
+            language: "python".into(),
+            is_test: true,
+            ..FileInfo::default()
+        };
+        let source_fn = FunctionInfo {
+            qualified_name: "app.run".into(),
+            file_path: source.path.clone(),
+            ..FunctionInfo::default()
+        };
+        let test_fn = FunctionInfo {
+            qualified_name: "test_app.test_run".into(),
+            file_path: test.path.clone(),
+            ..FunctionInfo::default()
+        };
+        let test_class = ClassInfo {
+            qualified_name: "test_app.Case".into(),
+            file_path: test.path.clone(),
+            ..ClassInfo::default()
+        };
+        let mut result = ParseResult {
+            files: vec![source, test],
+            functions: vec![source_fn, test_fn.clone()],
+            classes: vec![test_class],
+            type_relationships: vec![TypeRelationship {
+                source_type: "test_app.Case".into(),
+                relationship: "inherent".into(),
+                methods: vec![test_fn],
+                ..TypeRelationship::default()
+            }],
+            ..ParseResult::default()
+        };
+
+        retain_non_test_entities(&mut result);
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.functions.len(), 1);
+        assert!(result.classes.is_empty());
+        assert!(result.type_relationships.is_empty());
+    }
+
+    #[test]
+    fn fallback_scan_honours_include_tests_false() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join("tests")).expect("create tests dir");
+        std::fs::write(project.join("app.py"), "def run():\n    return 1\n").expect("write source");
+        std::fs::write(
+            project.join("tests/test_app.py"),
+            "def test_run():\n    assert True\n",
+        )
+        .expect("write test");
+
+        let graph = run_with_options(&project, false, false, None, None, false)
+            .expect("build fallback project");
+        let nodes: Vec<(String, String)> = graph
+            .graph
+            .node_indices()
+            .filter_map(|index| graph.graph.node_weight(index))
+            .map(|node| {
+                (
+                    node.node_type_str(&graph.interner).to_string(),
+                    node.id().to_string(),
+                )
+            })
+            .collect();
+        assert!(
+            nodes
+                .iter()
+                .any(|(kind, id)| kind == "File" && id.contains("app.py")),
+            "{nodes:?}"
+        );
+        assert!(nodes.iter().all(|(_, id)| !id.contains("test_app")));
+    }
+
+    #[test]
+    fn malformed_manifest_fails_directory_and_explicit_file_builds() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        std::fs::create_dir(&project).expect("create project");
+        let manifest = project.join("pyproject.toml");
+        std::fs::write(&manifest, "[project\nname = broken").expect("write manifest");
+
+        for input in [&project, &manifest] {
+            let error = match run_with_options(input, false, false, None, None, false) {
+                Ok(_) => panic!("malformed manifest must fail"),
+                Err(error) => error,
+            };
+            assert!(error.contains("pyproject.toml"), "{error}");
+        }
+    }
+
+    #[test]
+    fn project_languages_include_parsed_polyglot_files_in_registry_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(project.join("demo")).expect("create Python package");
+        std::fs::write(
+            project.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\n[tool.setuptools.packages.find]\nwhere = [\".\"]\n",
+        )
+        .expect("write manifest");
+        std::fs::write(
+            project.join("demo/__init__.py"),
+            "def run():\n    return 1\n",
+        )
+        .expect("write Python");
+        std::fs::write(
+            project.join("app.ts"),
+            "export function render() { return 1; }\n",
+        )
+        .expect("write TypeScript");
+        std::fs::write(project.join("style.css"), ".app { color: red; }\n").expect("write CSS");
+
+        let graph = run_with_options(&project, false, false, None, None, false)
+            .expect("build polyglot project");
+        let languages = graph
+            .graph
+            .node_indices()
+            .filter_map(|index| graph.graph.node_weight(index))
+            .find(|node| node.node_type_str(&graph.interner) == "Project")
+            .and_then(|node| node.get_property("languages"))
+            .expect("Project.languages");
+        assert_eq!(
+            languages.as_ref(),
+            &Value::String("python, typescript, css".into())
+        );
+    }
 }

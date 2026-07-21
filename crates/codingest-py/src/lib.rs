@@ -202,7 +202,9 @@ pub fn read_manifest<'py>(
     py: Python<'py>,
     project_root: PathBuf,
 ) -> PyResult<Option<Bound<'py, PyDict>>> {
-    let Some(info) = codingest::manifest::read_manifest(&project_root) else {
+    let Some(info) =
+        codingest::manifest::try_read_manifest(&project_root).map_err(PyRuntimeError::new_err)?
+    else {
         return Ok(None);
     };
     let d = PyDict::new(py);

@@ -10,23 +10,49 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 pub fn read_manifest(project_root: &Path) -> Option<ProjectInfo> {
-    if (project_root.join("pyproject.toml")).is_file() {
-        return read_pyproject(&project_root.join("pyproject.toml"), project_root).ok();
+    try_read_manifest(project_root).ok().flatten()
+}
+
+/// Read the first supported project manifest, distinguishing absence from a
+/// manifest that exists but cannot be read or parsed.
+pub fn try_read_manifest(project_root: &Path) -> Result<Option<ProjectInfo>, String> {
+    let pyproject = project_root.join("pyproject.toml");
+    if pyproject.is_file() {
+        return read_pyproject(&pyproject, project_root)
+            .map(Some)
+            .map_err(|error| format!("failed to read {}: {error}", pyproject.display()));
     }
-    if (project_root.join("Cargo.toml")).is_file() {
-        return read_cargo(&project_root.join("Cargo.toml"), project_root).ok();
+    let cargo = project_root.join("Cargo.toml");
+    if cargo.is_file() {
+        return read_cargo(&cargo, project_root)
+            .map(Some)
+            .map_err(|error| format!("failed to read {}: {error}", cargo.display()));
     }
-    None
+    Ok(None)
 }
 
 /// Read a specific manifest file by path; delegates to the right reader.
 pub fn read_manifest_file(manifest_path: &Path, project_root: &Path) -> Option<ProjectInfo> {
-    let name = manifest_path.file_name()?.to_str()?;
+    try_read_manifest_file(manifest_path, project_root)
+        .ok()
+        .flatten()
+}
+
+/// Read a specific manifest, distinguishing an unsupported filename from a
+/// supported manifest that is malformed or unreadable.
+pub fn try_read_manifest_file(
+    manifest_path: &Path,
+    project_root: &Path,
+) -> Result<Option<ProjectInfo>, String> {
+    let Some(name) = manifest_path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
     match name {
-        "pyproject.toml" => read_pyproject(manifest_path, project_root).ok(),
-        "Cargo.toml" => read_cargo(manifest_path, project_root).ok(),
-        _ => None,
+        "pyproject.toml" => read_pyproject(manifest_path, project_root).map(Some),
+        "Cargo.toml" => read_cargo(manifest_path, project_root).map(Some),
+        _ => Ok(None),
     }
+    .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))
 }
 
 fn load_toml(path: &Path) -> Result<Value, String> {
@@ -891,5 +917,18 @@ mod tests {
             Some(">=2,<3; python_version < '3.11' || >=3; python_version >= '3.11'")
         );
         assert!(merged[0].is_optional);
+    }
+
+    #[test]
+    fn manifest_absence_and_parse_failure_are_distinct() {
+        let root = tempfile::tempdir().expect("tempdir");
+        assert!(try_read_manifest(root.path())
+            .expect("absent manifest is not an error")
+            .is_none());
+
+        let path = root.path().join("pyproject.toml");
+        std::fs::write(&path, "[project\nname = broken").expect("write malformed manifest");
+        let error = try_read_manifest(root.path()).expect_err("malformed manifest must fail");
+        assert!(error.contains("pyproject.toml"), "{error}");
     }
 }

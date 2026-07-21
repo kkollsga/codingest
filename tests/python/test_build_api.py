@@ -137,6 +137,14 @@ def test_read_manifest_none_when_absent(tmp_path: Path) -> None:
     assert codingest.read_manifest(str(tmp_path)) is None
 
 
+def test_read_manifest_rejects_malformed_pyproject(tmp_path: Path) -> None:
+    import pytest
+
+    (tmp_path / "pyproject.toml").write_text("[project\nname = broken")
+    with pytest.raises(RuntimeError, match="pyproject.toml"):
+        codingest.read_manifest(str(tmp_path))
+
+
 def test_language_for_path() -> None:
     assert codingest.language_for_path("src/app.py") == "python"
     assert codingest.language_for_path("main.rs") == "rust"

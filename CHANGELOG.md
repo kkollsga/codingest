@@ -22,6 +22,9 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Made manifest-driven builds reject malformed manifests, avoid overlapping
+  source/test walks, honor test exclusion for broad and fallback scans, and
+  report every parsed project language.
 - Prevented ordinary comment prose from becoming TODO-style annotations,
   preserved multiline annotation locations, and made generated-file detection
   robust when its scan window ends inside a UTF-8 character.
