@@ -286,7 +286,7 @@ impl LanguageParser for AgcParser {
                 .unwrap_or("");
             for (target, _) in &mut function.calls {
                 if let Some(programs) = programs_by_label.get(target) {
-                    if programs.contains(program) && !target.contains('.') {
+                    if programs.contains(program) {
                         *target = format!("{program}.{target}");
                     } else if !programs.contains(program) {
                         *target = format!("{program}/{target}");
@@ -490,8 +490,12 @@ mod tests {
         fs::create_dir_all(&luminary).unwrap();
         let caller = comanche.join("MAIN.agc");
         let foreign = luminary.join("MAIN.agc");
-        fs::write(&caller, "START TC FOREIGN\n\tTC LOCAL\nLOCAL TC Q\n").unwrap();
-        fs::write(&foreign, "FOREIGN TC Q\n").unwrap();
+        fs::write(
+            &caller,
+            "START TC FOREIGN\n\tTC LOCAL\n\tTC FOREIGN.1\n\tTC LOCAL.1\nLOCAL TC Q\nLOCAL.1 TC Q\n",
+        )
+        .unwrap();
+        fs::write(&foreign, "FOREIGN TC Q\nFOREIGN.1 TC Q\n").unwrap();
 
         let parsed = AgcParser::new().parse_files(&[caller, foreign], temp.path());
         let start = parsed
@@ -504,6 +508,8 @@ mod tests {
             vec![
                 ("Comanche055/FOREIGN".into(), 1),
                 ("Comanche055.LOCAL".into(), 2),
+                ("Comanche055/FOREIGN.1".into(), 3),
+                ("Comanche055.LOCAL.1".into(), 4),
             ]
         );
         let local = parsed

@@ -18,6 +18,8 @@ ship time — it's the only place the version bumps.
 - Restored PHP, C/C++, and Swift module hierarchy edges and resolved local
   C/C++ includes, HTML/CSS assets, and SwiftPM target imports against their
   actual project files/modules.
+- Resolved program-local AGC transfers to dotted labels such as `P61.1`
+  without leaking calls across AGC programs.
 - Scoped call-resolution noise names to languages present in the parsed file
   set, so foreign stdlib names no longer hide valid project CALLS edges in
   single-language repositories.

@@ -183,6 +183,10 @@ pub fn build_call_edges(
             .or_default()
             .push(fn_info.qualified_name.as_str());
     }
+    let qualified_lookup: HashSet<&str> = functions
+        .iter()
+        .map(|function| function.qualified_name.as_str())
+        .collect();
 
     // qualified_name → owner short name (last segment of owner prefix).
     // qualified_name → owner prefix (everything before the final separator).
@@ -250,15 +254,23 @@ pub fn build_call_edges(
 
             for (called_name, line) in &fn_info.calls {
                 counts.total += 1;
+                let noise_name = called_name.rsplit('.').next().unwrap_or(called_name);
+                if excluded_names.contains(noise_name) {
+                    counts.excluded += 1;
+                    continue;
+                }
+                if qualified_lookup.contains(called_name.as_str()) {
+                    counts.resolved += 1;
+                    if called_name != caller_qn {
+                        out.push((caller_qn, called_name.as_str(), *line));
+                    }
+                    continue;
+                }
                 let (explicit_hint, method_name) = match called_name.rfind('.') {
                     Some(idx) => (Some(&called_name[..idx]), &called_name[idx + 1..]),
                     None => (None, called_name.as_str()),
                 };
 
-                if excluded_names.contains(method_name) {
-                    counts.excluded += 1;
-                    continue;
-                }
                 let Some(candidates) = name_lookup.get(method_name) else {
                     counts.no_candidate += 1;
                     continue;
@@ -527,6 +539,59 @@ mod stats_tests {
         assert_eq!(stats.resolved_call_sites, 2); // two `bar` sites
         assert_eq!(stats.resolved_edges, 1); // collapsed to one a.foo→a.bar edge
         assert_eq!(edges.len(), 1);
+    }
+
+    #[test]
+    fn exact_qualified_name_precedes_receiver_dot_parsing() {
+        let caller = func(
+            "Comanche055.START",
+            "Comanche055/MAIN.agc",
+            &[("Comanche055.P61.1", 7)],
+        );
+        let mut target = func("Comanche055.P61.1", "Comanche055/P61-P67.agc", &[]);
+        target.name = "P61.1".into();
+        let functions = vec![caller, target];
+        let files = vec![FileInfo {
+            path: "Comanche055/MAIN.agc".into(),
+            language: "agc".into(),
+            ..Default::default()
+        }];
+
+        let (edges, stats) = build_call_edges(
+            &functions,
+            &files,
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+        );
+
+        assert_eq!(stats.total_calls, 1);
+        assert_eq!(stats.resolved_call_sites, 1);
+        assert_eq!(stats.no_candidate, 0);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].caller, "Comanche055.START");
+        assert_eq!(edges[0].callee, "Comanche055.P61.1");
+        assert_eq!(edges[0].call_lines, "7");
+    }
+
+    #[test]
+    fn exact_qualified_name_does_not_bypass_noise_filtering() {
+        let caller = func(
+            "Comanche055.START",
+            "Comanche055/MAIN.agc",
+            &[("Comanche055.WAITLIST", 8)],
+        );
+        let target = func("Comanche055.WAITLIST", "Comanche055/WAITLIST.agc", &[]);
+        let functions = vec![caller, target];
+        let mut noise = std::collections::HashSet::new();
+        noise.insert("WAITLIST");
+
+        let (edges, stats) = build_call_edges(&functions, &[], &noise, 5, &[]);
+
+        assert_eq!(stats.total_calls, 1);
+        assert_eq!(stats.excluded_noise, 1);
+        assert_eq!(stats.resolved_call_sites, 0);
+        assert!(edges.is_empty());
     }
 
     #[test]
