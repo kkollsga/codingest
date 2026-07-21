@@ -10,6 +10,10 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- Added hand-written yaYUL AGC assembly (`.agc`) parsing for program-scoped
+  labels, constants, transfers, references, and `$` includes.
+
 ### Fixed
 - Restored PHP, C/C++, and Swift module hierarchy edges and resolved local
   C/C++ includes, HTML/CSS assets, and SwiftPM target imports against their

@@ -21,7 +21,7 @@
 //! languages independently in `manifest/mod.rs`.
 
 use super::{
-    cpp, csharp, css, dart, go, html, java, php, python, rust_lang, swift, typescript,
+    agc, cpp, csharp, css, dart, go, html, java, php, python, rust_lang, swift, typescript,
     LanguageParser,
 };
 
@@ -89,6 +89,10 @@ fn css_parser() -> Box<dyn LanguageParser + Send + Sync> {
 
 fn dart_parser() -> Box<dyn LanguageParser + Send + Sync> {
     Box::new(dart::DartParser::new())
+}
+
+fn agc_parser() -> Box<dyn LanguageParser + Send + Sync> {
+    Box::new(agc::AgcParser::new())
 }
 
 macro_rules! language_registry {
@@ -221,6 +225,13 @@ language_registry! {
         noise_names: &[],
         make_parser: dart_parser,
     },
+    "agc" => {
+        extensions: ["agc"],
+        module_sep: "/",
+        edge_sep: "/",
+        noise_names: agc::AGC_NOISE_NAMES,
+        make_parser: agc_parser,
+    },
 }
 
 pub fn language_for_extension(extension: &str) -> Option<&'static str> {
@@ -289,6 +300,7 @@ mod tests {
                 ("htm", "html"),
                 ("css", "css"),
                 ("dart", "dart"),
+                ("agc", "agc"),
             ]
         );
     }
@@ -328,6 +340,7 @@ mod tests {
             ("html", ".", "."),
             ("css", ".", "."),
             ("dart", ".", "."),
+            ("agc", "/", "/"),
             ("unknown", ".", "/"),
         ];
 
@@ -359,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_noise_union_matches_legacy_union() {
+    fn registry_noise_union_matches_declared_language_unions() {
         let registry_union: HashSet<&str> = LANGUAGES
             .iter()
             .flat_map(|language| language.noise_names.iter().copied())
@@ -375,6 +388,7 @@ mod tests {
             cpp::CPP_NOISE_NAMES,
             swift::SWIFT_NOISE_NAMES,
             php::PHP_NOISE_NAMES,
+            agc::AGC_NOISE_NAMES,
         ]
         .into_iter()
         .flatten()

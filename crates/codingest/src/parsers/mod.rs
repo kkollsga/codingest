@@ -3,6 +3,7 @@
 //! `LanguageParser` is the dispatch trait — `parse_file` handles a single
 //! source file, `parse_directory` walks the tree in parallel via rayon.
 
+pub mod agc;
 pub mod cpp;
 pub mod csharp;
 pub mod css;
