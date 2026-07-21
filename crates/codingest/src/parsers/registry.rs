@@ -308,4 +308,30 @@ mod tests {
             assert_eq!(edge_sep(language), expected_edge, "{language}");
         }
     }
+
+    #[test]
+    fn registry_noise_union_matches_legacy_union() {
+        let registry_union: HashSet<&str> = LANGUAGES
+            .iter()
+            .flat_map(|language| language.noise_names.iter().copied())
+            .collect();
+
+        let legacy_union: HashSet<&str> = [
+            python::PYTHON_NOISE_NAMES,
+            rust_lang::RUST_NOISE_NAMES,
+            typescript::JSTS_NOISE_NAMES,
+            go::GO_NOISE_NAMES,
+            java::JAVA_NOISE_NAMES,
+            csharp::CSHARP_NOISE_NAMES,
+            cpp::CPP_NOISE_NAMES,
+            swift::SWIFT_NOISE_NAMES,
+            php::PHP_NOISE_NAMES,
+        ]
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+
+        assert_eq!(registry_union, legacy_union);
+    }
 }

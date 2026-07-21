@@ -1788,14 +1788,6 @@ impl LanguageParser for CppParser {
             &["c", "h"]
         }
     }
-    fn noise_names(&self) -> &'static [&'static str] {
-        if self.is_cpp() {
-            CPP_NOISE_NAMES
-        } else {
-            C_NOISE_NAMES
-        }
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

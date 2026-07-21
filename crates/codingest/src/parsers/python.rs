@@ -958,10 +958,6 @@ impl LanguageParser for PythonParser {
         &["py", "pyi"]
     }
 
-    fn noise_names(&self) -> &'static [&'static str] {
-        PYTHON_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

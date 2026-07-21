@@ -806,10 +806,6 @@ impl LanguageParser for JavaParser {
     fn file_extensions(&self) -> &'static [&'static str] {
         &["java"]
     }
-    fn noise_names(&self) -> &'static [&'static str] {
-        JAVA_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

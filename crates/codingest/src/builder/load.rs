@@ -825,36 +825,11 @@ impl<'a> LoadPipeline<'a> {
         let result = self.result;
         let graph = &mut self.graph;
         // Function CALLS Function (5-tier resolution).
-        // Union noise names from every parser that contributed (language detection
-        // by qualified_name separator would be stricter, but the Python impl
-        // merges them all into one frozen set too).
+        // Preserve the legacy all-language noise union. Phase 4 scopes this to
+        // only languages present in the parsed file set.
         let mut noise: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for name in super::super::parsers::python::PYTHON_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::rust_lang::RUST_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::typescript::JSTS_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::go::GO_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::java::JAVA_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::csharp::CSHARP_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::cpp::CPP_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::swift::SWIFT_NOISE_NAMES {
-            noise.insert(*name);
-        }
-        for name in super::super::parsers::php::PHP_NOISE_NAMES {
-            noise.insert(*name);
+        for language in registry::LANGUAGES {
+            noise.extend(language.noise_names.iter().copied());
         }
         let (call_edges, call_stats) = super::call_edges::build_call_edges(
             &result.functions,

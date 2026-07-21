@@ -683,10 +683,6 @@ impl LanguageParser for PhpParser {
     fn file_extensions(&self) -> &'static [&'static str] {
         &["php"]
     }
-    fn noise_names(&self) -> &'static [&'static str] {
-        PHP_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let mut result = ParseResult::new();
         let Ok(source) = std::fs::read_to_string(filepath) else {

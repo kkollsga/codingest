@@ -957,10 +957,6 @@ impl LanguageParser for CSharpParser {
     fn file_extensions(&self) -> &'static [&'static str] {
         &["cs"]
     }
-    fn noise_names(&self) -> &'static [&'static str] {
-        CSHARP_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

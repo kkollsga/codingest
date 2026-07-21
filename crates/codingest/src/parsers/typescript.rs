@@ -1038,10 +1038,6 @@ impl LanguageParser for JstsParser {
         self.extensions
     }
 
-    fn noise_names(&self) -> &'static [&'static str] {
-        JSTS_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

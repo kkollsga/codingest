@@ -1356,10 +1356,6 @@ impl LanguageParser for RustParser {
         &["rs"]
     }
 
-    fn noise_names(&self) -> &'static [&'static str] {
-        RUST_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

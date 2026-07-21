@@ -458,10 +458,6 @@ impl LanguageParser for SwiftParser {
     fn file_extensions(&self) -> &'static [&'static str] {
         &["swift"]
     }
-    fn noise_names(&self) -> &'static [&'static str] {
-        SWIFT_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let mut result = ParseResult::new();
         let Ok(source) = std::fs::read_to_string(filepath) else {

@@ -431,10 +431,6 @@ impl LanguageParser for GoParser {
     fn file_extensions(&self) -> &'static [&'static str] {
         &["go"]
     }
-    fn noise_names(&self) -> &'static [&'static str] {
-        GO_NOISE_NAMES
-    }
-
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult {
         let Ok(source) = std::fs::read(filepath) else {
             return ParseResult::new();

@@ -66,12 +66,6 @@ pub trait LanguageParser: Sync {
     /// File extensions (without leading dot) this parser handles.
     fn file_extensions(&self) -> &'static [&'static str];
 
-    /// Names to exclude from call-edge resolution (common stdlib etc.).
-    /// Overridden by parsers that define language-specific noise sets.
-    fn noise_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
     /// Parse a single source file at `filepath` (absolute) relative to `src_root`.
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult;
 
