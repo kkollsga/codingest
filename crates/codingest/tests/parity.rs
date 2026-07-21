@@ -42,6 +42,7 @@ const CORPORA: &[&str] = &[
     "ts_callback",
     "cross_ts_py",
     "dup_minified_assets",
+    "agc_basic",
 ];
 
 fn corpus_root() -> PathBuf {
