@@ -22,6 +22,9 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Prevented ordinary comment prose from becoming TODO-style annotations,
+  preserved multiline annotation locations, and made generated-file detection
+  robust when its scan window ends inside a UTF-8 character.
 - Restored PHP, C/C++, and Swift module hierarchy edges and resolved local
   C/C++ includes, HTML/CSS assets, and SwiftPM target imports against their
   actual project files/modules.

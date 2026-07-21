@@ -143,9 +143,74 @@ pub fn get_type_parameters(node: Node, source: &[u8], node_type: &str) -> Option
 fn annotation_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)\b(TODO|FIXME|HACK|SAFETY|XXX|BUG|NOTE|WARNING)\b[:\s]*(.*)")
+        Regex::new(r"(?i)^(TODO|FIXME|HACK|SAFETY|XXX|BUG|NOTE|WARNING)\b[:\s]*(.*)")
             .expect("annotation regex compiles")
     })
+}
+
+/// Remove syntax decoration from one physical line of a comment node.
+/// Repeated stripping handles doc/block combinations such as `/**`, `///`,
+/// and the leading `*` on block-comment continuation lines.
+fn comment_line_payload(mut line: &str) -> &str {
+    line = line.trim();
+    loop {
+        let stripped = if let Some(rest) = line.strip_prefix("<!--") {
+            rest
+        } else if let Some(rest) = line.strip_prefix("/*") {
+            rest
+        } else if let Some(rest) = line.strip_prefix("//") {
+            rest
+        } else if let Some(rest) = line.strip_prefix('#') {
+            rest
+        } else if let Some(rest) = line.strip_prefix("--") {
+            rest
+        } else if let Some(rest) = line.strip_prefix(';') {
+            rest
+        } else if let Some(rest) = line.strip_prefix('*') {
+            rest
+        } else if let Some(rest) = line.strip_prefix('/') {
+            rest
+        } else if let Some(rest) = line.strip_prefix('!') {
+            rest
+        } else {
+            break;
+        };
+        line = stripped.trim_start();
+    }
+    line = line.trim_end();
+    for suffix in ["-->", "*/"] {
+        if let Some(rest) = line.strip_suffix(suffix) {
+            line = rest.trim_end();
+            break;
+        }
+    }
+    line
+}
+
+fn annotations_from_comment(text: &str, start_line: u32) -> Vec<Annotation> {
+    let re = annotation_regex();
+    text.lines()
+        .enumerate()
+        .filter_map(|(offset, line)| {
+            let payload = comment_line_payload(line);
+            let caps = re.captures(payload)?;
+            let marker = caps.get(1)?;
+            let marker_text = marker.as_str();
+            let suffix = &payload[marker.end()..];
+            if marker_text != marker_text.to_ascii_uppercase()
+                && !suffix.trim_start().starts_with(':')
+            {
+                return None;
+            }
+            let kind = marker_text.to_ascii_uppercase();
+            let body = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+            Some(Annotation {
+                kind,
+                text: body.chars().take(200).collect(),
+                line: start_line + offset as u32,
+            })
+        })
+        .collect()
 }
 
 /// Default comment node kinds scanned by `extract_comment_annotations`.
@@ -168,7 +233,6 @@ pub fn extract_comment_annotations(
     if !has_annotation_keyword(source) {
         return None;
     }
-    let re = annotation_regex();
     let mut out: Vec<Annotation> = Vec::new();
     let mut stack: Vec<Node> = vec![root];
 
@@ -176,22 +240,10 @@ pub fn extract_comment_annotations(
         let kind = node.kind();
         if comment_types.contains(&kind) {
             let text = node_text(node, source);
-            for caps in re.captures_iter(text) {
-                let kind = caps
-                    .get(1)
-                    .map(|m| m.as_str().to_ascii_uppercase())
-                    .unwrap_or_default();
-                let body = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
-                // Cap at 200 chars — `&body[..200]` would panic when byte
-                // 200 lands inside a multi-byte char (e.g. a `─` rule in a
-                // comment), so truncate on a char boundary.
-                let truncated: String = body.chars().take(200).collect();
-                out.push(Annotation {
-                    kind,
-                    text: truncated,
-                    line: node.start_position().row as u32 + 1,
-                });
-            }
+            out.extend(annotations_from_comment(
+                text,
+                node.start_position().row as u32 + 1,
+            ));
         }
         // Push children in reverse so we pop them in source order.
         let mut cursor = node.walk();
@@ -501,7 +553,11 @@ pub fn is_generated_or_minified(source: &[u8]) -> Option<&'static str> {
     // against lines that look like comments. Codegen banners always live at
     // the very top of the file inside a comment block.
     let head_len = source.len().min(4096);
-    let head_str = std::str::from_utf8(&source[..head_len]).unwrap_or("");
+    let head = &source[..head_len];
+    let head_str = match std::str::from_utf8(head) {
+        Ok(text) => text,
+        Err(error) => std::str::from_utf8(&head[..error.valid_up_to()]).unwrap_or(""),
+    };
     let re = generated_marker_regex();
     let mut non_empty_seen = 0;
     for line in head_str.lines() {
@@ -546,4 +602,49 @@ pub fn is_generated_or_minified(source: &[u8]) -> Option<&'static str> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn annotations_require_a_leading_marker_and_keep_physical_lines() {
+        let comment = "/* This fixes a bug class.\n * TODO: wire the cache\n * warning users is ordinary prose\n * FIXME second item\n */";
+        let annotations = annotations_from_comment(comment, 20);
+        assert_eq!(annotations.len(), 2);
+        assert_eq!(annotations[0].kind, "TODO");
+        assert_eq!(annotations[0].text, "wire the cache");
+        assert_eq!(annotations[0].line, 21);
+        assert_eq!(annotations[1].kind, "FIXME");
+        assert_eq!(annotations[1].text, "second item");
+        assert_eq!(annotations[1].line, 23);
+    }
+
+    #[test]
+    fn annotations_support_common_comment_decorators_in_source_order() {
+        let comment = "/// NOTE: first\n//! SAFETY second\n<!-- HACK: third -->";
+        let annotations = annotations_from_comment(comment, 7);
+        let actual: Vec<(&str, &str, u32)> = annotations
+            .iter()
+            .map(|a| (a.kind.as_str(), a.text.as_str(), a.line))
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                ("NOTE", "first", 7),
+                ("SAFETY", "second", 8),
+                ("HACK", "third", 9),
+            ]
+        );
+    }
+
+    #[test]
+    fn generated_banner_survives_a_split_utf8_boundary() {
+        let mut source = b"// Code generated by fixture; DO NOT EDIT.\n".to_vec();
+        source.resize(4095, b'a');
+        source.extend_from_slice("é".as_bytes());
+        source.push(b'\n');
+        assert_eq!(is_generated_or_minified(&source), Some("generated"));
+    }
 }
