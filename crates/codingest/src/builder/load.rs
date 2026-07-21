@@ -825,12 +825,7 @@ impl<'a> LoadPipeline<'a> {
         let result = self.result;
         let graph = &mut self.graph;
         // Function CALLS Function (5-tier resolution).
-        // Preserve the legacy all-language noise union. Phase 4 scopes this to
-        // only languages present in the parsed file set.
-        let mut noise: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for language in registry::LANGUAGES {
-            noise.extend(language.noise_names.iter().copied());
-        }
+        let noise = super::call_edges::noise_names_for_files(&result.files);
         let (call_edges, call_stats) = super::call_edges::build_call_edges(
             &result.functions,
             &result.files,

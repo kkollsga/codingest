@@ -8,6 +8,7 @@
 //! `Assert.True` to the Assert class actually imported by the caller.
 
 use crate::models::{FileInfo, FunctionInfo, TypeRelationship};
+use crate::parsers::registry;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -57,6 +58,18 @@ struct Counts {
     ambiguous: u64,
     resolved: u64,
     inherited: u64,
+}
+
+/// Names excluded from call resolution for languages present in this build.
+pub(crate) fn noise_names_for_files(files: &[FileInfo]) -> HashSet<&'static str> {
+    let present_languages: HashSet<&str> =
+        files.iter().map(|file| file.language.as_str()).collect();
+
+    registry::LANGUAGES
+        .iter()
+        .filter(|language| present_languages.contains(language.id))
+        .flat_map(|language| language.noise_names.iter().copied())
+        .collect()
 }
 
 /// Terminal segment of a `::` / `.` / `/`-separated type name — the form
@@ -566,5 +579,43 @@ mod stats_tests {
 
         let (_edges, stats) = build_call_edges(&functions, &files, &noise, 5, &[]);
         assert_eq!(stats.resolved_via_inheritance, 0);
+    }
+
+    #[test]
+    fn foreign_noise_does_not_hide_python_calls() {
+        let functions = vec![
+            func("mod.caller", "main.py", &[("find", 3)]),
+            func("mod.find", "main.py", &[]),
+        ];
+        let python_files = vec![FileInfo {
+            path: "main.py".into(),
+            language: "python".into(),
+            ..Default::default()
+        }];
+
+        let python_noise = noise_names_for_files(&python_files);
+        let (edges, stats) = build_call_edges(&functions, &python_files, &python_noise, 5, &[]);
+
+        assert_eq!(stats.total_calls, 1);
+        assert_eq!(stats.excluded_noise, 0);
+        assert_eq!(stats.resolved_call_sites, 1);
+        assert_eq!(stats.resolved_edges, 1);
+        assert_eq!(edges.len(), 1);
+
+        let mut polyglot_files = python_files;
+        polyglot_files.push(FileInfo {
+            path: "native.cpp".into(),
+            language: "cpp".into(),
+            ..Default::default()
+        });
+
+        let polyglot_noise = noise_names_for_files(&polyglot_files);
+        let (edges, stats) = build_call_edges(&functions, &polyglot_files, &polyglot_noise, 5, &[]);
+
+        assert_eq!(stats.total_calls, 1);
+        assert_eq!(stats.excluded_noise, 1);
+        assert_eq!(stats.resolved_call_sites, 0);
+        assert_eq!(stats.resolved_edges, 0);
+        assert!(edges.is_empty());
     }
 }

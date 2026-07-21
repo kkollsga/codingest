@@ -10,6 +10,11 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Fixed
+- Scoped call-resolution noise names to languages present in the parsed file
+  set, so foreign stdlib names no longer hide valid project CALLS edges in
+  single-language repositories.
+
 ## [0.1.1] - 2026-07-20
 
 ### Changed
