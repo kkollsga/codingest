@@ -104,9 +104,9 @@ fn archive_and_build_into(
 
     // Scope the build to the same relative subpath the caller pointed at, so
     // `build("/repo/src", rev=…)` builds `src` of the snapshot, not the whole
-    // repo. Falls back to the snapshot root when `src_dir` is the repo root or
-    // does not resolve under it.
-    let build_input = rebase_input(src_dir, repo_root, snapshot_dir);
+    // repo. An unrelated explicit repo root is an invalid pairing rather than
+    // permission to silently widen the build to the whole snapshot.
+    let build_input = rebase_input(src_dir, repo_root, snapshot_dir)?;
 
     crate::builder::run_with_options(
         &build_input,
@@ -121,9 +121,14 @@ fn archive_and_build_into(
 /// `git -C <src_dir> rev-parse --show-toplevel` → the repo's work-tree root.
 /// A non-git directory (or missing path) surfaces as a clean error.
 fn resolve_repo_root(src_dir: &Path) -> Result<PathBuf, String> {
+    let git_dir = if src_dir.is_file() {
+        src_dir.parent().unwrap_or(src_dir)
+    } else {
+        src_dir
+    };
     let out = Command::new("git")
         .arg("-C")
-        .arg(src_dir)
+        .arg(git_dir)
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .map_err(|e| format!("git command failed: {}", e))?;
@@ -224,8 +229,9 @@ fn archive_into(repo_root: &Path, rev: &str, dest: &Path) -> Result<(), String> 
 
 /// Map the caller's `src_dir` onto the extracted snapshot: the subpath of
 /// `src_dir` relative to `repo_root`, joined onto `snapshot`. When `src_dir`
-/// is the repo root (or does not resolve under it), builds the snapshot root.
-fn rebase_input(src_dir: &Path, repo_root: &Path, snapshot: &Path) -> PathBuf {
+/// is the repo root, builds the snapshot root. A source outside `repo_root` is
+/// rejected so an invalid explicit pairing cannot widen the requested scope.
+fn rebase_input(src_dir: &Path, repo_root: &Path, snapshot: &Path) -> Result<PathBuf, String> {
     let src = src_dir
         .canonicalize()
         .unwrap_or_else(|_| src_dir.to_path_buf());
@@ -233,8 +239,13 @@ fn rebase_input(src_dir: &Path, repo_root: &Path, snapshot: &Path) -> PathBuf {
         .canonicalize()
         .unwrap_or_else(|_| repo_root.to_path_buf());
     match src.strip_prefix(&root) {
-        Ok(rel) if !rel.as_os_str().is_empty() => snapshot.join(rel),
-        _ => snapshot.to_path_buf(),
+        Ok(rel) if !rel.as_os_str().is_empty() => Ok(snapshot.join(rel)),
+        Ok(_) => Ok(snapshot.to_path_buf()),
+        Err(_) => Err(format!(
+            "source {} is outside repository root {}",
+            src_dir.display(),
+            repo_root.display()
+        )),
     }
 }
 
@@ -482,6 +493,7 @@ fn record_rev_manifest(
     edge_revs: &mut EdgeRevManifest,
 ) {
     let rev_val = Value::String(rev.to_string());
+    let mut fingerprints: HashMap<(String, String), Vec<i64>> = HashMap::new();
 
     for idx in rev_graph.graph.node_indices() {
         let Some(node) = rev_graph.graph.node_weight(idx) else {
@@ -491,7 +503,18 @@ fn record_rev_manifest(
         let id = node.id().to_string();
         let props = node.properties_cloned(&rev_graph.interner);
         let fp = node_fingerprint(&node_type, &props);
-        let entry = node_revs.entry((node_type, id)).or_default();
+        fingerprints.entry((node_type, id)).or_default().push(fp);
+    }
+    for (key, mut fingerprints) in fingerprints {
+        fingerprints.sort_unstable();
+        let fp = if fingerprints.len() == 1 {
+            fingerprints[0]
+        } else {
+            let mut hasher = DefaultHasher::new();
+            fingerprints.hash(&mut hasher);
+            hasher.finish() as i64
+        };
+        let entry = node_revs.entry(key).or_default();
         entry.0.push(rev_val.clone());
         entry.1.push(Value::Int64(fp));
     }
@@ -753,6 +776,26 @@ mod tests {
         (tmp, [s1, s2, s3])
     }
 
+    #[test]
+    fn rebase_input_rejects_sources_outside_repository() {
+        let (repo, _) = commit_files(&[("repo.py", "x = 1\n")]);
+        let (source, _) = commit_files(&[("source.py", "x = 2\n")]);
+        let error = match archive_and_build(
+            source.path(),
+            "HEAD",
+            Some(repo.path()),
+            false,
+            false,
+            None,
+            None,
+            false,
+        ) {
+            Ok(_) => panic!("unrelated source must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("outside repository root"), "{error}");
+    }
+
     fn build(dir: &Path, revs: &[String]) -> Arc<DirGraph> {
         build_code_tree_revs(dir, revs, Some(dir), false, false, None, None, false)
             .expect("build_code_tree_revs")
@@ -933,6 +976,89 @@ mod tests {
         );
         let sha = git(dir, &["rev-parse", "HEAD"]);
         (tmp, sha)
+    }
+
+    #[test]
+    fn manifest_path_builds_single_and_multiple_revisions() {
+        let (tmp, first) = commit_files(&[
+            ("pyproject.toml", "[project]\nname = \"fixture\"\n"),
+            ("m.py", "def first():\n    return 1\n"),
+        ]);
+        let second = commit(tmp.path(), "def second():\n    return 2\n");
+        let manifest = tmp.path().join("pyproject.toml");
+
+        archive_and_build(&manifest, &first, None, false, false, None, None, false)
+            .expect("single-rev manifest build");
+        build_code_tree_revs(
+            &manifest,
+            &[first, second],
+            None,
+            false,
+            false,
+            None,
+            None,
+            false,
+        )
+        .expect("multi-rev manifest build");
+    }
+
+    #[test]
+    fn duplicate_node_ids_get_one_aligned_entry_per_revision_and_round_trip() {
+        let (tmp, sha) = commit_files(&[(
+            "index.html",
+            "<!doctype html><section id=\"same\"></section><section id=\"same\"></section>\n",
+        )]);
+        let save = tmp.path().join("merged.kgl");
+        let expected_revs = [sha.clone(), "HEAD".to_string()];
+        let graph = build_code_tree_revs(
+            tmp.path(),
+            &expected_revs,
+            Some(tmp.path()),
+            false,
+            false,
+            Some(&save),
+            None,
+            false,
+        )
+        .expect("build duplicate-ID revisions");
+
+        let assert_aligned = |graph: &DirGraph| {
+            let mut matched = 0;
+            let mut element_ids = Vec::new();
+            for node in graph
+                .graph
+                .node_indices()
+                .filter_map(|index| graph.graph.node_weight(index))
+            {
+                if node.node_type_str(&graph.interner) != "Element" {
+                    continue;
+                }
+                let id = node.id().to_string();
+                element_ids.push(id.clone());
+                if !id.contains("same") {
+                    continue;
+                }
+                matched += 1;
+                let revs = match node.get_property_value("revs") {
+                    Some(Value::List(values)) => values,
+                    other => panic!("missing duplicate revs: {other:?}"),
+                };
+                let fps = match node.get_property_value("rev_fp") {
+                    Some(Value::List(values)) => values,
+                    other => panic!("missing duplicate rev_fp: {other:?}"),
+                };
+                assert_eq!(revs.len(), 2);
+                assert_eq!(fps.len(), 2);
+                assert_eq!(fps[0], fps[1]);
+            }
+            assert_eq!(
+                matched, 2,
+                "fixture must preserve both duplicate nodes: {element_ids:?}"
+            );
+        };
+        assert_aligned(&graph);
+        let reloaded = kglite::api::io::load_file(&save.to_string_lossy()).expect("reload graph");
+        assert_aligned(&reloaded);
     }
 
     /// A repo with many HTML files, each carrying a first inline `<script>`

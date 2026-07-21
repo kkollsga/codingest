@@ -22,6 +22,8 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Accepted manifest paths for revision builds, rejected sources outside an
+  explicit repository root, and kept duplicate-node provenance lists aligned.
 - Preserved relative directories in fallback module IDs so nested same-name
   HTML, CSS, PHP, Swift, and Dart files no longer collapse together.
 - Made manifest-driven builds reject malformed manifests, avoid overlapping
