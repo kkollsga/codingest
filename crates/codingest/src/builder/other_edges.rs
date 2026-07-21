@@ -1,17 +1,13 @@
 //! USES_TYPE, CONTAINS, IMPORTS, FFI_EXPOSES edges.
 
 use crate::models::{ClassInfo, ConstantInfo, EnumInfo, FileInfo, FunctionInfo, InterfaceInfo};
+use crate::parsers::registry;
 use aho_corasick::{AhoCorasick, MatchKind};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 fn get_separator(language: &str) -> &'static str {
-    match language {
-        "rust" | "cpp" => "::",
-        "python" | "java" | "csharp" | "dart" => ".",
-        "php" => "\\",
-        _ => "/",
-    }
+    registry::edge_sep(language)
 }
 
 pub struct ContainsEdge {

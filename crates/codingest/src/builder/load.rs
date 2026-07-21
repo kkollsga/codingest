@@ -5,6 +5,7 @@
 //! `add_connections` — no pandas, no PyO3 round-trip.
 
 use crate::models::{AttributeInfo, ClassInfo, FileInfo, InterfaceInfo, ParseResult, ProjectInfo};
+use crate::parsers::registry;
 use kglite::api::mutation as maintain;
 use kglite::datatypes::values::ColumnType;
 // Build a `DirGraph` directly instead of the binding-flavored
@@ -73,12 +74,7 @@ fn is_numeric_segment(s: &str) -> bool {
 }
 
 fn pick_sep(language: &str) -> &'static str {
-    match language {
-        "rust" | "cpp" | "c" => "::",
-        "python" | "java" | "csharp" => ".",
-        "typescript" | "javascript" | "go" => "/",
-        _ => ".",
-    }
+    registry::module_sep(language)
 }
 
 // ── Entry point ────────────────────────────────────────────────────

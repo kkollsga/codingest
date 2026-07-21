@@ -280,4 +280,32 @@ mod tests {
             assert_eq!(parser.language_name(), language.id);
         }
     }
+
+    #[test]
+    fn separator_matrix_is_pinned() {
+        // These values preserve the two legacy switches exactly. The six
+        // disagreements (c/php/swift/html/css/unknown) are pinned, not endorsed.
+        let expected = [
+            ("rust", "::", "::"),
+            ("python", ".", "."),
+            ("typescript", "/", "/"),
+            ("javascript", "/", "/"),
+            ("go", "/", "/"),
+            ("java", ".", "."),
+            ("csharp", ".", "."),
+            ("c", "::", "/"),
+            ("cpp", "::", "::"),
+            ("swift", ".", "/"),
+            ("php", ".", "\\"),
+            ("html", ".", "/"),
+            ("css", ".", "/"),
+            ("dart", ".", "."),
+            ("unknown", ".", "/"),
+        ];
+
+        for (language, expected_module, expected_edge) in expected {
+            assert_eq!(module_sep(language), expected_module, "{language}");
+            assert_eq!(edge_sep(language), expected_edge, "{language}");
+        }
+    }
 }
