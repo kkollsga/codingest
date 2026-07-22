@@ -2,7 +2,7 @@
 
 Each `<corpus>.sha256` here is a single lowercase-hex SHA-256 line: the digest
 of a **canonical, exhaustive rendering** of the knowledge graph built from
-`crates/codingest/tests/corpus/<corpus>/`. The rendering (see
+`tests/corpus/<corpus>/`. The rendering (see
 `canonical_graph_string` in `../parity.rs`) covers exactly what the
 two-builder equivalence check sweeps — node-type counts, edge-type counts, the
 sorted `(node_type, id)` identity set, the full per-node property sweep, and
@@ -14,8 +14,10 @@ graph-equivalent.
 **Captured 2026-07-16 from the last in-sync in-tree builder** — i.e. from
 `kglite::code_tree::builder::run_with_options`, KGLite's in-tree component,
 while the `corpus_parity` test verified it was byte-for-byte identical to the
-`codingest` builder (parity suite green, all 6 corpora). **These digests remain
-the anchor.**
+`codingest` builder (parity suite green, all 6 original corpora). **These
+digests remain the anchor.** The additive `agc_basic` digest was reviewed and
+captured with the new AGC parser on 2026-07-21; it supplements the six
+historical authority digests without rewriting them.
 
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus

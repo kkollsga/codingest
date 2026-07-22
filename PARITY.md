@@ -7,6 +7,22 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.1.2 verification — 2026-07-22
+
+The current frozen-record gate passes: all seven corpus digests match, and
+`rev_self_consistency` passes. The release ran `cargo test --workspace` plus
+`cargo test -p codingest --test parity` repeatedly through the feature,
+hardening, dependency, and final release gates with zero unexplained golden
+movement.
+
+The release benchmark built the current workspace twice per run and returned
+identical results for all 11 Cypher queries in three repetitions (33/33, zero
+mismatches). The minimum build time was 0.046 s versus the dependency-refresh
+baseline of 0.047 s. Apollo-11 at
+`911e5c0283c629c50cb97666f34065e8c07d71a5` retained exactly 14,682 nodes /
+54,987 edges and its pinned call-resolution counters; its minimum was 0.052 s
+versus 0.053 s before the refresh. Both timing deltas are flat-to-improved.
+
 ## Update 2026-07-16: in-tree builder removed — parity now enforced by frozen record
 
 KGLite deleted its in-tree `kglite::code_tree` builder on 2026-07-16 (the
@@ -25,7 +41,7 @@ single-builder mechanisms:
    can't be frozen (fresh commit SHAs leak into `revs`), so it builds the same
    2-commit repo twice with the codingest builder and asserts equivalence,
    including the stamped `revs`/`rev_fp` provenance.
-3. **The bench query-parity harness** (`codingest_bench`, `make bench-smoke`) —
+3. **The bench query-parity harness** (`codingest_bench`) —
    builds the target twice with the codingest builder and asserts identical
    Cypher query results across the two builds (a determinism check; any MISMATCH
    fails the gate).
@@ -76,7 +92,7 @@ in-tree builder**. To keep the authority after that deletion, it was frozen
 while the builders were still verified-identical (§1 green) into per-corpus
 SHA-256 golden digests at `crates/codingest/tests/goldens/<corpus>.sha256`.
 
-- `golden_parity` (in `tests/parity.rs`) builds each of the 6 corpora with
+- `golden_parity` (in `tests/parity.rs`) builds each of the 7 corpora with
   **only** `codingest::builder::run_with_options`, renders the graph to a
   deterministic exhaustive string (`canonical_graph_string` — the same
   node/edge count maps, identity set, and full property sweeps that §1
@@ -86,6 +102,9 @@ SHA-256 golden digests at `crates/codingest/tests/goldens/<corpus>.sha256`.
   `py_basic 83c20d86fa6c`, `py_inheritance d27d37313d02`,
   `rust_xfile a44952b16301`, `ts_callback ea30ba202d55`,
   `cross_ts_py 16abbe05f4bc`, `dup_minified_assets 5a0799382c3b`.
+  The additive AGC corpus was reviewed and captured with the AGC parser on
+  2026-07-21: `agc_basic fdc3f1bac326`. It supplements the six historical
+  authority digests without changing them.
 - `capture_goldens` (`#[ignore]`) regenerates the goldens; while the in-tree
   builder exists it captures from that authority, and retargets to the
   codingest builder once the in-tree builder is deleted (documented at the

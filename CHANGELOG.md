@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-22
+
 ### Added
 - Added hand-written yaYUL AGC assembly (`.agc`) parsing for program-scoped
   labels, constants, transfers, references, and `$` includes.
@@ -17,6 +19,9 @@ ship time — it's the only place the version bumps.
   and Claude Code installations of Codingest's code-review Agent Skill.
 
 ### Changed
+- Refreshed every direct dependency to its current supported release, adopted
+  SHA-2 0.11, removed four unused Rust dependencies, declared Rust 1.88 as the
+  MSRV, and pinned the tested Python 3.10/3.14 and documentation toolchains.
 - Reworked the PyPI/README quick start around agent MCP setup, local code
   analysis, and one-call GitHub repository analysis; aligned the Python engine
   floor and live MCP documentation with KGLite 0.14.5.

@@ -8,6 +8,24 @@
 > codingest builder** and checks query-result parity across the two builds
 > (determinism); the "in-tree" columns are the historical authority side.
 
+## Release 0.1.2 snapshot — 2026-07-22
+
+Release build on Apple M4 / macOS. Three `codingest_bench` repetitions against
+this workspace produced independent build pairs of 0.075/0.046, 0.048/0.050,
+and 0.048/0.050 seconds. The minimum is 0.046 s versus the pre-refresh 0.047 s
+minimum (−2.1%, flat-to-improved). Every repetition returned identical results
+for all 11 queries: 33 OK, 0 mismatches.
+
+The workspace graph contained 1,057 nodes / 3,516 edges. The three-edge
+reduction from the 3,519-edge dependency-refresh baseline is expected: Phase 1
+removed three unused direct manifest dependencies that were represented as
+dependency edges. Frozen corpus output did not move.
+
+Apollo-11 validation retained exactly 14,682 nodes / 54,987 edges and the
+pinned call-resolution shape (10,566 total, 1,761 excluded, 945 no candidate,
+0 ambiguous, 7,860 resolved sites / 6,741 edges, rate 0.8927). Repeated release
+builds reached 0.052 s versus the 0.053 s baseline (−1.9%, flat-to-improved).
+
 This document compares the **standalone `codingest` crate** (this workspace) against
 the **in-tree `kglite::code_tree` module** (the equivalent builder that then lived
 inside the `kglite` dependency). Both crates depend on the *same* `kglite` engine, so the
@@ -155,8 +173,8 @@ consecutive runs then disagreed on total edge count (observed values 24,317 /
 24,449 / 24,464 across runs), while `nodes` (13,555) and `resolved_edges`
 (1,099) were stable. The root cause (randomized HashMap iteration over DEFINES
 pairs) has since been **fixed** in codingest (BTreeMap + within-pair
-consolidation); the canonical edge count is now a stable 24,317, pinned by
-`make determinism` (`EXPECTED_EDGES`). Every deterministic target above matched
+consolidation); the canonical edge count is now a stable 24,317, pinned by the
+release determinism gate. Every deterministic target above matched
 exactly on every run.
 
 An earlier benchmark pass ran concurrently with a large release compile and
