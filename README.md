@@ -43,6 +43,9 @@ a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 - **Revision-aware:** analyse a tag, branch, commit, or multiple revisions in
   one graph and query what changed.
 
+AGC assembly receives architecture-aware control and data relationships rather
+than a generic text-level call graph; see the [AGC graph model](https://codingest.readthedocs.io/en/latest/agc-assembly.html).
+
 ## Give your agent a code-review MCP server
 
 ```bash

@@ -10,10 +10,19 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- Added AGC `JUMPS_TO`, `BRANCHES_TO`, `ALIAS_OF`, and `POINTS_TO`
+  relationships, program-local data access metadata, erasable-storage flags,
+  and resolved BANKCALL/IBNKCALL/POSTJUMP destinations.
+
 ### Changed
 - Separated AGC returning calls, unconditional jumps, and conditional branches
   into `CALLS`, `JUMPS_TO`, and `BRANCHES_TO`, preserving source operands and
   offsets while leaving register and relative-only destinations unresolved.
+
+### Fixed
+- Removed false cross-program AGC references and false edges to inter-bank
+  trampoline helpers; preserved BANKJUMP/SWCALL as unresolved indirect sites.
 
 ## [0.1.2] - 2026-07-22
 

@@ -1,4 +1,4 @@
-use codingest::models::ControlTransferKind;
+use codingest::models::{ControlTransferKind, SymbolRelationshipKind};
 use codingest::parsers::agc::AgcParser;
 use codingest::parsers::LanguageParser;
 use std::collections::{BTreeMap, HashSet};
@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 #[test]
 #[ignore = "requires CODINGEST_APOLLO11_ROOT pinned to the Apollo-11 validation checkout"]
-fn apollo_transfer_anchors() {
+fn apollo_semantic_anchors() {
     let root = PathBuf::from(
         std::env::var("CODINGEST_APOLLO11_ROOT")
             .expect("set CODINGEST_APOLLO11_ROOT to the pinned Apollo-11 checkout"),
@@ -85,4 +85,32 @@ fn apollo_transfer_anchors() {
     assert!(parsed.control_transfers.iter().any(|site| {
         site.via.as_deref() == Some("SWCALL") && site.kind == ControlTransferKind::IndirectCall
     }));
+    assert!(parsed.reference_sites.iter().all(|site| {
+        site.caller.split_once('.').map(|(program, _)| program)
+            == site.target.split_once('.').map(|(program, _)| program)
+    }));
+    assert_eq!(
+        parsed
+            .constants
+            .iter()
+            .filter(|constant| constant.kind == "agc_erase")
+            .count(),
+        812
+    );
+    assert_eq!(
+        parsed
+            .symbol_relationships
+            .iter()
+            .filter(|link| link.relationship == SymbolRelationshipKind::AliasOf)
+            .count(),
+        3_280
+    );
+    assert_eq!(
+        parsed
+            .symbol_relationships
+            .iter()
+            .filter(|link| link.relationship == SymbolRelationshipKind::PointsTo)
+            .count(),
+        204
+    );
 }

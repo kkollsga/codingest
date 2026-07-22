@@ -11,7 +11,7 @@ use crate::models::{
     ConstantInfo, ControlTransferInfo, ControlTransferKind, FunctionInfo, ReferenceAccess,
     ReferenceSiteInfo, SymbolRelationshipInfo, SymbolRelationshipKind, SymbolTargetKind,
 };
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlEdge {
@@ -44,37 +44,50 @@ pub struct ControlEdgeOutput {
 }
 
 #[derive(Default)]
-struct SiteAggregate {
-    lines: BTreeSet<u32>,
-    raw_targets: BTreeSet<String>,
-    offsets: BTreeSet<String>,
-    via: BTreeSet<String>,
-    address_lines: BTreeSet<u32>,
+struct SiteAggregate<'a> {
+    lines: Vec<u32>,
+    raw_targets: Vec<&'a str>,
+    offsets: Vec<&'a str>,
+    via: Vec<&'a str>,
+    address_lines: Vec<u32>,
 }
 
-impl SiteAggregate {
-    fn add(&mut self, site: &ControlTransferInfo) {
-        self.lines.insert(site.line);
+impl<'a> SiteAggregate<'a> {
+    fn add(&mut self, site: &'a ControlTransferInfo) {
+        self.lines.push(site.line);
         if !site.raw_operand.is_empty() {
-            self.raw_targets.insert(site.raw_operand.clone());
+            self.raw_targets.push(site.raw_operand.as_str());
         }
         if let Some(offset) = &site.offset {
-            self.offsets.insert(offset.clone());
+            self.offsets.push(offset.as_str());
         }
         if let Some(via) = &site.via {
-            self.via.insert(via.clone());
+            self.via.push(via.as_str());
         }
         if let Some(line) = site.address_line {
-            self.address_lines.insert(line);
+            self.address_lines.push(line);
         }
+    }
+
+    fn normalize(&mut self) {
+        self.lines.sort_unstable();
+        self.lines.dedup();
+        self.raw_targets.sort_unstable();
+        self.raw_targets.dedup();
+        self.offsets.sort_unstable();
+        self.offsets.dedup();
+        self.via.sort_unstable();
+        self.via.dedup();
+        self.address_lines.sort_unstable();
+        self.address_lines.dedup();
     }
 }
 
-fn join_strings(values: &BTreeSet<String>) -> Option<String> {
-    (!values.is_empty()).then(|| values.iter().cloned().collect::<Vec<_>>().join(","))
+fn join_strings(values: &[&str]) -> Option<String> {
+    (!values.is_empty()).then(|| values.join(","))
 }
 
-fn join_lines(values: &BTreeSet<u32>) -> String {
+fn join_lines(values: &[u32]) -> String {
     values
         .iter()
         .map(u32::to_string)
@@ -82,7 +95,7 @@ fn join_lines(values: &BTreeSet<u32>) -> String {
         .join(",")
 }
 
-fn optional_lines(values: &BTreeSet<u32>) -> Option<String> {
+fn optional_lines(values: &[u32]) -> Option<String> {
     (!values.is_empty()).then(|| join_lines(values))
 }
 
@@ -95,16 +108,12 @@ pub fn build_control_edges(
         .iter()
         .map(|function| function.qualified_name.as_str())
         .collect();
-    let mut call_aggregates: BTreeMap<(String, String), SiteAggregate> = BTreeMap::new();
-    let mut jump_aggregates: BTreeMap<(String, String), SiteAggregate> = BTreeMap::new();
-    let mut branch_aggregates: BTreeMap<(String, String), SiteAggregate> = BTreeMap::new();
+    let mut call_aggregates: HashMap<(&str, &str), SiteAggregate<'_>> = HashMap::new();
+    let mut jump_aggregates: HashMap<(&str, &str), SiteAggregate<'_>> = HashMap::new();
+    let mut branch_aggregates: HashMap<(&str, &str), SiteAggregate<'_>> = HashMap::new();
     let mut output = ControlEdgeOutput::default();
 
-    let mut ordered = sites.to_vec();
-    ordered.sort();
-    ordered.dedup();
-
-    for site in &ordered {
+    for site in sites {
         let target = site.target.as_deref();
         let exact = target.is_some_and(|candidate| known.contains(candidate));
         match site.kind {
@@ -115,7 +124,7 @@ pub fn build_control_edges(
                     let target = target.expect("exact target exists");
                     if target != site.caller {
                         call_aggregates
-                            .entry((site.caller.clone(), target.to_string()))
+                            .entry((site.caller.as_str(), target))
                             .or_default()
                             .add(site);
                     }
@@ -128,10 +137,7 @@ pub fn build_control_edges(
                 if exact {
                     output.control_stats.resolved_jumps += 1;
                     jump_aggregates
-                        .entry((
-                            site.caller.clone(),
-                            target.expect("exact target exists").to_string(),
-                        ))
+                        .entry((site.caller.as_str(), target.expect("exact target exists")))
                         .or_default()
                         .add(site);
                 }
@@ -141,10 +147,7 @@ pub fn build_control_edges(
                 if exact {
                     output.control_stats.resolved_branches += 1;
                     branch_aggregates
-                        .entry((
-                            site.caller.clone(),
-                            target.expect("exact target exists").to_string(),
-                        ))
+                        .entry((site.caller.as_str(), target.expect("exact target exists")))
                         .or_default()
                         .add(site);
                 }
@@ -163,47 +166,61 @@ pub fn build_control_edges(
 
     output.calls = call_aggregates
         .into_iter()
-        .map(|((caller, callee), aggregate)| CallEdge {
-            caller,
-            callee,
-            call_lines: join_lines(&aggregate.lines),
-            call_count: aggregate.lines.len() as i64,
-            raw_targets: join_strings(&aggregate.raw_targets),
-            offsets: join_strings(&aggregate.offsets),
-            via: join_strings(&aggregate.via),
-            address_lines: optional_lines(&aggregate.address_lines),
+        .map(|((caller, callee), mut aggregate)| {
+            aggregate.normalize();
+            CallEdge {
+                caller: caller.to_string(),
+                callee: callee.to_string(),
+                call_lines: join_lines(&aggregate.lines),
+                call_count: aggregate.lines.len() as i64,
+                raw_targets: join_strings(&aggregate.raw_targets),
+                offsets: join_strings(&aggregate.offsets),
+                via: join_strings(&aggregate.via),
+                address_lines: optional_lines(&aggregate.address_lines),
+            }
         })
         .collect();
+    output.calls.sort_unstable_by(|left, right| {
+        (&left.caller, &left.callee).cmp(&(&right.caller, &right.callee))
+    });
     output.call_stats.resolved_edges = output.calls.len() as u64;
     output.jumps = control_edges(jump_aggregates);
     output.branches = control_edges(branch_aggregates);
     output
 }
 
-fn control_edges(aggregates: BTreeMap<(String, String), SiteAggregate>) -> Vec<ControlEdge> {
-    aggregates
+fn control_edges(aggregates: HashMap<(&str, &str), SiteAggregate<'_>>) -> Vec<ControlEdge> {
+    let mut edges: Vec<_> = aggregates
         .into_iter()
-        .map(|((caller, target), aggregate)| ControlEdge {
-            caller,
-            target,
-            transfer_lines: join_lines(&aggregate.lines),
-            transfer_count: aggregate.lines.len() as i64,
-            raw_targets: join_strings(&aggregate.raw_targets),
-            offsets: join_strings(&aggregate.offsets),
-            via: join_strings(&aggregate.via),
-            address_lines: optional_lines(&aggregate.address_lines),
+        .map(|((caller, target), mut aggregate)| {
+            aggregate.normalize();
+            ControlEdge {
+                caller: caller.to_string(),
+                target: target.to_string(),
+                transfer_lines: join_lines(&aggregate.lines),
+                transfer_count: aggregate.lines.len() as i64,
+                raw_targets: join_strings(&aggregate.raw_targets),
+                offsets: join_strings(&aggregate.offsets),
+                via: join_strings(&aggregate.via),
+                address_lines: optional_lines(&aggregate.address_lines),
+            }
         })
-        .collect()
+        .collect();
+    edges.sort_unstable_by(|left, right| {
+        (&left.caller, &left.target).cmp(&(&right.caller, &right.target))
+    });
+    edges
 }
 
 #[derive(Default)]
-struct ReferenceAggregate {
-    lines: BTreeSet<u32>,
-    opcodes: BTreeSet<String>,
-    accesses: BTreeSet<&'static str>,
+struct ReferenceAggregate<'a> {
+    lines: Vec<u32>,
+    opcodes: Vec<&'a str>,
+    has_unknown: bool,
     has_read: bool,
     has_write: bool,
     has_address: bool,
+    has_read_write: bool,
 }
 
 fn access_name(access: ReferenceAccess) -> &'static str {
@@ -231,21 +248,20 @@ pub fn build_reference_site_edges(
         .iter()
         .map(|constant| constant.qualified_name.as_str())
         .collect();
-    let mut aggregates: BTreeMap<(String, String), ReferenceAggregate> = BTreeMap::new();
+    let mut aggregates: HashMap<(&str, &str), ReferenceAggregate<'_>> = HashMap::new();
 
-    let mut ordered = sites.to_vec();
-    ordered.sort();
-    ordered.dedup();
-    for site in ordered {
+    for site in sites {
         if !known_functions.contains(site.caller.as_str())
             || !known_constants.contains(site.target.as_str())
         {
             continue;
         }
-        let aggregate = aggregates.entry((site.caller, site.target)).or_default();
-        aggregate.lines.insert(site.line);
-        aggregate.opcodes.insert(site.opcode);
-        aggregate.accesses.insert(access_name(site.access));
+        let aggregate = aggregates
+            .entry((site.caller.as_str(), site.target.as_str()))
+            .or_default();
+        aggregate.lines.push(site.line);
+        aggregate.opcodes.push(site.opcode.as_str());
+        aggregate.has_unknown |= site.access == ReferenceAccess::Unknown;
         aggregate.has_read |= matches!(
             site.access,
             ReferenceAccess::Read | ReferenceAccess::ReadWrite
@@ -255,33 +271,58 @@ pub fn build_reference_site_edges(
             ReferenceAccess::Write | ReferenceAccess::ReadWrite
         );
         aggregate.has_address |= site.access == ReferenceAccess::Address;
+        aggregate.has_read_write |= site.access == ReferenceAccess::ReadWrite;
     }
 
-    aggregates
+    let mut edges: Vec<_> = aggregates
         .into_iter()
-        .map(|((function, constant), aggregate)| ReferencesEdge {
-            function,
-            constant,
-            line: aggregate.lines.first().copied().unwrap_or_default(),
-            reference_lines: Some(join_lines(&aggregate.lines)),
-            reference_count: Some(aggregate.lines.len() as i64),
-            opcodes: join_strings(&aggregate.opcodes),
-            accesses: Some(
-                aggregate
-                    .accesses
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
-            has_read: Some(aggregate.has_read),
-            has_write: Some(aggregate.has_write),
-            has_address: Some(aggregate.has_address),
+        .map(|((function, constant), mut aggregate)| {
+            aggregate.lines.sort_unstable();
+            aggregate.lines.dedup();
+            aggregate.opcodes.sort_unstable();
+            aggregate.opcodes.dedup();
+            let accesses = [
+                (aggregate.has_address, access_name(ReferenceAccess::Address)),
+                (aggregate.has_read, access_name(ReferenceAccess::Read)),
+                (
+                    aggregate.has_read_write,
+                    access_name(ReferenceAccess::ReadWrite),
+                ),
+                (aggregate.has_unknown, access_name(ReferenceAccess::Unknown)),
+                (aggregate.has_write, access_name(ReferenceAccess::Write)),
+            ]
+            .into_iter()
+            .filter_map(|(present, name)| present.then_some(name))
+            .collect::<Vec<_>>()
+            .join(",");
+            ReferencesEdge {
+                function: function.to_string(),
+                constant: constant.to_string(),
+                line: aggregate.lines.first().copied().unwrap_or_default(),
+                reference_lines: Some(
+                    aggregate
+                        .lines
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                reference_count: Some(aggregate.lines.len() as i64),
+                opcodes: Some(aggregate.opcodes.join(",")),
+                accesses: Some(accesses),
+                has_read: Some(aggregate.has_read),
+                has_write: Some(aggregate.has_write),
+                has_address: Some(aggregate.has_address),
+            }
         })
-        .collect()
+        .collect();
+    edges.sort_unstable_by(|left, right| {
+        (&left.function, &left.constant).cmp(&(&right.function, &right.constant))
+    });
+    edges
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SymbolEdge {
     pub source: String,
     pub target: String,
@@ -327,10 +368,7 @@ pub fn build_symbol_edges(
     let mut grouped: BTreeMap<(SymbolRelationshipKind, SymbolTargetKind), Vec<SymbolEdge>> =
         BTreeMap::new();
 
-    let mut ordered = links.to_vec();
-    ordered.sort();
-    ordered.dedup();
-    for link in ordered {
+    for link in links {
         if !known_constants.contains(link.source.as_str()) {
             continue;
         }
@@ -345,19 +383,23 @@ pub fn build_symbol_edges(
             .entry((link.relationship, link.target_kind))
             .or_default()
             .push(SymbolEdge {
-                source: link.source,
-                target: link.target,
+                source: link.source.clone(),
+                target: link.target.clone(),
                 line: link.line,
-                raw_target: link.raw_target,
+                raw_target: link.raw_target.clone(),
             });
     }
 
     grouped
         .into_iter()
-        .map(|((relationship, target_kind), edges)| SymbolEdgeBatch {
-            relationship: relationship_name(relationship),
-            target_node_type: target_node_type(target_kind),
-            edges,
+        .map(|((relationship, target_kind), mut edges)| {
+            edges.sort_unstable();
+            edges.dedup();
+            SymbolEdgeBatch {
+                relationship: relationship_name(relationship),
+                target_node_type: target_node_type(target_kind),
+                edges,
+            }
         })
         .collect()
 }
