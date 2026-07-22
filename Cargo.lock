@@ -370,6 +370,7 @@ version = "0.1.2"
 dependencies = [
  "codingest",
  "codingest-cli",
+ "codingest-mcp",
  "kglite",
  "pyo3",
  "tempfile",

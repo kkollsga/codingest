@@ -54,3 +54,8 @@ tempfile = "3"
 # command without a second wheel or a duplicated builder build. Mirrors
 # kglite-py's `kglite-cli` bundling.
 codingest-cli = { version = "0.1.0", path = "../codingest-cli" }
+# Source-building MCP composition. The graph server and generic MCP lifecycle
+# remain owned by its existing kglite-mcp-server -> mcp-methods Rust dependency
+# chain; linking this thin library into the extension gives pip users the same
+# builder-aware server as the standalone `codingest-mcp` binary.
+codingest-mcp = { version = "0.1.0", path = "../codingest-mcp" }

@@ -247,6 +247,20 @@ fn _run_cli(py: Python<'_>, argv: Vec<String>) -> PyResult<()> {
         .map_err(|e| PyRuntimeError::new_err(format!("{e:#}")))
 }
 
+/// Run the builder-aware Codingest MCP server in-process and block until exit.
+///
+/// The Python shim supplies argv without a program name and configures the
+/// server's selftest respawn vector. Server behavior stays in the shared Rust
+/// composition used by the standalone `codingest-mcp` binary.
+#[pyfunction]
+fn _run_mcp_server(py: Python<'_>, argv: Vec<String>) -> PyResult<()> {
+    let mut full = Vec::with_capacity(argv.len() + 1);
+    full.push("codingest-mcp".to_string());
+    full.extend(argv);
+    py.detach(|| codingest_mcp::run(full))
+        .map_err(|e| PyRuntimeError::new_err(format!("{e:#}")))
+}
+
 /// The native extension module. Renamed to `codingest.codingest` by maturin's
 /// `module-name`; the package `__init__.py` re-exports from it. The fn itself
 /// is *not* named `codingest` — that would shadow the `codingest` core crate in
@@ -261,5 +275,6 @@ fn codingest_ext(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_manifest, m)?)?;
     m.add_function(wrap_pyfunction!(language_for_path, m)?)?;
     m.add_function(wrap_pyfunction!(_run_cli, m)?)?;
+    m.add_function(wrap_pyfunction!(_run_mcp_server, m)?)?;
     Ok(())
 }

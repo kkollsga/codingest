@@ -51,6 +51,7 @@ Issues = "https://github.com/kkollsga/codingest/issues"
 # `cargo install codingest-cli`, with no separate wheel or duplicated build.
 [project.scripts]
 codingest = "codingest.cli:main"
+codingest-mcp = "codingest.mcp_server:main"
 
 [tool.pytest.ini_options]
 # Only the live codingest-py suite. The dormant `tests/python-legacy/` tree
