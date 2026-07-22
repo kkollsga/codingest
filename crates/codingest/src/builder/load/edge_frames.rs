@@ -88,11 +88,100 @@ pub(super) fn call_edges_df(edges: &[super::super::call_edges::CallEdge]) -> Dat
     let callee: Vec<Option<String>> = edges.iter().map(|e| Some(e.callee.clone())).collect();
     let lines: Vec<Option<String>> = edges.iter().map(|e| Some(e.call_lines.clone())).collect();
     let count: Vec<Option<i64>> = edges.iter().map(|e| Some(e.call_count)).collect();
-    build_df(vec![
+    let mut columns = vec![
         ("caller", ColumnType::String, str_col(caller)),
         ("callee", ColumnType::String, str_col(callee)),
         ("call_lines", ColumnType::String, str_col(lines)),
         ("call_count", ColumnType::Int64, int_col(count)),
+    ];
+    if edges.iter().any(|edge| edge.raw_targets.is_some()) {
+        columns.push((
+            "raw_targets",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.raw_targets.clone()).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.offsets.is_some()) {
+        columns.push((
+            "offsets",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.offsets.clone()).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.via.is_some()) {
+        columns.push((
+            "via",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.via.clone()).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.address_lines.is_some()) {
+        columns.push((
+            "address_lines",
+            ColumnType::String,
+            str_col(
+                edges
+                    .iter()
+                    .map(|edge| edge.address_lines.clone())
+                    .collect(),
+            ),
+        ));
+    }
+    build_df(columns)
+}
+
+pub(super) fn control_edges_df(edges: &[super::super::semantic_edges::ControlEdge]) -> DataFrame {
+    build_df(vec![
+        (
+            "caller",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| Some(edge.caller.clone())).collect()),
+        ),
+        (
+            "target",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| Some(edge.target.clone())).collect()),
+        ),
+        (
+            "transfer_lines",
+            ColumnType::String,
+            str_col(
+                edges
+                    .iter()
+                    .map(|edge| Some(edge.transfer_lines.clone()))
+                    .collect(),
+            ),
+        ),
+        (
+            "transfer_count",
+            ColumnType::Int64,
+            int_col(edges.iter().map(|edge| Some(edge.transfer_count)).collect()),
+        ),
+        (
+            "raw_targets",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.raw_targets.clone()).collect()),
+        ),
+        (
+            "offsets",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.offsets.clone()).collect()),
+        ),
+        (
+            "via",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.via.clone()).collect()),
+        ),
+        (
+            "address_lines",
+            ColumnType::String,
+            str_col(
+                edges
+                    .iter()
+                    .map(|edge| edge.address_lines.clone())
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -144,10 +233,95 @@ pub(super) fn references_edges_df(
     let fns: Vec<Option<String>> = edges.iter().map(|e| Some(e.function.clone())).collect();
     let consts: Vec<Option<String>> = edges.iter().map(|e| Some(e.constant.clone())).collect();
     let lines: Vec<Option<i64>> = edges.iter().map(|e| Some(e.line as i64)).collect();
-    build_df(vec![
+    let mut columns = vec![
         ("function", ColumnType::String, str_col(fns)),
         ("constant", ColumnType::String, str_col(consts)),
         ("line", ColumnType::Int64, int_col(lines)),
+    ];
+    if edges.iter().any(|edge| edge.reference_lines.is_some()) {
+        columns.push((
+            "reference_lines",
+            ColumnType::String,
+            str_col(
+                edges
+                    .iter()
+                    .map(|edge| edge.reference_lines.clone())
+                    .collect(),
+            ),
+        ));
+    }
+    if edges.iter().any(|edge| edge.reference_count.is_some()) {
+        columns.push((
+            "reference_count",
+            ColumnType::Int64,
+            int_col(edges.iter().map(|edge| edge.reference_count).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.opcodes.is_some()) {
+        columns.push((
+            "opcodes",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.opcodes.clone()).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.accesses.is_some()) {
+        columns.push((
+            "accesses",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.accesses.clone()).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.has_read.is_some()) {
+        columns.push((
+            "has_read",
+            ColumnType::Boolean,
+            bool_col(edges.iter().map(|edge| edge.has_read).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.has_write.is_some()) {
+        columns.push((
+            "has_write",
+            ColumnType::Boolean,
+            bool_col(edges.iter().map(|edge| edge.has_write).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.has_address.is_some()) {
+        columns.push((
+            "has_address",
+            ColumnType::Boolean,
+            bool_col(edges.iter().map(|edge| edge.has_address).collect()),
+        ));
+    }
+    build_df(columns)
+}
+
+pub(super) fn symbol_edges_df(edges: &[super::super::semantic_edges::SymbolEdge]) -> DataFrame {
+    build_df(vec![
+        (
+            "source",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| Some(edge.source.clone())).collect()),
+        ),
+        (
+            "target",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| Some(edge.target.clone())).collect()),
+        ),
+        (
+            "line",
+            ColumnType::Int64,
+            int_col(edges.iter().map(|edge| Some(edge.line as i64)).collect()),
+        ),
+        (
+            "raw_target",
+            ColumnType::String,
+            str_col(
+                edges
+                    .iter()
+                    .map(|edge| Some(edge.raw_target.clone()))
+                    .collect(),
+            ),
+        ),
     ])
 }
 

@@ -169,7 +169,7 @@ pub(super) fn functions_df(
     file_is_test: &HashMap<&str, bool>,
     file_to_module: &HashMap<&str, &str>,
 ) -> DataFrame {
-    build_df(vec![
+    let mut columns = vec![
         (
             "qualified_name",
             ColumnType::String,
@@ -462,7 +462,33 @@ pub(super) fn functions_df(
                     .collect(),
             ),
         ),
-    ])
+    ];
+    for key in ["symbol_kind", "role_hint"] {
+        if fns.iter().any(|function| {
+            function
+                .metadata
+                .get(key)
+                .and_then(|value| value.as_str())
+                .is_some()
+        }) {
+            columns.push((
+                key,
+                ColumnType::String,
+                str_col(
+                    fns.iter()
+                        .map(|function| {
+                            function
+                                .metadata
+                                .get(key)
+                                .and_then(|value| value.as_str())
+                                .map(str::to_string)
+                        })
+                        .collect(),
+                ),
+            ));
+        }
+    }
+    build_df(columns)
 }
 
 pub(super) fn classes_df(
@@ -814,7 +840,7 @@ pub(super) fn constants_df(
     consts: &[ConstantInfo],
     file_to_module: &HashMap<&str, &str>,
 ) -> DataFrame {
-    build_df(vec![
+    let mut columns = vec![
         (
             "qualified_name",
             ColumnType::String,
@@ -875,7 +901,35 @@ pub(super) fn constants_df(
             ColumnType::Int64,
             int_col(consts.iter().map(|c| Some(c.line_number as i64)).collect()),
         ),
-    ])
+    ];
+    if consts.iter().any(|constant| constant.kind == "agc_erase") {
+        columns.push((
+            "is_mutable",
+            ColumnType::Boolean,
+            bool_col(
+                consts
+                    .iter()
+                    .map(|constant| {
+                        constant
+                            .kind
+                            .starts_with("agc_")
+                            .then_some(constant.kind == "agc_erase")
+                    })
+                    .collect(),
+            ),
+        ));
+        columns.push((
+            "storage",
+            ColumnType::String,
+            str_col(
+                consts
+                    .iter()
+                    .map(|constant| (constant.kind == "agc_erase").then(|| "erasable".to_string()))
+                    .collect(),
+            ),
+        ));
+    }
+    build_df(columns)
 }
 
 pub(super) fn elements_df(elements: &[crate::models::ElementInfo]) -> DataFrame {

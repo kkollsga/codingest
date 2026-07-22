@@ -10,11 +10,23 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- Added AGC `JUMPS_TO`, `BRANCHES_TO`, `ALIAS_OF`, and `POINTS_TO`
+  relationships, program-local data access metadata, erasable-storage flags,
+  and resolved BANKCALL/IBNKCALL/POSTJUMP destinations.
+
+### Changed
+- Separated AGC returning calls, unconditional jumps, and conditional branches
+  into `CALLS`, `JUMPS_TO`, and `BRANCHES_TO`, preserving source operands and
+  offsets while leaving register and relative-only destinations unresolved.
+
 ### Fixed
 - Made `pip install codingest` install the builder-aware `codingest-mcp`
   console command. The wheel now bundles Codingest's thin builder composition
   over KGLite's graph server and transitive `mcp-methods` infrastructure, so
   Python users no longer need Cargo or a separately rebuilt MCP binary.
+- Removed false cross-program AGC references and false edges to inter-bank
+  trampoline helpers; preserved BANKJUMP/SWCALL as unresolved indirect sites.
 
 ## [0.1.2] - 2026-07-22
 

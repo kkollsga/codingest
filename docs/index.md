@@ -64,6 +64,7 @@ codingest-mcp --watch /absolute/path/to/repo   # live MCP server over stdio
 cli
 mcp
 python-api
+agc-assembly
 ```
 
 ```{toctree}

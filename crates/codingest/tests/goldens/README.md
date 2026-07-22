@@ -16,8 +16,9 @@ graph-equivalent.
 while the `corpus_parity` test verified it was byte-for-byte identical to the
 `codingest` builder (parity suite green, all 6 original corpora). **These
 digests remain the anchor.** The additive `agc_basic` digest was reviewed and
-captured with the new AGC parser on 2026-07-21; it supplements the six
-historical authority digests without rewriting them.
+captured with the new AGC parser on 2026-07-21, then deliberately refreshed on
+2026-07-22 for its architecture-aware control/data relationship model. It
+supplements the six historical authority digests without rewriting them.
 
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus

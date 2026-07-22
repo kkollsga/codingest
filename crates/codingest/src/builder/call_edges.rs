@@ -19,6 +19,12 @@ pub struct CallEdge {
     /// Comma-separated sorted unique line numbers.
     pub call_lines: String,
     pub call_count: i64,
+    /// Optional parser-preserved transfer spelling/mechanism. Empty for the
+    /// ordinary language call resolver, populated by typed semantic sites.
+    pub raw_targets: Option<String>,
+    pub offsets: Option<String>,
+    pub via: Option<String>,
+    pub address_lines: Option<String>,
 }
 
 /// Aggregate counters describing how the resolver classified every call
@@ -46,6 +52,18 @@ pub struct CallResolutionStats {
     /// IMPLEMENTS), not the caller's own type. The headline win of the
     /// inheritance-aware resolution.
     pub resolved_via_inheritance: u64,
+}
+
+impl CallResolutionStats {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.total_calls += other.total_calls;
+        self.excluded_noise += other.excluded_noise;
+        self.no_candidate += other.no_candidate;
+        self.ambiguous_dropped += other.ambiguous_dropped;
+        self.resolved_call_sites += other.resolved_call_sites;
+        self.resolved_edges += other.resolved_edges;
+        self.resolved_via_inheritance += other.resolved_via_inheritance;
+    }
 }
 
 /// Per-function scratch counters, summed into [`CallResolutionStats`] after
@@ -495,6 +513,10 @@ pub fn build_call_edges(
                 callee: callee.to_string(),
                 call_lines,
                 call_count: count,
+                raw_targets: None,
+                offsets: None,
+                via: None,
+                address_lines: None,
             }
         })
         .collect();

@@ -9,7 +9,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::LanguageParser;
-use crate::models::{ConstantInfo, FileInfo, FunctionInfo, ParseResult};
+use crate::models::{
+    ConstantInfo, ControlTransferInfo, ControlTransferKind, FileInfo, FunctionInfo, ParseResult,
+    ReferenceAccess, ReferenceSiteInfo, SymbolRelationshipInfo, SymbolRelationshipKind,
+    SymbolTargetKind,
+};
 use rayon::prelude::*;
 
 pub const AGC_NOISE_NAMES: &[&str] = &[
@@ -22,7 +26,9 @@ const DATA_OPS: &[&str] = &[
     "BBCON",
 ];
 
-const TRANSFER_OPS: &[&str] = &["TC", "TCF", "CALL", "GOTO"];
+const TRANSFER_OPS: &[&str] = &["TC", "TCF", "CALL", "GOTO", "BZF", "BZMF"];
+const DIRECT_TRAMPOLINES: &[&str] = &["BANKCALL", "IBNKCALL", "POSTJUMP"];
+const INDIRECT_TRAMPOLINES: &[&str] = &["BANKJUMP", "SWCALL"];
 
 pub struct AgcParser;
 
@@ -91,6 +97,17 @@ fn constant_kind(opcode: &str) -> String {
     }
 }
 
+fn reference_access(opcode: &str) -> ReferenceAccess {
+    match opcode {
+        "TS" => ReferenceAccess::Write,
+        "XCH" | "DXCH" | "INCR" | "ADS" | "AUG" | "DIM" => ReferenceAccess::ReadWrite,
+        "ADRES" | "CADR" | "FCADR" | "ECADR" | "GENADR" | "BBCON" => ReferenceAccess::Address,
+        "CA" | "CAF" | "CS" | "DCA" | "DCS" | "AD" | "SU" | "MASK" | "MP" | "DV" | "CCS"
+        | "INDEX" => ReferenceAccess::Read,
+        _ => ReferenceAccess::Unknown,
+    }
+}
+
 fn truncate_100(value: &str) -> String {
     let end = value
         .char_indices()
@@ -138,6 +155,59 @@ fn normalize_operand(operand: &str) -> Option<String> {
     Some(token)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct TransferOperand {
+    raw: String,
+    target: Option<String>,
+    offset: Option<String>,
+}
+
+fn transfer_operand(operand: &str) -> TransferOperand {
+    let raw = operand.trim().to_string();
+    let mut fields = raw.split_whitespace();
+    let Some(first) = fields.next() else {
+        return TransferOperand {
+            raw,
+            target: None,
+            offset: None,
+        };
+    };
+    let token = first.trim_end_matches(',');
+    if is_numeric_or_relative(token) {
+        let offset = (token.starts_with('+') || token.starts_with('-')).then(|| token.to_string());
+        return TransferOperand {
+            raw,
+            target: None,
+            offset,
+        };
+    }
+
+    let suffix_at = token.char_indices().rev().find_map(|(index, character)| {
+        (index > 0
+            && matches!(character, '+' | '-')
+            && token[index + character.len_utf8()..]
+                .chars()
+                .all(|digit| digit.is_ascii_digit()))
+        .then_some(index)
+    });
+    let (target, suffix_offset) = if let Some(index) = suffix_at {
+        (token[..index].to_string(), Some(token[index..].to_string()))
+    } else {
+        (token.to_string(), None)
+    };
+    let separate_offset = fields
+        .next()
+        .filter(|field| {
+            (field.starts_with('+') || field.starts_with('-')) && is_numeric_or_relative(field)
+        })
+        .map(str::to_string);
+    TransferOperand {
+        raw,
+        target: (!target.is_empty()).then_some(target),
+        offset: suffix_offset.or(separate_offset),
+    }
+}
+
 fn is_register(target: &str) -> bool {
     matches!(target.to_ascii_uppercase().as_str(), "Q" | "A" | "L" | "Z")
 }
@@ -183,33 +253,151 @@ fn include_target(trimmed: &str, program: &str) -> Option<String> {
     (!name.is_empty()).then(|| format!("{program}/{name}"))
 }
 
-fn next_line_target(lines: &[&str], current: usize) -> Option<String> {
+fn next_line_operand(lines: &[&str], current: usize) -> Option<(TransferOperand, u32)> {
     lines
         .iter()
+        .enumerate()
         .skip(current + 1)
-        .filter_map(|raw| {
+        .find_map(|(index, raw)| {
             let code = raw.split('#').next().unwrap_or("").trim();
-            (!code.is_empty()).then_some(code)
+            (!code.is_empty()).then(|| (transfer_operand(code), index as u32 + 1))
         })
-        .find_map(normalize_operand)
 }
 
-fn transfer_target(opcode: &str, operand: &str, lines: &[&str], current: usize) -> Option<String> {
+fn next_address_operand(lines: &[&str], current: usize) -> Option<(TransferOperand, u32)> {
+    lines
+        .iter()
+        .enumerate()
+        .skip(current + 1)
+        .find_map(|(index, raw)| scan_line(index as u32 + 1, raw))
+        .and_then(|line| {
+            let opcode = line.opcode.map(upper)?;
+            matches!(opcode.as_str(), "CADR" | "FCADR")
+                .then(|| (transfer_operand(&line.operand), line.number))
+        })
+}
+
+fn transfer_site(
+    caller: &str,
+    program: &str,
+    opcode: &str,
+    operand: &str,
+    lines: &[&str],
+    current: usize,
+    line: u32,
+) -> Option<ControlTransferInfo> {
     if matches!(opcode, "TC" | "TCF") {
-        return normalize_operand(operand);
-    }
-    if matches!(opcode, "CALL" | "GOTO") {
-        return normalize_operand(operand).or_else(|| next_line_target(lines, current));
+        let trampoline = transfer_operand(operand)
+            .target
+            .map(|target| target.to_ascii_uppercase());
+        if let Some(trampoline) = trampoline {
+            if DIRECT_TRAMPOLINES.contains(&trampoline.as_str()) {
+                let (kind, address) = if trampoline == "POSTJUMP" {
+                    (
+                        ControlTransferKind::Jump,
+                        next_address_operand(lines, current),
+                    )
+                } else {
+                    (
+                        ControlTransferKind::Call,
+                        next_address_operand(lines, current),
+                    )
+                };
+                let (parsed, address_line) = address.unwrap_or_else(|| {
+                    (
+                        TransferOperand {
+                            raw: operand.trim().to_string(),
+                            target: None,
+                            offset: None,
+                        },
+                        0,
+                    )
+                });
+                return Some(ControlTransferInfo {
+                    caller: caller.to_string(),
+                    target: parsed.target.map(|target| format!("{program}.{target}")),
+                    kind,
+                    line,
+                    raw_operand: parsed.raw,
+                    offset: parsed.offset,
+                    via: Some(trampoline),
+                    address_line: (address_line != 0).then_some(address_line),
+                });
+            }
+            if INDIRECT_TRAMPOLINES.contains(&trampoline.as_str()) {
+                let kind = if trampoline == "SWCALL" {
+                    ControlTransferKind::IndirectCall
+                } else {
+                    ControlTransferKind::IndirectJump
+                };
+                return Some(ControlTransferInfo {
+                    caller: caller.to_string(),
+                    target: None,
+                    kind,
+                    line,
+                    raw_operand: "A".to_string(),
+                    offset: None,
+                    via: Some(trampoline),
+                    address_line: None,
+                });
+            }
+        }
     }
 
     let fields: Vec<&str> = operand.split_whitespace().collect();
-    let transfer_at = fields
+    let embedded = fields
         .iter()
-        .position(|field| matches!(upper(field).as_str(), "CALL" | "GOTO"))?;
-    fields
-        .get(transfer_at + 1)
-        .and_then(|target| normalize_operand(target))
-        .or_else(|| next_line_target(lines, current))
+        .position(|field| matches!(upper(field).as_str(), "CALL" | "GOTO"));
+    let transfer_opcode = embedded
+        .map(|index| upper(fields[index]))
+        .unwrap_or_else(|| opcode.to_string());
+    if !TRANSFER_OPS.contains(&transfer_opcode.as_str()) {
+        return None;
+    }
+
+    let inline = if let Some(index) = embedded {
+        fields.get(index + 1..).unwrap_or_default().join(" ")
+    } else {
+        operand.trim().to_string()
+    };
+    let (parsed, address_line) =
+        if inline.is_empty() && matches!(transfer_opcode.as_str(), "CALL" | "GOTO") {
+            next_line_operand(lines, current)?
+        } else {
+            (transfer_operand(&inline), 0)
+        };
+
+    let mut kind = match transfer_opcode.as_str() {
+        "TC" | "CALL" => ControlTransferKind::Call,
+        "TCF" | "GOTO" => ControlTransferKind::Jump,
+        "BZF" | "BZMF" => ControlTransferKind::Branch,
+        _ => return None,
+    };
+    let target = parsed.target.and_then(|target| {
+        if is_register(&target) {
+            kind = if transfer_opcode == "TC" && target.eq_ignore_ascii_case("Q") {
+                ControlTransferKind::IndirectJump
+            } else if kind == ControlTransferKind::Call {
+                ControlTransferKind::IndirectCall
+            } else {
+                ControlTransferKind::IndirectJump
+            };
+            None
+        } else {
+            Some(format!("{program}.{target}"))
+        }
+    });
+
+    Some(ControlTransferInfo {
+        caller: caller.to_string(),
+        target,
+        kind,
+        line,
+        raw_operand: parsed.raw,
+        offset: parsed.offset,
+        via: None,
+        address_line: (address_line != 0).then_some(address_line),
+    })
 }
 
 fn emit_function(
@@ -242,7 +430,10 @@ fn emit_function(
         max_nesting: None,
         is_recursive: None,
         procedure_names: Vec::new(),
-        metadata: Default::default(),
+        metadata: HashMap::from([(
+            "symbol_kind".to_string(),
+            serde_json::Value::String("agc_label".to_string()),
+        )]),
     });
     result.functions.len() - 1
 }
@@ -265,34 +456,68 @@ impl LanguageParser for AgcParser {
                 accumulated
             });
 
-        let mut programs_by_label: HashMap<String, HashSet<String>> = HashMap::new();
-        for function in &result.functions {
-            let program = function
-                .qualified_name
-                .split_once('.')
-                .map(|(program, _)| program)
-                .unwrap_or("");
-            programs_by_label
-                .entry(function.name.clone())
-                .or_default()
-                .insert(program.to_string());
+        let known_functions: HashSet<String> = result
+            .functions
+            .iter()
+            .map(|function| function.qualified_name.clone())
+            .collect();
+        let called_targets: HashSet<String> = result
+            .control_transfers
+            .iter()
+            .filter(|site| site.kind == ControlTransferKind::Call)
+            .filter_map(|site| site.target.clone())
+            .filter(|target| known_functions.contains(target))
+            .collect();
+        for function in &mut result.functions {
+            if called_targets.contains(&function.qualified_name) {
+                function.metadata.insert(
+                    "role_hint".to_string(),
+                    serde_json::Value::String("routine".to_string()),
+                );
+            }
         }
 
-        for function in &mut result.functions {
-            let program = function
+        let known_constants: HashSet<String> = result
+            .constants
+            .iter()
+            .map(|constant| constant.qualified_name.clone())
+            .collect();
+        for constant in &result.constants {
+            let relationship = match constant.kind.as_str() {
+                "agc_equals" | "agc_equals_alias" => SymbolRelationshipKind::AliasOf,
+                "agc_adres" | "agc_cadr" | "agc_ecadr" | "agc_genadr" | "agc_bbcon" => {
+                    SymbolRelationshipKind::PointsTo
+                }
+                _ => continue,
+            };
+            let Some(raw_target) = constant.value_preview.as_deref() else {
+                continue;
+            };
+            let operand = transfer_operand(raw_target);
+            let Some(target_name) = operand.target else {
+                continue;
+            };
+            let program = constant
                 .qualified_name
                 .split_once('.')
                 .map(|(program, _)| program)
                 .unwrap_or("");
-            for (target, _) in &mut function.calls {
-                if let Some(programs) = programs_by_label.get(target) {
-                    if programs.contains(program) {
-                        *target = format!("{program}.{target}");
-                    } else if !programs.contains(program) {
-                        *target = format!("{program}/{target}");
-                    }
-                }
-            }
+            let target = format!("{program}.{target_name}");
+            let target_kind = if known_constants.contains(&target) {
+                SymbolTargetKind::Constant
+            } else if known_functions.contains(&target) {
+                SymbolTargetKind::Function
+            } else {
+                continue;
+            };
+            result.symbol_relationships.push(SymbolRelationshipInfo {
+                source: constant.qualified_name.clone(),
+                target,
+                target_kind,
+                relationship,
+                line: constant.line_number,
+                raw_target: operand.raw,
+            });
         }
         result
     }
@@ -342,12 +567,6 @@ impl LanguageParser for AgcParser {
             };
             let opcode = line.opcode.map(upper);
 
-            if line.label.is_some() {
-                if let Some(function_index) = current_function.take() {
-                    result.functions[function_index].end_line = Some(line.number.saturating_sub(1));
-                }
-            }
-
             if let (Some(label), Some(opcode)) = (line.label, opcode.as_deref()) {
                 if DATA_OPS.contains(&opcode) {
                     result.constants.push(ConstantInfo {
@@ -364,6 +583,9 @@ impl LanguageParser for AgcParser {
                 }
                 if is_directive(opcode) {
                     continue;
+                }
+                if let Some(function_index) = current_function.take() {
+                    result.functions[function_index].end_line = Some(line.number.saturating_sub(1));
                 }
                 current_function = Some(emit_function(
                     &mut result,
@@ -384,21 +606,25 @@ impl LanguageParser for AgcParser {
                 continue;
             };
 
-            let has_interpretive_transfer = line
-                .operand
-                .split_whitespace()
-                .any(|field| matches!(upper(field).as_str(), "CALL" | "GOTO"));
-            if TRANSFER_OPS.contains(&opcode) || has_interpretive_transfer {
-                let target = transfer_target(opcode, &line.operand, &lines, index);
-                if let Some(target) = target.filter(|target| !is_register(target)) {
-                    result.functions[function_index]
-                        .calls
-                        .push((target, line.number));
-                }
+            let caller = result.functions[function_index].qualified_name.clone();
+            if let Some(site) = transfer_site(
+                &caller,
+                &program,
+                opcode,
+                &line.operand,
+                &lines,
+                index,
+                line.number,
+            ) {
+                result.control_transfers.push(site);
             } else if let Some(reference) = normalize_operand(&line.operand) {
-                result.functions[function_index]
-                    .references
-                    .push((reference, line.number));
+                result.reference_sites.push(ReferenceSiteInfo {
+                    caller,
+                    target: format!("{program}.{reference}"),
+                    line: line.number,
+                    opcode: opcode.to_string(),
+                    access: reference_access(opcode),
+                });
             }
         }
 
@@ -413,6 +639,8 @@ impl LanguageParser for AgcParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kglite::api::GraphRead;
+    use kglite::datatypes::Value;
     use std::fs;
 
     fn parse(source: &str) -> ParseResult {
@@ -421,7 +649,7 @@ mod tests {
         fs::create_dir_all(&program).unwrap();
         let file = program.join("MAIN.agc");
         fs::write(&file, source).unwrap();
-        AgcParser::new().parse_file(&file, temp.path())
+        AgcParser::new().parse_files(&[file], temp.path())
     }
 
     #[test]
@@ -432,9 +660,22 @@ mod tests {
         assert_eq!(parsed.functions[0].qualified_name, "Comanche055.FIRST");
         assert_eq!(parsed.functions[0].end_line, Some(2));
         assert_eq!(parsed.functions[1].end_line, Some(3));
-        assert_eq!(parsed.functions[0].calls, vec![("SECOND".into(), 1)]);
-        assert_eq!(parsed.functions[0].references, vec![("VALUE".into(), 2)]);
-        assert!(parsed.functions[1].calls.is_empty());
+        assert!(parsed.functions[0].calls.is_empty());
+        assert_eq!(parsed.control_transfers.len(), 2);
+        assert_eq!(parsed.control_transfers[0].caller, "Comanche055.FIRST");
+        assert_eq!(
+            parsed.control_transfers[0].target.as_deref(),
+            Some("Comanche055.SECOND")
+        );
+        assert_eq!(parsed.control_transfers[0].kind, ControlTransferKind::Call);
+        assert_eq!(
+            parsed.control_transfers[1].kind,
+            ControlTransferKind::IndirectJump
+        );
+        assert!(parsed.functions[0].references.is_empty());
+        assert_eq!(parsed.reference_sites.len(), 1);
+        assert_eq!(parsed.reference_sites[0].target, "Comanche055.VALUE");
+        assert_eq!(parsed.reference_sites[0].access, ReferenceAccess::Read);
     }
 
     #[test]
@@ -453,17 +694,19 @@ mod tests {
         let parsed = parse(
             "START\tTC SAME\n\tTCF OFFSET +2\n\tCALL\n\tNEXTCALL\n\tGOTO\n\tNEXTGOTO\n\tDLOAD CALL\n\tPAIREDCALL\n\tBZE GOTO\n\tPAIREDGOTO\n\tTC Q\nSAME\tTC Q\nOFFSET\tTC Q\nNEXTCALL\tTC Q\nNEXTGOTO\tTC Q\nPAIREDCALL\tTC Q\nPAIREDGOTO\tTC Q\n",
         );
-        assert_eq!(
-            parsed.functions[0].calls,
-            vec![
-                ("SAME".into(), 1),
-                ("OFFSET".into(), 2),
-                ("NEXTCALL".into(), 3),
-                ("NEXTGOTO".into(), 5),
-                ("PAIREDCALL".into(), 7),
-                ("PAIREDGOTO".into(), 9),
-            ]
-        );
+        let sites = &parsed.control_transfers[..6];
+        assert_eq!(sites[0].target.as_deref(), Some("Comanche055.SAME"));
+        assert_eq!(sites[0].kind, ControlTransferKind::Call);
+        assert_eq!(sites[1].target.as_deref(), Some("Comanche055.OFFSET"));
+        assert_eq!(sites[1].offset.as_deref(), Some("+2"));
+        assert_eq!(sites[1].kind, ControlTransferKind::Jump);
+        assert_eq!(sites[2].target.as_deref(), Some("Comanche055.NEXTCALL"));
+        assert_eq!(sites[2].address_line, Some(4));
+        assert_eq!(sites[3].target.as_deref(), Some("Comanche055.NEXTGOTO"));
+        assert_eq!(sites[3].kind, ControlTransferKind::Jump);
+        assert_eq!(sites[4].target.as_deref(), Some("Comanche055.PAIREDCALL"));
+        assert_eq!(sites[5].target.as_deref(), Some("Comanche055.PAIREDGOTO"));
+        assert_eq!(sites[5].kind, ControlTransferKind::Jump);
     }
 
     #[test]
@@ -478,6 +721,11 @@ mod tests {
         assert_eq!(parsed.functions.len(), 1);
         assert_eq!(parsed.functions[0].name, "START");
         assert!(parsed.functions[0].calls.is_empty());
+        assert_eq!(parsed.control_transfers.len(), 1);
+        assert_eq!(
+            parsed.control_transfers[0].kind,
+            ControlTransferKind::IndirectJump
+        );
         assert!(parsed.constants.is_empty());
     }
 
@@ -492,24 +740,27 @@ mod tests {
         let foreign = luminary.join("MAIN.agc");
         fs::write(
             &caller,
-            "START TC FOREIGN\n\tTC LOCAL\n\tTC FOREIGN.1\n\tTC LOCAL.1\nLOCAL TC Q\nLOCAL.1 TC Q\n",
+            "SHARED EQUALS 1\nSTART TC FOREIGN\n\tTC LOCAL\n\tTC FOREIGN.1\n\tTC LOCAL.1\n\tCA SHARED\nLOCAL TC Q\nLOCAL.1 TC Q\n",
         )
         .unwrap();
-        fs::write(&foreign, "FOREIGN TC Q\nFOREIGN.1 TC Q\n").unwrap();
+        fs::write(&foreign, "SHARED EQUALS 2\nFOREIGN TC Q\nFOREIGN.1 TC Q\n").unwrap();
 
         let parsed = AgcParser::new().parse_files(&[caller, foreign], temp.path());
-        let start = parsed
-            .functions
+        let start_sites: Vec<_> = parsed
+            .control_transfers
             .iter()
-            .find(|function| function.qualified_name == "Comanche055.START")
-            .unwrap();
+            .filter(|site| site.caller == "Comanche055.START")
+            .collect();
         assert_eq!(
-            start.calls,
+            start_sites
+                .iter()
+                .map(|site| site.target.as_deref())
+                .collect::<Vec<_>>(),
             vec![
-                ("Comanche055/FOREIGN".into(), 1),
-                ("Comanche055.LOCAL".into(), 2),
-                ("Comanche055/FOREIGN.1".into(), 3),
-                ("Comanche055.LOCAL.1".into(), 4),
+                Some("Comanche055.FOREIGN"),
+                Some("Comanche055.LOCAL"),
+                Some("Comanche055.FOREIGN.1"),
+                Some("Comanche055.LOCAL.1"),
             ]
         );
         let local = parsed
@@ -518,5 +769,216 @@ mod tests {
             .find(|function| function.qualified_name == "Comanche055.LOCAL")
             .unwrap();
         assert!(local.calls.is_empty());
+        assert_eq!(local.metadata["role_hint"], "routine");
+        assert_eq!(parsed.reference_sites.len(), 1);
+        assert_eq!(parsed.reference_sites[0].target, "Comanche055.SHARED");
+    }
+
+    #[test]
+    fn branches_relative_transfers_and_ccs_are_modeled_honestly() {
+        let parsed = parse(
+            "START\tBZF ZERO\n\tBZMF NEGATIVE-1\n\tTCF +2\n\tTC A\n\tCCS COUNTER\nZERO\tTC Q\nNEGATIVE\tTC Q\n",
+        );
+        assert_eq!(parsed.control_transfers.len(), 6);
+        assert_eq!(
+            parsed.control_transfers[0].kind,
+            ControlTransferKind::Branch
+        );
+        assert_eq!(
+            parsed.control_transfers[0].target.as_deref(),
+            Some("Comanche055.ZERO")
+        );
+        assert_eq!(parsed.control_transfers[1].offset.as_deref(), Some("-1"));
+        assert_eq!(parsed.control_transfers[2].target, None);
+        assert_eq!(parsed.control_transfers[2].offset.as_deref(), Some("+2"));
+        assert_eq!(
+            parsed.control_transfers[3].kind,
+            ControlTransferKind::IndirectCall
+        );
+        assert!(!parsed
+            .control_transfers
+            .iter()
+            .any(|site| site.raw_operand == "COUNTER"));
+        assert!(parsed.reference_sites.iter().any(|site| {
+            site.target == "Comanche055.COUNTER"
+                && site.line == 5
+                && site.access == ReferenceAccess::Read
+        }));
+    }
+
+    #[test]
+    fn transfer_operand_preserves_raw_target_and_offsets() {
+        assert_eq!(
+            transfer_operand("TARGET +2"),
+            TransferOperand {
+                raw: "TARGET +2".into(),
+                target: Some("TARGET".into()),
+                offset: Some("+2".into()),
+            }
+        );
+        assert_eq!(
+            transfer_operand("TARGET-3").target.as_deref(),
+            Some("TARGET")
+        );
+        assert_eq!(transfer_operand("TARGET-3").offset.as_deref(), Some("-3"));
+        assert_eq!(transfer_operand("+4").target, None);
+    }
+
+    #[test]
+    fn loaded_graph_separates_calls_jumps_and_branches() {
+        let parsed = parse(
+            "START\tTC ROUTINE\n\tTCF EXIT\n\tBZF ZERO\nROUTINE\tTC Q\nEXIT\tTC Q\nZERO\tTC Q\n",
+        );
+        let (graph, _) = crate::builder::load::load_into_graph(&parsed, None).unwrap();
+        let mut relationships = graph
+            .graph
+            .edge_indices()
+            .filter_map(|edge_index| {
+                let edge = graph.graph.edge_weight(edge_index)?;
+                let (source, target) = graph.graph.edge_endpoints(edge_index)?;
+                let source = graph.graph.node_weight(source)?;
+                let target = graph.graph.node_weight(target)?;
+                let source_id = match source.id().as_ref() {
+                    Value::String(value) => value.clone(),
+                    _ => return None,
+                };
+                let target_id = match target.id().as_ref() {
+                    Value::String(value) => value.clone(),
+                    _ => return None,
+                };
+                matches!(
+                    edge.connection_type_str(&graph.interner),
+                    "CALLS" | "JUMPS_TO" | "BRANCHES_TO"
+                )
+                .then(|| {
+                    (
+                        edge.connection_type_str(&graph.interner).to_string(),
+                        source_id,
+                        target_id,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        relationships.sort();
+        assert_eq!(
+            relationships,
+            vec![
+                (
+                    "BRANCHES_TO".into(),
+                    "Comanche055.START".into(),
+                    "Comanche055.ZERO".into(),
+                ),
+                (
+                    "CALLS".into(),
+                    "Comanche055.START".into(),
+                    "Comanche055.ROUTINE".into(),
+                ),
+                (
+                    "JUMPS_TO".into(),
+                    "Comanche055.START".into(),
+                    "Comanche055.EXIT".into(),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn inter_bank_trampolines_resolve_only_direct_address_forms() {
+        let parsed = parse(
+            "START\tTC BANKCALL\n\tCADR CALLEE\n\tTC IBNKCALL\n\tFCADR CALLEE\n\tTC POSTJUMP\n\tCADR EXIT\n\tTC BANKJUMP\n\tCA CALLEE\n\tTC SWCALL\nCALLEE\tTC Q\nEXIT\tTC Q\n",
+        );
+        let sites: Vec<_> = parsed
+            .control_transfers
+            .iter()
+            .filter(|site| site.caller == "Comanche055.START")
+            .collect();
+        assert_eq!(sites.len(), 5);
+        assert_eq!(sites[0].target.as_deref(), Some("Comanche055.CALLEE"));
+        assert_eq!(sites[0].via.as_deref(), Some("BANKCALL"));
+        assert_eq!(sites[0].address_line, Some(2));
+        assert_eq!(sites[1].target.as_deref(), Some("Comanche055.CALLEE"));
+        assert_eq!(sites[1].via.as_deref(), Some("IBNKCALL"));
+        assert_eq!(sites[1].address_line, Some(4));
+        assert_eq!(sites[2].target.as_deref(), Some("Comanche055.EXIT"));
+        assert_eq!(sites[2].kind, ControlTransferKind::Jump);
+        assert_eq!(sites[2].via.as_deref(), Some("POSTJUMP"));
+        assert_eq!(sites[3].target, None);
+        assert_eq!(sites[3].kind, ControlTransferKind::IndirectJump);
+        assert_eq!(sites[3].via.as_deref(), Some("BANKJUMP"));
+        assert_eq!(sites[3].address_line, None);
+        assert_eq!(sites[4].target, None);
+        assert_eq!(sites[4].kind, ControlTransferKind::IndirectCall);
+        assert_eq!(sites[4].via.as_deref(), Some("SWCALL"));
+        assert!(!parsed.control_transfers.iter().any(|site| {
+            site.target.as_deref().is_some_and(|target| {
+                ["BANKCALL", "IBNKCALL", "POSTJUMP", "BANKJUMP", "SWCALL"]
+                    .iter()
+                    .any(|name| target.ends_with(name))
+            })
+        }));
+    }
+
+    #[test]
+    fn direct_trampoline_does_not_search_past_the_next_source_line() {
+        let parsed = parse("START\tTC BANKCALL\n\tCA VALUE\n\tCADR CALLEE\nCALLEE\tTC Q\n");
+        let site = &parsed.control_transfers[0];
+        assert_eq!(site.via.as_deref(), Some("BANKCALL"));
+        assert_eq!(site.target, None);
+        assert_eq!(site.address_line, None);
+    }
+
+    #[test]
+    fn data_sites_emit_access_and_symbol_semantics() {
+        let parsed = parse(
+            "BASE\tEQUALS 1\nALIAS\t= BASE\nADDR\tADRES START\nSPACE\tERASE 2\nSTART\tCA BASE\n\tTS SPACE\n\tXCH SPACE\n\tTC Q\n",
+        );
+        assert!(parsed.functions[0].references.is_empty());
+        assert_eq!(parsed.reference_sites.len(), 3);
+        assert_eq!(parsed.reference_sites[0].access, ReferenceAccess::Read);
+        assert_eq!(parsed.reference_sites[1].access, ReferenceAccess::Write);
+        assert_eq!(parsed.reference_sites[2].access, ReferenceAccess::ReadWrite);
+        assert_eq!(parsed.symbol_relationships.len(), 2);
+        assert_eq!(
+            parsed.symbol_relationships[0].relationship,
+            SymbolRelationshipKind::AliasOf
+        );
+        assert_eq!(
+            parsed.symbol_relationships[0].target_kind,
+            SymbolTargetKind::Constant
+        );
+        assert_eq!(
+            parsed.symbol_relationships[1].relationship,
+            SymbolRelationshipKind::PointsTo
+        );
+        assert_eq!(
+            parsed.symbol_relationships[1].target_kind,
+            SymbolTargetKind::Function
+        );
+
+        let (graph, _) = crate::builder::load::load_into_graph(&parsed, None).unwrap();
+        let space = graph
+            .graph
+            .node_indices()
+            .filter_map(|index| graph.graph.node_weight(index))
+            .find(|node| node.id().as_ref() == &Value::String("Comanche055.SPACE".into()))
+            .unwrap();
+        assert_eq!(
+            space.get_property_value("is_mutable"),
+            Some(Value::Boolean(true))
+        );
+        assert_eq!(
+            space.get_property_value("storage"),
+            Some(Value::String("erasable".into()))
+        );
+
+        let relationship_types: HashSet<_> = graph
+            .graph
+            .edge_indices()
+            .filter_map(|index| graph.graph.edge_weight(index))
+            .map(|edge| edge.connection_type_str(&graph.interner).to_string())
+            .collect();
+        assert!(relationship_types.contains("ALIAS_OF"));
+        assert!(relationship_types.contains("POINTS_TO"));
+        assert!(relationship_types.contains("REFERENCES"));
     }
 }

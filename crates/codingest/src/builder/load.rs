@@ -120,6 +120,7 @@ pub fn load_into_graph(
     run_stage!(type_relationship_edges, "implements+extends+has_method");
     run_stage!(uses_type_edges, "uses_type");
     run_stage!(reference_edges, "references");
+    run_stage!(symbol_relationship_edges, "alias_of+points_to");
     run_stage!(function_reference_edges, "references_fn");
     run_stage!(decorator_edges, "decorates");
     run_stage!(ffi_edges, "ffi_exposes");
@@ -826,13 +827,19 @@ impl<'a> LoadPipeline<'a> {
         let graph = &mut self.graph;
         // Function CALLS Function (5-tier resolution).
         let noise = super::call_edges::noise_names_for_files(&result.files);
-        let (call_edges, call_stats) = super::call_edges::build_call_edges(
+        let (mut call_edges, mut call_stats) = super::call_edges::build_call_edges(
             &result.functions,
             &result.files,
             &noise,
             5,
             &result.type_relationships,
         );
+        let semantic = super::semantic_edges::build_control_edges(
+            &result.control_transfers,
+            &result.functions,
+        );
+        call_edges.extend(semantic.calls);
+        call_stats.merge(semantic.call_stats);
         if !call_edges.is_empty() {
             maintain::add_connections(
                 graph,
@@ -842,6 +849,36 @@ impl<'a> LoadPipeline<'a> {
                 "caller".into(),
                 "Function".into(),
                 "callee".into(),
+                None,
+                None,
+                None,
+            )
+            .map_err(py_err)?;
+        }
+        if !semantic.jumps.is_empty() {
+            maintain::add_connections(
+                graph,
+                control_edges_df(&semantic.jumps),
+                "JUMPS_TO".into(),
+                "Function".into(),
+                "caller".into(),
+                "Function".into(),
+                "target".into(),
+                None,
+                None,
+                None,
+            )
+            .map_err(py_err)?;
+        }
+        if !semantic.branches.is_empty() {
+            maintain::add_connections(
+                graph,
+                control_edges_df(&semantic.branches),
+                "BRANCHES_TO".into(),
+                "Function".into(),
+                "caller".into(),
+                "Function".into(),
+                "target".into(),
                 None,
                 None,
                 None,
@@ -1099,7 +1136,13 @@ impl<'a> LoadPipeline<'a> {
         let result = self.result;
         let graph = &mut self.graph;
         // REFERENCES (Function → Constant) — name-keyed identifier resolution.
-        let refs = super::other_edges::build_references_edges(&result.functions, &result.constants);
+        let mut refs =
+            super::other_edges::build_references_edges(&result.functions, &result.constants);
+        refs.extend(super::semantic_edges::build_reference_site_edges(
+            &result.reference_sites,
+            &result.functions,
+            &result.constants,
+        ));
         if !refs.is_empty() {
             maintain::add_connections(
                 graph,
@@ -1116,6 +1159,32 @@ impl<'a> LoadPipeline<'a> {
             .map_err(py_err)?;
         }
 
+        Ok(())
+    }
+
+    fn symbol_relationship_edges(&mut self) -> Result<(), String> {
+        let result = self.result;
+        let graph = &mut self.graph;
+        let batches = super::semantic_edges::build_symbol_edges(
+            &result.symbol_relationships,
+            &result.functions,
+            &result.constants,
+        );
+        for batch in batches {
+            maintain::add_connections(
+                graph,
+                symbol_edges_df(&batch.edges),
+                batch.relationship.into(),
+                "Constant".into(),
+                "source".into(),
+                batch.target_node_type.into(),
+                "target".into(),
+                None,
+                None,
+                None,
+            )
+            .map_err(py_err)?;
+        }
         Ok(())
     }
 
