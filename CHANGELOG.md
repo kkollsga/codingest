@@ -20,6 +20,11 @@ ship time — it's the only place the version bumps.
 - Moved ownership and distribution of the code-review Agent Skill from KGLite
   to Codingest. Installation safely migrates KGLite-managed legacy copies while
   preserving unmanaged directories.
+- Migrated `codingest-mcp` to KGLite's generic workspace-graph lifecycle
+  (`WorkspaceGraphHooks`): one unified plain/revision-set build closure plus a
+  watch-relevance policy, with document-ingestion policy owned here (markdown
+  `:Doc` nodes for the github-workspace mode only). This adopts KGLite 0.14.5's
+  generation-safe activation transactions and coherent active-graph identity.
 
 ### Fixed
 - Preserved same-scope function overloads as distinct, stable graph nodes and

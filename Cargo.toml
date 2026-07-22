@@ -16,12 +16,12 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.10"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.14.4
-# floor brings the current Postcard-only persistence stack, deterministic
-# embedding/timeseries serialization, and the MCP override/context fixes.
+# kglite engine + MCP server — imported as crates.io libraries. The 0.14.5
+# floor brings generic workspace-graph hooks and generation-safe MCP activation
+# on top of the current deterministic Postcard persistence stack.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.14.4", default-features = false }
-kglite-mcp-server = { version = "0.14.4", default-features = false }
+kglite = { version = "0.14.5", default-features = false }
+kglite-mcp-server = { version = "0.14.5", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite
