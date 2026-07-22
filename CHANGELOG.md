@@ -22,6 +22,9 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Validated and refreshed cached repository clones on every build, rejected
+  dirty or wrong-origin caches, and kept GitHub credentials out of process
+  arguments and diagnostic text.
 - Rebuilt MCP graphs after Markdown/reStructuredText edits and made CLI status
   detect truncated or replaced graph artifacts as stale.
 - Accepted manifest paths for revision builds, rejected sources outside an
