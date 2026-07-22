@@ -486,6 +486,15 @@ pub struct ReferencesEdge {
     pub constant: String,
     /// Line number in the function body where the reference appears.
     pub line: u32,
+    /// Optional aggregate site detail from typed parser references. Ordinary
+    /// language references retain the legacy scalar `line` only.
+    pub reference_lines: Option<String>,
+    pub reference_count: Option<i64>,
+    pub opcodes: Option<String>,
+    pub accesses: Option<String>,
+    pub has_read: Option<bool>,
+    pub has_write: Option<bool>,
+    pub has_address: Option<bool>,
 }
 
 pub struct ReferencesFnEdge {
@@ -566,6 +575,13 @@ pub fn build_references_edges(
                         function: f.qualified_name.clone(),
                         constant: qname.to_string(),
                         line: *line,
+                        reference_lines: None,
+                        reference_count: None,
+                        opcodes: None,
+                        accesses: None,
+                        has_read: None,
+                        has_write: None,
+                        has_address: None,
                     });
                 }
             }

@@ -272,6 +272,90 @@ pub struct TypeRelationship {
     pub methods: Vec<FunctionInfo>,
 }
 
+/// Semantic category of a parsed control-transfer site.
+///
+/// Parsers that can distinguish returning calls from jumps and conditional
+/// branches record sites here instead of flattening every transfer into
+/// [`FunctionInfo::calls`]. Indirect variants deliberately carry no target
+/// edge: the destination is computed at runtime and fabricating one would be
+/// worse than recording an unresolved site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlTransferKind {
+    Call,
+    Jump,
+    Branch,
+    IndirectCall,
+    IndirectJump,
+}
+
+/// One source-level control transfer with optional architecture-specific
+/// mechanics preserved as ordinary values.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ControlTransferInfo {
+    pub caller: String,
+    /// Exact qualified target after parser-level namespace resolution.
+    /// `None` for register/relative/otherwise-indirect transfers.
+    pub target: Option<String>,
+    pub kind: ControlTransferKind,
+    pub line: u32,
+    /// Original operand spelling before normalization.
+    pub raw_operand: String,
+    /// Signed source offset spelling (for example `+2`), when present.
+    pub offset: Option<String>,
+    /// Transfer mechanism such as an assembly trampoline name.
+    pub via: Option<String>,
+    /// Address-word line consumed by a multi-line transfer form.
+    pub address_line: Option<u32>,
+}
+
+/// Conservative data-access classification for a source reference site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceAccess {
+    Read,
+    Write,
+    ReadWrite,
+    Address,
+    Unknown,
+}
+
+/// One source-level reference to an exact qualified Constant target.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ReferenceSiteInfo {
+    pub caller: String,
+    pub target: String,
+    pub line: u32,
+    pub opcode: String,
+    pub access: ReferenceAccess,
+}
+
+/// Relationship emitted from a named symbol definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolRelationshipKind {
+    AliasOf,
+    PointsTo,
+}
+
+/// Graph node type of a resolved symbol-link target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum SymbolTargetKind {
+    Constant,
+    Function,
+}
+
+/// Exact relationship from a Constant symbol definition to another symbol.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct SymbolRelationshipInfo {
+    pub source: String,
+    pub target: String,
+    pub target_kind: SymbolTargetKind,
+    pub relationship: SymbolRelationshipKind,
+    pub line: u32,
+    pub raw_target: String,
+}
+
 /// Unified result of parsing one or more files.
 #[derive(Debug, Clone, Default)]
 pub struct ParseResult {
@@ -285,6 +369,9 @@ pub struct ParseResult {
     pub constants: Vec<ConstantInfo>,
     pub elements: Vec<ElementInfo>,
     pub selectors: Vec<SelectorInfo>,
+    pub control_transfers: Vec<ControlTransferInfo>,
+    pub reference_sites: Vec<ReferenceSiteInfo>,
+    pub symbol_relationships: Vec<SymbolRelationshipInfo>,
 }
 
 impl ParseResult {
@@ -305,6 +392,10 @@ impl ParseResult {
         self.constants.append(&mut other.constants);
         self.elements.append(&mut other.elements);
         self.selectors.append(&mut other.selectors);
+        self.control_transfers.append(&mut other.control_transfers);
+        self.reference_sites.append(&mut other.reference_sites);
+        self.symbol_relationships
+            .append(&mut other.symbol_relationships);
     }
 }
 

@@ -4,6 +4,7 @@ pub mod call_edges;
 pub mod load;
 pub mod other_edges;
 pub mod routes;
+pub mod semantic_edges;
 pub mod type_edges;
 
 use crate::models::{ParseResult, ProjectInfo, SourceRoot};
@@ -256,6 +257,39 @@ fn retain_non_test_entities(result: &mut ParseResult) {
     result
         .selectors
         .retain(|item| !test_paths.contains(&item.file_path));
+
+    let retained_functions: HashSet<&str> = result
+        .functions
+        .iter()
+        .map(|item| item.qualified_name.as_str())
+        .collect();
+    let retained_constants: HashSet<&str> = result
+        .constants
+        .iter()
+        .map(|item| item.qualified_name.as_str())
+        .collect();
+    result.control_transfers.retain(|site| {
+        retained_functions.contains(site.caller.as_str())
+            && site
+                .target
+                .as_deref()
+                .is_none_or(|target| retained_functions.contains(target))
+    });
+    result.reference_sites.retain(|site| {
+        retained_functions.contains(site.caller.as_str())
+            && retained_constants.contains(site.target.as_str())
+    });
+    result.symbol_relationships.retain(|relationship| {
+        retained_constants.contains(relationship.source.as_str())
+            && match relationship.target_kind {
+                crate::models::SymbolTargetKind::Constant => {
+                    retained_constants.contains(relationship.target.as_str())
+                }
+                crate::models::SymbolTargetKind::Function => {
+                    retained_functions.contains(relationship.target.as_str())
+                }
+            }
+    });
 
     let retained_types: HashSet<&str> = result
         .classes
@@ -524,6 +558,12 @@ fn finalize_and_load(
     dedup_by_key(&mut combined.enums, |e| e.qualified_name.clone());
     dedup_by_key(&mut combined.interfaces, |i| i.qualified_name.clone());
     dedup_by_key(&mut combined.constants, |c| c.qualified_name.clone());
+    combined.control_transfers.sort();
+    combined.control_transfers.dedup();
+    combined.reference_sites.sort();
+    combined.reference_sites.dedup();
+    combined.symbol_relationships.sort();
+    combined.symbol_relationships.dedup();
     if verbose {
         eprintln!("[timing] dedup: {:.3}s", t_dedup.elapsed().as_secs_f64());
     }
@@ -615,6 +655,12 @@ pub fn run(src_dir: &Path, verbose: bool) -> Result<Arc<DirGraph>, String> {
     dedup_by_key(&mut combined.enums, |e| e.qualified_name.clone());
     dedup_by_key(&mut combined.interfaces, |i| i.qualified_name.clone());
     dedup_by_key(&mut combined.constants, |c| c.qualified_name.clone());
+    combined.control_transfers.sort();
+    combined.control_transfers.dedup();
+    combined.reference_sites.sort();
+    combined.reference_sites.dedup();
+    combined.symbol_relationships.sort();
+    combined.symbol_relationships.dedup();
 
     if verbose {
         eprintln!(
