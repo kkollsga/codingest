@@ -142,6 +142,8 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist
+      - name: Verify wheel entry points and payload
+        run: python scripts/verify_wheel.py "dist/*.whl"
       - name: Upload wheels
         uses: actions/upload-artifact@v7
         with:

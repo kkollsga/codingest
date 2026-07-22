@@ -15,8 +15,9 @@ cargo install codingest-cli     # pure-Rust binary, no Python
 The wheel links the `codingest-cli` Rust library into its extension and exposes
 it through a console-script shim, so `pip install codingest` gives you the same
 `codingest build`/`status` command as `cargo install codingest-cli` — no
-separate install. This makes the pip-only flow
-`pip install kglite codingest && codingest skill install` self-sufficient.
+separate install. Its KGLite dependency also installs the `kglite` command, so
+the pip-only flow `pip install codingest && codingest skill install` is
+self-sufficient.
 
 ## `codingest skill`
 
