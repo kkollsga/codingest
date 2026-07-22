@@ -1,10 +1,10 @@
 [build-system]
-requires = ["maturin>=1.4,<2.0"]
+requires = ["maturin>=1.14.1,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "codingest"
-description = "Parse polyglot codebases into queryable kglite knowledge graphs — `import codingest; g = codingest.build('.')` returns a real kglite.KnowledgeGraph."
+description = "Build fast, queryable code graphs for AI agents, MCP code review, and local or GitHub repository analysis."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -12,11 +12,16 @@ license-files = ["LICENSE"]
 authors = [
     {name = "Kristian dF Kollsgård", email = "kkollsg@gmail.com"}
 ]
-keywords = ["knowledge-graph", "code-analysis", "tree-sitter", "cypher", "kglite", "ast"]
+keywords = ["ai-agents", "mcp", "code-review", "knowledge-graph", "code-analysis", "github", "tree-sitter", "cypher"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Software Development",
     "Topic :: Software Development :: Libraries",
@@ -30,8 +35,14 @@ dynamic = ["version"]
 # wheel depends on kglite at runtime. Keep the Python engine aligned with the
 # Rust crates so both halves use the same persistence and MCP fixes.
 dependencies = [
-    "kglite>=0.14.4,<0.15",
+    "kglite>=0.14.5,<0.15",
 ]
+
+[project.urls]
+Homepage = "https://github.com/kkollsga/codingest"
+Documentation = "https://codingest.readthedocs.io"
+Repository = "https://github.com/kkollsga/codingest"
+Issues = "https://github.com/kkollsga/codingest/issues"
 
 # Bundled Rust console script. The CLI is linked into this wheel's existing
 # extension (the `codingest-cli` Rust library, sharing the one builder build),

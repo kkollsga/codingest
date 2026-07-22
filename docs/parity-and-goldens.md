@@ -46,7 +46,7 @@ Complementing the Rust gate:
 - The **DEFINES-edge nondeterminism** bug (randomized HashMap iteration over
   duplicate `(file, entity)` pairs from minified assets) is fixed with a
   BTreeMap + within-pair consolidation, guarded by the `dup_minified_assets`
-  corpus and the `make gate` determinism reproducer (a stable edge count across
+  corpus and the release-gate determinism check (a stable edge count across
   three consecutive builds).
 
 ## Regenerating goldens

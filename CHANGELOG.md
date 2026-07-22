@@ -17,6 +17,9 @@ ship time — it's the only place the version bumps.
   and Claude Code installations of Codingest's code-review Agent Skill.
 
 ### Changed
+- Reworked the PyPI/README quick start around agent MCP setup, local code
+  analysis, and one-call GitHub repository analysis; aligned the Python engine
+  floor and live MCP documentation with KGLite 0.14.5.
 - Moved ownership and distribution of the code-review Agent Skill from KGLite
   to Codingest. Installation safely migrates KGLite-managed legacy copies while
   preserving unmanaged directories.

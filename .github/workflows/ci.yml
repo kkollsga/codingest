@@ -31,7 +31,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
@@ -52,42 +52,46 @@ jobs:
         run: cargo test --workspace
 
   python:
-    name: Python (${{ matrix.os }})
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        python-version: ['3.10', '3.14']
     steps:
       - uses: actions/checkout@v7
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: python-${{ matrix.os }}
+          shared-key: python-${{ matrix.python-version }}-${{ matrix.os }}
           workspaces: ". -> target"
 
       - name: Create venv and install build + runtime deps
-        # `kglite>=0.14.4,<0.15` is the runtime engine (the `.kgl`-bytes handoff loads
+        # `kglite>=0.14.5,<0.15` is the runtime engine (the `.kgl`-bytes handoff loads
         # the built graph through the installed kglite wheel). maturin builds
         # the codingest extension into the venv.
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install maturin pytest "kglite>=0.14.4,<0.15"
+          .venv/bin/python -m pip install maturin==1.14.1 pytest==9.1.1 kglite==0.14.5
 
       - name: Build the codingest extension into the venv (maturin develop)
         run: .venv/bin/maturin develop --release
+
+      - name: Verify the installed dependency graph
+        run: .venv/bin/python -m pip check
 
       - name: Run the codingest-py acceptance suite
         # pyproject `testpaths = ["tests/python"]` scopes collection — the

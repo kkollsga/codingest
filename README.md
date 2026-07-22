@@ -6,116 +6,184 @@
 [![Docs](https://readthedocs.org/projects/codingest/badge/?version=latest)](https://codingest.readthedocs.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Parse polyglot codebases into queryable
-[kglite](https://github.com/kkollsga/kglite) knowledge graphs — tree-sitter
-parsers for 14 languages, call / type / inheritance / route edges, an optional
-markdown-docs pass, and multi-git-revision merged graphs.
+Give AI agents a live, queryable map of any codebase — locally, privately, and
+without running the code you are analysing.
 
-codingest owns code-graph construction: the former in-tree `code_tree`
-component, its CLI and Python surfaces, the builder-backed MCP executable, and
-the code-review Agent Skill. KGLite remains the graph engine: storage, Cypher,
-`.kgl` persistence, code-entity reads, and the reusable MCP query/read server
-are imported as cargo libraries. The boundary is build/integration here;
-graph/query infrastructure there.
-
-Documentation: **[codingest.readthedocs.io](https://codingest.readthedocs.io)**
-
-## Requirements — kglite ≥ 0.14.4
-
-codingest builds against 0.14-only engine APIs (`kglite::api::code_entities`,
-`kglite_mcp_server::run_with_code_tree_hooks`) that KGLite added when it removed
-its in-tree builder. The 0.14.4 floor also aligns codingest with KGLite's
-current Postcard-only persistence and MCP fixes. Cargo and pip install this
-compatible engine automatically.
-
-## Install
+codingest turns polyglot source into a
+[KGLite](https://github.com/kkollsga/kglite) knowledge graph of functions,
+types, calls, imports, inheritance, routes, documentation, and git revisions.
+Use it from Python, the command line, or as an MCP server for coding agents.
 
 ```bash
-pip install codingest          # Python wheel (grammars bundled) — ALSO installs the `codingest` CLI
-cargo install codingest-cli    # pure-Rust `codingest` builder CLI (no Python)
-cargo install codingest-mcp    # the code-graph MCP server
-codingest skill install        # install the code-review Agent Skill
+pip install codingest
 ```
-
-The Python wheel bundles the `codingest` terminal command (the `codingest-cli`
-Rust library is linked into the wheel's extension), so `pip install codingest`
-alone gives you both `import codingest` and `codingest build`/`status` — the
-`cargo install codingest-cli` route is only needed for a pure-Rust install.
-This makes the pip-only flow `pip install kglite codingest && codingest skill
-install` self-sufficient. The skill is owned and installed by Codingest; it
-shells out to `codingest build`/`status` and uses KGLite to inspect and query the
-resulting graph. A managed legacy `kglite-code-review` installation is migrated
-safely; unmanaged skill directories are never replaced or removed.
-
-## Quick start
-
-### CLI
-
-```bash
-# Build a code graph from a checkout
-codingest build /path/to/repo
-# → /path/to/repo/.kglite/code-review.kgl
-
-# Build committed content at specific revisions (multi-rev merged graph)
-codingest build /path/to/repo --revs v1.0 v2.0
-
-# Check whether an existing graph is stale relative to the tree
-codingest status --output /path/to/repo/.kglite/code-review.kgl
-```
-
-Then query or describe the `.kgl` with kglite (`kglite.load(...)`, the `kglite`
-shell, or any MCP/Bolt client).
-
-### MCP server
-
-```bash
-# Serve a live code-graph workbench over stdio for an MCP client / agent
-codingest-mcp --root-dir /path/to/repo
-```
-
-`codingest-mcp` embeds the `kglite-mcp-server` tool surface (`set_root_dir`,
-`graph_overview`, `cypher_query`, `read_code_source`, …) and injects the
-codingest builder, so `set_root_dir` builds a graph. Running plain
-`kglite-mcp-server` against a workspace **refuses to build** — it has no
-in-tree builder anymore. See the [MCP docs](https://codingest.readthedocs.io).
-
-### Python wheel
 
 ```python
 import codingest
 
-g = codingest.build(".")                 # returns a real kglite.KnowledgeGraph
-g.cypher("MATCH (f:Function) RETURN f.name LIMIT 10")
-codingest.build(".", save_to="code.kgl") # also persist the .kgl
-codingest.build(".", rev="v1.0")         # build a git revision (or revs=[...])
-codingest.repo_tree("owner/name")        # clone a GitHub repo and build
+graph = codingest.build(".")
+graph.cypher("MATCH (f:Function) RETURN f.name LIMIT 10")
 ```
 
-**The `.kgl`-bytes handoff.** The `codingest` and `kglite` wheels are two
-separate compiled extensions and can't share live Rust objects, so `build()`
-constructs the graph with codingest's native builder, serializes it to a `.kgl`,
-then calls the *installed* `kglite` wheel's `load()` and returns **that** object
-— a genuine `kglite.KnowledgeGraph`, so every downstream kglite API works.
+No language servers, databases, or repository-specific build steps are
+required. The native Rust builder bundles parsers for 15 languages and returns
+a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 
-**Bundled CLI.** The same wheel also provides the `codingest` terminal command
-(a `codingest/cli.py` console-script shim forwarding into the linked
-`codingest-cli` library), so `codingest build`/`status` works straight after
-`pip install codingest` — identical semantics to `cargo install codingest-cli`.
+## Built for agents and code analysis
+
+- **Agent-ready MCP:** give an MCP client `graph_overview`, `cypher_query`,
+  `read_code_source`, repository switching, and automatic graph refresh.
+- **Fast local review:** map definitions, callers, dependencies, routes,
+  inheritance, and affected tests without uploading or executing the project.
+- **Open-source intelligence:** clone and analyse a GitHub repository with one
+  Python call, or let an agent manage cached public repositories through MCP.
+- **Polyglot by default:** one graph across Python, Rust, TypeScript,
+  JavaScript, Java, Go, C/C++, C#, Swift, PHP, HTML, CSS, Dart, and AGC
+  assembly.
+- **Revision-aware:** analyse a tag, branch, commit, or multiple revisions in
+  one graph and query what changed.
+
+## Give your agent a code-review MCP server
+
+```bash
+cargo install codingest-mcp
+codingest-mcp --watch /absolute/path/to/repo
+```
+
+Point an MCP client at the same command:
+
+```json
+{
+  "mcpServers": {
+    "code-review": {
+      "command": "codingest-mcp",
+      "args": ["--watch", "/absolute/path/to/repo"]
+    }
+  }
+}
+```
+
+The server builds the graph at startup, refreshes it when source files change,
+and gives the agent schema discovery, Cypher, and source-reading tools over
+stdio. For a multi-repository agent sandbox with runtime `set_root_dir`, use
+the local-workspace manifest described in the [MCP guide](https://codingest.readthedocs.io/en/latest/mcp.html).
+
+For a zero-configuration CLI workflow, install the packaged code-review Agent
+Skill instead:
+
+```bash
+pip install codingest
+codingest skill install
+```
+
+The skill teaches compatible agents to build a fresh graph, discover its
+schema before querying, combine Cypher with the git diff, and verify findings
+against source lines. See the [MCP guide](https://codingest.readthedocs.io/en/latest/mcp.html)
+and [CLI guide](https://codingest.readthedocs.io/en/latest/cli.html).
+
+## Analyse a local codebase
+
+```python
+import codingest
+
+graph = codingest.build(
+    ".",
+    include_docs=True,
+)
+
+rows = graph.cypher("""
+MATCH (caller:Function)-[:CALLS]->(target:Function)
+RETURN target.qualified_name, count(caller) AS callers
+ORDER BY callers DESC
+LIMIT 10
+""")
+
+codingest.build(".", save_to="code-review.kgl")
+```
+
+The bundled terminal command offers the same workflow:
+
+```bash
+codingest build /path/to/repo
+codingest status --output /path/to/repo/.kglite/code-review.kgl
+kglite describe /path/to/repo/.kglite/code-review.kgl --connections
+```
+
+## Analyse an open-source repository
+
+```python
+import codingest
+
+graph = codingest.repo_tree("pallets/flask")
+graph.cypher("""
+MATCH (route:Function)-[:CALLS]->(dependency:Function)
+RETURN route.qualified_name, dependency.qualified_name
+LIMIT 25
+""")
+```
+
+`repo_tree()` shallow-clones the requested repository into a temporary
+directory, builds the graph, and cleans up afterward. Pass `branch=`,
+`clone_to=`, or `token=` for a specific revision, a reusable cache, or a
+private repository.
+
+## Compare revisions
+
+```python
+graph = codingest.build(".", revs=["v1.0", "v2.0"])
+graph.cypher("""
+MATCH (f:Function)
+WHERE 'v2.0' IN f.revs AND NOT 'v1.0' IN f.revs
+RETURN f.qualified_name
+""")
+```
+
+Revision builds use tracked git content without changing the working tree.
+Multi-revision graphs store shared entities once and expose revision membership
+for direct Cypher analysis.
+
+## Install options
+
+```bash
+pip install codingest          # Python API + codingest CLI + KGLite runtime
+cargo install codingest-cli    # pure-Rust builder CLI
+cargo install codingest-mcp    # MCP server for agents
+codingest skill install        # code-review Agent Skill
+```
+
+The wheel bundles every grammar and the `codingest` command. KGLite ≥0.14.5 is
+installed automatically as the query/storage engine.
 
 ### Rust crate
 
 ```toml
 [dependencies]
 codingest = "0.1"
-kglite = "0.14.4"
+kglite = "0.14.5"
 ```
 
 ```rust
-use codingest::build_code_tree; // = builder::run_with_options
-let graph = build_code_tree(dir, /*verbose=*/false, /*include_tests=*/true,
-                            /*save_to=*/None, /*max_loc=*/None, /*include_docs=*/false)?;
-// Query with kglite's Cypher pipeline, persist with kglite::api::io, …
+use codingest::build_code_tree;
+
+let graph = build_code_tree(
+    dir,
+    false, // verbose
+    true,  // include tests
+    None,  // save path
+    None,  // max lines per file
+    false, // include docs
+)?;
 ```
+
+## How it fits together
+
+codingest owns code-graph construction, the Python/CLI interfaces, the
+builder-backed MCP executable, and the code-review Agent Skill. KGLite provides
+the graph engine, Cypher, persistence, and reusable query/read tools. Keeping
+that boundary explicit lets codingest focus on accurate code understanding
+while reusing a dedicated graph engine.
+
+Documentation: **[codingest.readthedocs.io](https://codingest.readthedocs.io)**
 
 ## Workspace layout
 
@@ -126,14 +194,14 @@ let graph = build_code_tree(dir, /*verbose=*/false, /*include_tests=*/true,
 | `crates/codingest-mcp` | `codingest-mcp` binary — the full MCP tool surface imported from the `kglite-mcp-server` library, with the codingest builder injected. |
 | `crates/codingest-py` | PyO3 wrapper built by maturin into the `codingest` wheel (`pip install codingest`). Python package source is `codingest/`; `pyproject.toml` drives the maturin build. Not published to crates.io (`publish = false`). |
 
-## CI-equivalent local gate: `make gate`
+## CI-equivalent local gate
 
-`make gate` is the single-entry-point local gate that mirrors CI (`cargo fmt
---check`, `cargo clippy --workspace --all-targets -- -D warnings`, workspace
-build + test incl. the golden oracle) and adds codingest-specific checks
-(determinism reproducer, `codingest_bench` parity smoke, the wheel build + the
-`tests/python` acceptance suite). Run it before pushing. Individual steps are
-also targets (`make clippy`, `make determinism`, …); `make fmt` auto-formats.
+```bash
+cargo build --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo test -p codingest --test parity
+```
 
 ### The golden-digest oracle
 
@@ -151,7 +219,7 @@ goldens only for deliberate builder-behavior changes:
 ## Dependency policy
 
 `kglite` and `kglite-mcp-server` use matching crates.io requirements with a
-0.14.4 minimum and a shared lockfile. This keeps the builder, persistence
+0.14.5 minimum and a shared lockfile. This keeps the builder, persistence
 handoff, and embedded MCP server on one compatible engine patch line.
 
 ## Parity with the (now-removed) in-tree component

@@ -33,7 +33,7 @@ jobs:
       - name: Set up Python (libpython for the workspace's PyO3 crate)
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:

@@ -14,7 +14,7 @@
 //! a MISMATCH is reported and that query is NOT timed. Because the builder is
 //! deterministic, two independent builds must return identical results — so a
 //! MISMATCH is a query-result determinism regression, and the A/B delta is
-//! run-to-run timing variance. (`make gate` fails on any MISMATCH.)
+//! run-to-run timing variance. The release gate fails on any MISMATCH.
 //!
 //! Usage:
 //!   cargo run -p codingest --bin codingest_bench --release -- <path>

@@ -67,7 +67,7 @@ fn load_via_kglite(py: Python<'_>, path: &Path) -> PyResult<Py<PyAny>> {
     let kglite = py.import("kglite").map_err(|e| {
         PyRuntimeError::new_err(format!(
             "codingest.build() returns a kglite.KnowledgeGraph, but importing \
-             `kglite` failed ({e}). Install it: `pip install kglite>=0.13`."
+             `kglite` failed ({e}). Install it: `pip install kglite>=0.14.5`."
         ))
     })?;
     let graph = kglite.call_method1("load", (path.to_string_lossy().as_ref(),))?;

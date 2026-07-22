@@ -9,8 +9,8 @@ description = "codingest — standalone extraction of KGLite's code-tree compone
 keywords = ["knowledge-graph", "code-analysis", "tree-sitter", "cypher", "kglite"]
 categories = ["development-tools", "parser-implementations"]
 
-# Requires the kglite 0.14 engine API (`kglite::api::code_entities`,
-# `run_with_code_tree_hooks`); the workspace pins the current 0.14 patch floor.
+# Requires the kglite 0.14 engine API (`kglite::api::code_entities`); the
+# workspace pins the current 0.14 patch floor.
 
 [lib]
 name = "codingest"
