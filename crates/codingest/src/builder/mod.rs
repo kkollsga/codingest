@@ -717,10 +717,11 @@ fn preserve_overloaded_function_ids(
 fn overloaded_qualified_name(base: &str, signature: &str) -> String {
     use sha2::{Digest, Sha256};
 
-    format!(
-        "{base}{OVERLOAD_ID_SEPARATOR}{:x}",
-        Sha256::digest(signature)
-    )
+    let discriminator: String = Sha256::digest(signature)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("{base}{OVERLOAD_ID_SEPARATOR}{discriminator}")
 }
 
 pub(super) fn overload_base_qualified_name(qualified_name: &str) -> Option<&str> {
