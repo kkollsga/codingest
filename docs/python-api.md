@@ -16,13 +16,12 @@ g = codingest.build(".")
 g.cypher("MATCH (f:Function) RETURN f.name LIMIT 10")
 ```
 
-The wheel also installs the **`codingest` terminal command** (same binary
-semantics as `cargo install codingest-cli`) — the `codingest-cli` Rust library
-is linked into the wheel's extension and exposed through a console-script shim.
-So `pip install kglite codingest` provides both the `import codingest` builder
-and the `codingest build`/`status` CLI in one step, and the pip-only flow
-`pip install kglite codingest && codingest skill install` is self-sufficient. See
-[the CLI page](cli.md) for the command reference.
+The wheel also installs the **`codingest`** terminal command and the
+builder-aware **`codingest-mcp`** server. Their Rust libraries are linked into
+the wheel's extension and exposed through console-script shims. The KGLite
+dependency supplies its own CLI automatically, so `pip install codingest`
+provides the Python builder and complete CLI/MCP workflow in one step. See the
+[CLI page](cli.md) and [MCP page](mcp.md) for command references.
 
 ## The `.kgl`-bytes handoff
 

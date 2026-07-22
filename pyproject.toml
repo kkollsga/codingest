@@ -44,13 +44,14 @@ Documentation = "https://codingest.readthedocs.io"
 Repository = "https://github.com/kkollsga/codingest"
 Issues = "https://github.com/kkollsga/codingest/issues"
 
-# Bundled Rust console script. The CLI is linked into this wheel's existing
-# extension (the `codingest-cli` Rust library, sharing the one builder build),
-# and the shim forwards `sys.argv[1:]` into it via `codingest._run_cli`. So
-# `pip install codingest` gives you the same `codingest` command as
-# `cargo install codingest-cli`, with no separate wheel or duplicated build.
+# Bundled Rust console scripts. The CLI and builder-aware MCP composition are
+# linked into this wheel's existing extension; thin Python shims forward argv.
+# KGLite owns graph serving and pulls generic MCP infrastructure from
+# mcp-methods, while Codingest injects the source builder. Thus
+# `pip install codingest` is the complete installation path.
 [project.scripts]
 codingest = "codingest.cli:main"
+codingest-mcp = "codingest.mcp_server:main"
 
 [tool.pytest.ini_options]
 # Only the live codingest-py suite. The dormant `tests/python-legacy/` tree

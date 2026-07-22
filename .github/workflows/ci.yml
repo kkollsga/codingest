@@ -93,6 +93,11 @@ jobs:
       - name: Verify the installed dependency graph
         run: .venv/bin/python -m pip check
 
+      - name: Verify wheel-owned CLI and MCP launchers
+        run: |
+          .venv/bin/codingest --version
+          .venv/bin/codingest-mcp --selftest --watch tests/corpus/agc_basic
+
       - name: Run the codingest-py acceptance suite
         # pyproject `testpaths = ["tests/python"]` scopes collection — the
         # dormant tests/python-legacy/ tree is never swept in.

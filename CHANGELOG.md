@@ -10,6 +10,12 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Fixed
+- Made `pip install codingest` install the builder-aware `codingest-mcp`
+  console command. The wheel now bundles Codingest's thin builder composition
+  over KGLite's graph server and transitive `mcp-methods` infrastructure, so
+  Python users no longer need Cargo or a separately rebuilt MCP binary.
+
 ## [0.1.2] - 2026-07-22
 
 ### Added

@@ -46,7 +46,7 @@ a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 ## Give your agent a code-review MCP server
 
 ```bash
-cargo install codingest-mcp
+pip install codingest
 codingest-mcp --watch /absolute/path/to/repo
 ```
 
@@ -145,14 +145,18 @@ for direct Cypher analysis.
 ## Install options
 
 ```bash
-pip install codingest          # Python API + codingest CLI + KGLite runtime
-cargo install codingest-cli    # pure-Rust builder CLI
-cargo install codingest-mcp    # MCP server for agents
+pip install codingest          # Python API + CLI + MCP server + KGLite runtime
 codingest skill install        # code-review Agent Skill
 ```
 
-The wheel bundles every grammar and the `codingest` command. KGLite ≥0.14.5 is
-installed automatically as the query/storage engine.
+The wheel bundles every grammar plus the `codingest` and `codingest-mcp`
+commands. KGLite ≥0.14.5 is installed automatically as the query/storage
+engine; its MCP server and the transitive `mcp-methods` framework power the
+builder-aware Codingest server. Nothing else needs to be installed.
+
+Rust-only environments can instead use `cargo install codingest-cli
+codingest-mcp`; these are alternative distributions of the same commands, not
+Python prerequisites.
 
 ### Rust crate
 

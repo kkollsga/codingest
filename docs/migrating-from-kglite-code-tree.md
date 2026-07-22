@@ -26,7 +26,7 @@ graph tools). codingest adds the builder back on top and returns
 | You used (kglite ≤ 0.13) | Now (codingest) |
 |---|---|
 | `kglite.code_tree.build(...)` / `kglite.build_code_tree(...)` / `repo_tree(...)` | `import codingest`; `codingest.build(...)` / `codingest.repo_tree(...)` — returns a real `kglite.KnowledgeGraph` |
-| `kglite code-tree build/status` (CLI) | `codingest build` / `codingest status` (`cargo install codingest-cli`) |
+| `kglite code-tree build/status` (CLI) | `codingest build` / `codingest status` (installed by `pip install codingest`) |
 | `kglite skill install` (code-review skill) | `codingest skill install`; managed legacy installs migrate automatically |
 | MCP workspace code-graph building (`set_root_dir`, `repo_management`) | Run **codingest-mcp** instead of `kglite-mcp-server` — it embeds the same server and injects the builder; every graph tool behaves identically |
 | `kglite::api::code_tree::*` (Rust) | the `codingest` crate (`codingest::build_code_tree`, …) |
@@ -73,6 +73,8 @@ Point your MCP client at the `codingest-mcp` binary instead of
 but it refuses to build a workspace from source (no in-tree builder anymore) —
 `codingest-mcp` injects the builder, so `set_root_dir` works again. All graph
 tools (`cypher_query`, `graph_overview`, `read_code_source`, …) are identical.
+The command is included in the Codingest wheel; no Cargo installation is
+needed.
 
 ## If anything broke: pin the old kglite
 

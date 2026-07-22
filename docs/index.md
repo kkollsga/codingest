@@ -23,11 +23,12 @@ automatically; codingest adds the builder and returns ordinary
 ## Install
 
 ```bash
-pip install codingest          # Python wheel + compatible kglite engine
-cargo install codingest-cli    # the `codingest` builder CLI
-cargo install codingest-mcp    # the code-graph MCP server
+pip install codingest          # Python API + CLI + MCP server + KGLite engine
 codingest skill install        # the code-review Agent Skill
 ```
+
+The wheel installs both `codingest` and `codingest-mcp`. Cargo installations
+remain optional alternatives for Rust-only environments.
 
 ## 60-second quickstart
 

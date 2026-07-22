@@ -5,9 +5,13 @@ embeds the `kglite-mcp-server` query and source-reading surface and injects the
 codingest builder so those tools operate on a freshly built code graph.
 
 ```bash
-cargo install codingest-mcp
+pip install codingest
 codingest-mcp --watch /absolute/path/to/repo
 ```
+
+The Codingest wheel installs this command. Its thin builder composition reuses
+KGLite's graph server and the transitive `mcp-methods` MCP infrastructure; no
+separate server or Cargo installation is required.
 
 For one repository, add that command to the common MCP client configuration
 shape:

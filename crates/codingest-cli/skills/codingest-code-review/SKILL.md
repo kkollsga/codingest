@@ -11,8 +11,8 @@ git diff, source reading, and literal-text search; it does not replace them.
 ## Review workflow
 
 > **Prerequisites:** the `codingest` and `kglite` CLIs must be on PATH.
-> `pip install codingest kglite` provides both, or install the Rust CLIs with
-> `cargo install codingest-cli kglite-cli`.
+> `pip install codingest` provides both plus the builder-aware
+> `codingest-mcp` server. Rust-only environments can alternatively use Cargo.
 
 1. Inspect the diff and repository guidance first. Identify changed symbols and
    the base/head revisions.
