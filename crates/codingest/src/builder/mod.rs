@@ -518,6 +518,7 @@ fn finalize_and_load(
 
     let t_dedup = std::time::Instant::now();
     dedup_by_key(&mut combined.files, |f| f.path.clone());
+    preserve_overloaded_function_ids(&mut combined.functions, &mut combined.type_relationships);
     dedup_by_key(&mut combined.functions, |f| f.qualified_name.clone());
     dedup_by_key(&mut combined.classes, |c| c.qualified_name.clone());
     dedup_by_key(&mut combined.enums, |e| e.qualified_name.clone());
@@ -653,6 +654,80 @@ where
         }
     }
     *items = out;
+}
+
+const OVERLOAD_ID_SEPARATOR: char = '#';
+const SHA256_HEX_LEN: usize = 64;
+
+/// Preserve same-scope overloads without changing any ordinary function ID.
+///
+/// Parsers can legitimately emit several functions with the same qualified
+/// name. Exact `(qualified_name, signature)` duplicates are still parser
+/// duplicates and retain the builder's established last-wins behavior. Only a
+/// base ID with more than one distinct signature is decorated.
+fn preserve_overloaded_function_ids(
+    functions: &mut Vec<crate::models::FunctionInfo>,
+    type_relationships: &mut [crate::models::TypeRelationship],
+) {
+    dedup_by_key(functions, |function| {
+        (function.qualified_name.clone(), function.signature.clone())
+    });
+
+    let mut signatures_by_id: std::collections::HashMap<&str, HashSet<&str>> =
+        std::collections::HashMap::new();
+    for function in functions.iter() {
+        signatures_by_id
+            .entry(function.qualified_name.as_str())
+            .or_default()
+            .insert(function.signature.as_str());
+    }
+    let overloaded: HashSet<String> = signatures_by_id
+        .into_iter()
+        .filter_map(|(qualified_name, signatures)| {
+            (signatures.len() > 1).then(|| qualified_name.to_string())
+        })
+        .collect();
+    if overloaded.is_empty() {
+        return;
+    }
+
+    let replacements: std::collections::HashMap<(String, String), String> = functions
+        .iter_mut()
+        .filter(|function| overloaded.contains(function.qualified_name.as_str()))
+        .map(|function| {
+            let base = function.qualified_name.clone();
+            let signature = function.signature.clone();
+            let qualified_name = overloaded_qualified_name(&base, &signature);
+            function.qualified_name.clone_from(&qualified_name);
+            ((base, signature), qualified_name)
+        })
+        .collect();
+
+    for relationship in type_relationships {
+        for method in &mut relationship.methods {
+            if let Some(qualified_name) =
+                replacements.get(&(method.qualified_name.clone(), method.signature.clone()))
+            {
+                method.qualified_name.clone_from(qualified_name);
+            }
+        }
+    }
+}
+
+fn overloaded_qualified_name(base: &str, signature: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    format!(
+        "{base}{OVERLOAD_ID_SEPARATOR}{:x}",
+        Sha256::digest(signature)
+    )
+}
+
+pub(super) fn overload_base_qualified_name(qualified_name: &str) -> Option<&str> {
+    let (base, discriminator) = qualified_name.rsplit_once(OVERLOAD_ID_SEPARATOR)?;
+    (discriminator.len() == SHA256_HEX_LEN
+        && discriminator.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then_some(base)
 }
 
 #[cfg(test)]
@@ -932,6 +1007,188 @@ mod tests {
                 assert!(module_pairs.contains(&(source.clone(), format!("project.{dir}.theme"))));
                 assert!(file_pairs.contains(&(source, format!("{dir}/theme.css"))));
             }
+        }
+    }
+
+    #[test]
+    fn overload_identity_keeps_last_exact_duplicate_and_leaves_ordinary_ids_alone() {
+        let ordinary = FunctionInfo {
+            name: "run".into(),
+            qualified_name: "demo.run".into(),
+            signature: "run()".into(),
+            ..FunctionInfo::default()
+        };
+        let first = FunctionInfo {
+            name: "pick".into(),
+            qualified_name: "demo.Picker.pick".into(),
+            signature: "pick(int)".into(),
+            line_number: 1,
+            ..FunctionInfo::default()
+        };
+        let duplicate = FunctionInfo {
+            line_number: 2,
+            ..first.clone()
+        };
+        let second = FunctionInfo {
+            signature: "pick(string)".into(),
+            line_number: 3,
+            ..first.clone()
+        };
+        let mut functions = vec![ordinary, first, duplicate, second];
+        let mut relationships = vec![TypeRelationship {
+            source_type: "demo.Picker".into(),
+            relationship: "inherent".into(),
+            methods: functions[1..].to_vec(),
+            ..TypeRelationship::default()
+        }];
+
+        preserve_overloaded_function_ids(&mut functions, &mut relationships);
+
+        assert_eq!(functions.len(), 3);
+        assert_eq!(functions[0].qualified_name, "demo.run");
+        let overloads: Vec<_> = functions
+            .iter()
+            .filter(|function| function.name == "pick")
+            .collect();
+        assert_eq!(overloads.len(), 2);
+        assert!(overloads.iter().any(|function| function.line_number == 2));
+        assert!(!overloads.iter().any(|function| function.line_number == 1));
+        for function in overloads {
+            assert_eq!(
+                overload_base_qualified_name(&function.qualified_name),
+                Some("demo.Picker.pick")
+            );
+        }
+        assert!(relationships[0]
+            .methods
+            .iter()
+            .all(
+                |method| overload_base_qualified_name(&method.qualified_name)
+                    == Some("demo.Picker.pick")
+            ));
+    }
+
+    #[test]
+    fn polyglot_overloads_have_stable_nodes_and_conservative_calls() {
+        let fixtures = [
+            (
+                "cpp",
+                "Picker.cpp",
+                r#"class Picker {
+public:
+  int pick(int value) { return value; }
+  int pick(double value) { return static_cast<int>(value); }
+  int run() { return pick(1); }
+};
+"#,
+            ),
+            (
+                "java",
+                "Picker.java",
+                r#"class Picker {
+  int pick(int value) { return value; }
+  int pick(long value) { return (int) value; }
+  int run() { return pick(1); }
+}
+"#,
+            ),
+            (
+                "csharp",
+                "Picker.cs",
+                r#"class Picker {
+  public int pick(int value) { return value; }
+  public int pick(string value) { return value.Length; }
+  public int run() { return pick(1); }
+}
+"#,
+            ),
+            (
+                "typescript",
+                "Picker.ts",
+                r#"class Picker {
+  pick(value: number) { return value; }
+  pick(value: string) { return value.length; }
+  run() { return this.pick(1); }
+}
+"#,
+            ),
+        ];
+
+        for (language, filename, source) in fixtures {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let project = temp.path().join("project");
+            std::fs::create_dir(&project).expect("create fixture root");
+            std::fs::write(project.join(filename), source).expect("write overload fixture");
+
+            let first = run_with_options(&project, false, false, None, None, false)
+                .unwrap_or_else(|error| panic!("{language} first build: {error}"));
+            let second = run_with_options(&project, false, false, None, None, false)
+                .unwrap_or_else(|error| panic!("{language} second build: {error}"));
+
+            let overload_rows = |graph: &DirGraph| {
+                let mut rows: Vec<(String, String)> = graph
+                    .graph
+                    .node_indices()
+                    .filter_map(|index| graph.graph.node_weight(index))
+                    .filter(|node| {
+                        node.node_type_str(&graph.interner) == "Function"
+                            && node.title().as_ref() == &Value::String("pick".into())
+                    })
+                    .map(|node| {
+                        let signature = match node.get_property_value("signature") {
+                            Some(Value::String(value)) => value,
+                            value => panic!("{language} signature missing: {value:?}"),
+                        };
+                        let qualified_name = match node.id().as_ref() {
+                            Value::String(value) => value.clone(),
+                            value => panic!("{language} function ID is not text: {value:?}"),
+                        };
+                        (qualified_name, signature)
+                    })
+                    .collect();
+                rows.sort();
+                rows
+            };
+            let first_rows = overload_rows(&first);
+            let second_rows = overload_rows(&second);
+            assert_eq!(first_rows.len(), 2, "{language}: {first_rows:?}");
+            assert_eq!(first_rows, second_rows, "{language} IDs changed");
+            assert_ne!(first_rows[0].0, first_rows[1].0, "{language}");
+            assert_ne!(first_rows[0].1, first_rows[1].1, "{language}");
+            for (qualified_name, _) in &first_rows {
+                let (_, discriminator) = qualified_name
+                    .rsplit_once(OVERLOAD_ID_SEPARATOR)
+                    .unwrap_or_else(|| {
+                        panic!("{language} ID lacks discriminator: {qualified_name}")
+                    });
+                assert_eq!(discriminator.len(), SHA256_HEX_LEN, "{language}");
+                assert!(discriminator.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+
+            let calls_to_overloads = first
+                .graph
+                .edge_indices()
+                .filter(|&edge_index| {
+                    let Some(edge) = first.graph.edge_weight(edge_index) else {
+                        return false;
+                    };
+                    if edge.connection_type_str(&first.interner) != "CALLS" {
+                        return false;
+                    }
+                    let Some((source, target)) = first.graph.edge_endpoints(edge_index) else {
+                        return false;
+                    };
+                    let (Some(source), Some(target)) = (
+                        first.graph.node_weight(source),
+                        first.graph.node_weight(target),
+                    ) else {
+                        return false;
+                    };
+                    source.title().as_ref() == &Value::String("run".into())
+                        && target.title().as_ref() == &Value::String("pick".into())
+                })
+                .count();
+            assert_eq!(calls_to_overloads, 2, "{language}");
         }
     }
 }

@@ -15,6 +15,7 @@ repository = "https://github.com/kkollsga/codingest"
 
 [workspace.dependencies]
 base64 = "0.22"
+sha2 = "0.10"
 # kglite engine + MCP server — imported as crates.io libraries. The 0.14.4
 # floor brings the current Postcard-only persistence stack, deterministic
 # embedding/timeseries serialization, and the MCP override/context fixes.

@@ -22,6 +22,8 @@ ship time — it's the only place the version bumps.
   preserving unmanaged directories.
 
 ### Fixed
+- Preserved same-scope function overloads as distinct, stable graph nodes and
+  resolved calls conservatively across every matching overload.
 - Validated and refreshed cached repository clones on every build, rejected
   dirty or wrong-origin caches, and kept GitHub credentials out of process
   arguments and diagnostic text.

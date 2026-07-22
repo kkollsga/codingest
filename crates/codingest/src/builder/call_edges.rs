@@ -183,10 +183,23 @@ pub fn build_call_edges(
             .or_default()
             .push(fn_info.qualified_name.as_str());
     }
-    let qualified_lookup: HashSet<&str> = functions
-        .iter()
-        .map(|function| function.qualified_name.as_str())
-        .collect();
+    // Exact qualified call text → one ordinary function or every overload in
+    // that same-scope group. Parser call sites keep the source-level base ID,
+    // while graph identities carry a signature discriminator.
+    let mut qualified_lookup: HashMap<&str, Vec<&str>> = HashMap::new();
+    for function in functions {
+        let qualified_name = function.qualified_name.as_str();
+        qualified_lookup
+            .entry(qualified_name)
+            .or_default()
+            .push(qualified_name);
+        if let Some(base) = super::overload_base_qualified_name(qualified_name) {
+            qualified_lookup
+                .entry(base)
+                .or_default()
+                .push(qualified_name);
+        }
+    }
 
     // qualified_name → owner short name (last segment of owner prefix).
     // qualified_name → owner prefix (everything before the final separator).
@@ -259,10 +272,12 @@ pub fn build_call_edges(
                     counts.excluded += 1;
                     continue;
                 }
-                if qualified_lookup.contains(called_name.as_str()) {
+                if let Some(targets) = qualified_lookup.get(called_name.as_str()) {
                     counts.resolved += 1;
-                    if called_name != caller_qn {
-                        out.push((caller_qn, called_name.as_str(), *line));
+                    for &target in targets {
+                        if target != caller_qn {
+                            out.push((caller_qn, target, *line));
+                        }
                     }
                     continue;
                 }
