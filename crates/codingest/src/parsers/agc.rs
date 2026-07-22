@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use super::LanguageParser;
 use crate::models::{
     ConstantInfo, ControlTransferInfo, ControlTransferKind, FileInfo, FunctionInfo, ParseResult,
+    ReferenceAccess, ReferenceSiteInfo, SymbolRelationshipInfo, SymbolRelationshipKind,
+    SymbolTargetKind,
 };
 use rayon::prelude::*;
 
@@ -92,6 +94,17 @@ fn constant_kind(opcode: &str) -> String {
         "agc_equals_alias".to_string()
     } else {
         format!("agc_{}", opcode.to_ascii_lowercase())
+    }
+}
+
+fn reference_access(opcode: &str) -> ReferenceAccess {
+    match opcode {
+        "TS" => ReferenceAccess::Write,
+        "XCH" | "DXCH" | "INCR" | "ADS" | "AUG" | "DIM" => ReferenceAccess::ReadWrite,
+        "ADRES" | "CADR" | "FCADR" | "ECADR" | "GENADR" | "BBCON" => ReferenceAccess::Address,
+        "CA" | "CAF" | "CS" | "DCA" | "DCS" | "AD" | "SU" | "MASK" | "MP" | "DV" | "CCS"
+        | "INDEX" => ReferenceAccess::Read,
+        _ => ReferenceAccess::Unknown,
     }
 }
 
@@ -443,25 +456,68 @@ impl LanguageParser for AgcParser {
                 accumulated
             });
 
-        let known_functions: HashSet<&str> = result
+        let known_functions: HashSet<String> = result
             .functions
             .iter()
-            .map(|function| function.qualified_name.as_str())
+            .map(|function| function.qualified_name.clone())
             .collect();
-        let called_targets: HashSet<&str> = result
+        let called_targets: HashSet<String> = result
             .control_transfers
             .iter()
             .filter(|site| site.kind == ControlTransferKind::Call)
-            .filter_map(|site| site.target.as_deref())
+            .filter_map(|site| site.target.clone())
             .filter(|target| known_functions.contains(target))
             .collect();
         for function in &mut result.functions {
-            if called_targets.contains(function.qualified_name.as_str()) {
+            if called_targets.contains(&function.qualified_name) {
                 function.metadata.insert(
                     "role_hint".to_string(),
                     serde_json::Value::String("routine".to_string()),
                 );
             }
+        }
+
+        let known_constants: HashSet<String> = result
+            .constants
+            .iter()
+            .map(|constant| constant.qualified_name.clone())
+            .collect();
+        for constant in &result.constants {
+            let relationship = match constant.kind.as_str() {
+                "agc_equals" | "agc_equals_alias" => SymbolRelationshipKind::AliasOf,
+                "agc_adres" | "agc_cadr" | "agc_ecadr" | "agc_genadr" | "agc_bbcon" => {
+                    SymbolRelationshipKind::PointsTo
+                }
+                _ => continue,
+            };
+            let Some(raw_target) = constant.value_preview.as_deref() else {
+                continue;
+            };
+            let operand = transfer_operand(raw_target);
+            let Some(target_name) = operand.target else {
+                continue;
+            };
+            let program = constant
+                .qualified_name
+                .split_once('.')
+                .map(|(program, _)| program)
+                .unwrap_or("");
+            let target = format!("{program}.{target_name}");
+            let target_kind = if known_constants.contains(&target) {
+                SymbolTargetKind::Constant
+            } else if known_functions.contains(&target) {
+                SymbolTargetKind::Function
+            } else {
+                continue;
+            };
+            result.symbol_relationships.push(SymbolRelationshipInfo {
+                source: constant.qualified_name.clone(),
+                target,
+                target_kind,
+                relationship,
+                line: constant.line_number,
+                raw_target: operand.raw,
+            });
         }
         result
     }
@@ -562,9 +618,13 @@ impl LanguageParser for AgcParser {
             ) {
                 result.control_transfers.push(site);
             } else if let Some(reference) = normalize_operand(&line.operand) {
-                result.functions[function_index]
-                    .references
-                    .push((reference, line.number));
+                result.reference_sites.push(ReferenceSiteInfo {
+                    caller,
+                    target: format!("{program}.{reference}"),
+                    line: line.number,
+                    opcode: opcode.to_string(),
+                    access: reference_access(opcode),
+                });
             }
         }
 
@@ -589,7 +649,7 @@ mod tests {
         fs::create_dir_all(&program).unwrap();
         let file = program.join("MAIN.agc");
         fs::write(&file, source).unwrap();
-        AgcParser::new().parse_file(&file, temp.path())
+        AgcParser::new().parse_files(&[file], temp.path())
     }
 
     #[test]
@@ -612,7 +672,10 @@ mod tests {
             parsed.control_transfers[1].kind,
             ControlTransferKind::IndirectJump
         );
-        assert_eq!(parsed.functions[0].references, vec![("VALUE".into(), 2)]);
+        assert!(parsed.functions[0].references.is_empty());
+        assert_eq!(parsed.reference_sites.len(), 1);
+        assert_eq!(parsed.reference_sites[0].target, "Comanche055.VALUE");
+        assert_eq!(parsed.reference_sites[0].access, ReferenceAccess::Read);
     }
 
     #[test]
@@ -677,10 +740,10 @@ mod tests {
         let foreign = luminary.join("MAIN.agc");
         fs::write(
             &caller,
-            "START TC FOREIGN\n\tTC LOCAL\n\tTC FOREIGN.1\n\tTC LOCAL.1\nLOCAL TC Q\nLOCAL.1 TC Q\n",
+            "SHARED EQUALS 1\nSTART TC FOREIGN\n\tTC LOCAL\n\tTC FOREIGN.1\n\tTC LOCAL.1\n\tCA SHARED\nLOCAL TC Q\nLOCAL.1 TC Q\n",
         )
         .unwrap();
-        fs::write(&foreign, "FOREIGN TC Q\nFOREIGN.1 TC Q\n").unwrap();
+        fs::write(&foreign, "SHARED EQUALS 2\nFOREIGN TC Q\nFOREIGN.1 TC Q\n").unwrap();
 
         let parsed = AgcParser::new().parse_files(&[caller, foreign], temp.path());
         let start_sites: Vec<_> = parsed
@@ -707,6 +770,8 @@ mod tests {
             .unwrap();
         assert!(local.calls.is_empty());
         assert_eq!(local.metadata["role_hint"], "routine");
+        assert_eq!(parsed.reference_sites.len(), 1);
+        assert_eq!(parsed.reference_sites[0].target, "Comanche055.SHARED");
     }
 
     #[test]
@@ -734,9 +799,11 @@ mod tests {
             .control_transfers
             .iter()
             .any(|site| site.raw_operand == "COUNTER"));
-        assert!(parsed.functions[0]
-            .references
-            .contains(&("COUNTER".to_string(), 5)));
+        assert!(parsed.reference_sites.iter().any(|site| {
+            site.target == "Comanche055.COUNTER"
+                && site.line == 5
+                && site.access == ReferenceAccess::Read
+        }));
     }
 
     #[test]
@@ -858,5 +925,60 @@ mod tests {
         assert_eq!(site.via.as_deref(), Some("BANKCALL"));
         assert_eq!(site.target, None);
         assert_eq!(site.address_line, None);
+    }
+
+    #[test]
+    fn data_sites_emit_access_and_symbol_semantics() {
+        let parsed = parse(
+            "BASE\tEQUALS 1\nALIAS\t= BASE\nADDR\tADRES START\nSPACE\tERASE 2\nSTART\tCA BASE\n\tTS SPACE\n\tXCH SPACE\n\tTC Q\n",
+        );
+        assert!(parsed.functions[0].references.is_empty());
+        assert_eq!(parsed.reference_sites.len(), 3);
+        assert_eq!(parsed.reference_sites[0].access, ReferenceAccess::Read);
+        assert_eq!(parsed.reference_sites[1].access, ReferenceAccess::Write);
+        assert_eq!(parsed.reference_sites[2].access, ReferenceAccess::ReadWrite);
+        assert_eq!(parsed.symbol_relationships.len(), 2);
+        assert_eq!(
+            parsed.symbol_relationships[0].relationship,
+            SymbolRelationshipKind::AliasOf
+        );
+        assert_eq!(
+            parsed.symbol_relationships[0].target_kind,
+            SymbolTargetKind::Constant
+        );
+        assert_eq!(
+            parsed.symbol_relationships[1].relationship,
+            SymbolRelationshipKind::PointsTo
+        );
+        assert_eq!(
+            parsed.symbol_relationships[1].target_kind,
+            SymbolTargetKind::Function
+        );
+
+        let (graph, _) = crate::builder::load::load_into_graph(&parsed, None).unwrap();
+        let space = graph
+            .graph
+            .node_indices()
+            .filter_map(|index| graph.graph.node_weight(index))
+            .find(|node| node.id().as_ref() == &Value::String("Comanche055.SPACE".into()))
+            .unwrap();
+        assert_eq!(
+            space.get_property_value("is_mutable"),
+            Some(Value::Boolean(true))
+        );
+        assert_eq!(
+            space.get_property_value("storage"),
+            Some(Value::String("erasable".into()))
+        );
+
+        let relationship_types: HashSet<_> = graph
+            .graph
+            .edge_indices()
+            .filter_map(|index| graph.graph.edge_weight(index))
+            .map(|edge| edge.connection_type_str(&graph.interner).to_string())
+            .collect();
+        assert!(relationship_types.contains("ALIAS_OF"));
+        assert!(relationship_types.contains("POINTS_TO"));
+        assert!(relationship_types.contains("REFERENCES"));
     }
 }
