@@ -10,6 +10,11 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- Separated AGC returning calls, unconditional jumps, and conditional branches
+  into `CALLS`, `JUMPS_TO`, and `BRANCHES_TO`, preserving source operands and
+  offsets while leaving register and relative-only destinations unresolved.
+
 ## [0.1.2] - 2026-07-22
 
 ### Added

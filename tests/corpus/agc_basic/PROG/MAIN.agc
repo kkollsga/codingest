@@ -23,6 +23,10 @@ START   TC      LOCAL
         TCF     OFFSET +2
         CAF     BASE
         TS      MASK
+        BZF     FINISH
+        BZMF    OFFSET+1
+        CCS     BASE
+        TCF     +2
         TC      Q
 
 # Interpretive transfers put their address word on the next line.
