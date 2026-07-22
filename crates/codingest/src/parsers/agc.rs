@@ -25,6 +25,8 @@ const DATA_OPS: &[&str] = &[
 ];
 
 const TRANSFER_OPS: &[&str] = &["TC", "TCF", "CALL", "GOTO", "BZF", "BZMF"];
+const DIRECT_TRAMPOLINES: &[&str] = &["BANKCALL", "IBNKCALL", "POSTJUMP"];
+const INDIRECT_TRAMPOLINES: &[&str] = &["BANKJUMP", "SWCALL"];
 
 pub struct AgcParser;
 
@@ -249,6 +251,19 @@ fn next_line_operand(lines: &[&str], current: usize) -> Option<(TransferOperand,
         })
 }
 
+fn next_address_operand(lines: &[&str], current: usize) -> Option<(TransferOperand, u32)> {
+    lines
+        .iter()
+        .enumerate()
+        .skip(current + 1)
+        .find_map(|(index, raw)| scan_line(index as u32 + 1, raw))
+        .and_then(|line| {
+            let opcode = line.opcode.map(upper)?;
+            matches!(opcode.as_str(), "CADR" | "FCADR")
+                .then(|| (transfer_operand(&line.operand), line.number))
+        })
+}
+
 fn transfer_site(
     caller: &str,
     program: &str,
@@ -258,6 +273,64 @@ fn transfer_site(
     current: usize,
     line: u32,
 ) -> Option<ControlTransferInfo> {
+    if matches!(opcode, "TC" | "TCF") {
+        let trampoline = transfer_operand(operand)
+            .target
+            .map(|target| target.to_ascii_uppercase());
+        if let Some(trampoline) = trampoline {
+            if DIRECT_TRAMPOLINES.contains(&trampoline.as_str()) {
+                let (kind, address) = if trampoline == "POSTJUMP" {
+                    (
+                        ControlTransferKind::Jump,
+                        next_address_operand(lines, current),
+                    )
+                } else {
+                    (
+                        ControlTransferKind::Call,
+                        next_address_operand(lines, current),
+                    )
+                };
+                let (parsed, address_line) = address.unwrap_or_else(|| {
+                    (
+                        TransferOperand {
+                            raw: operand.trim().to_string(),
+                            target: None,
+                            offset: None,
+                        },
+                        0,
+                    )
+                });
+                return Some(ControlTransferInfo {
+                    caller: caller.to_string(),
+                    target: parsed.target.map(|target| format!("{program}.{target}")),
+                    kind,
+                    line,
+                    raw_operand: parsed.raw,
+                    offset: parsed.offset,
+                    via: Some(trampoline),
+                    address_line: (address_line != 0).then_some(address_line),
+                });
+            }
+            if INDIRECT_TRAMPOLINES.contains(&trampoline.as_str()) {
+                let kind = if trampoline == "SWCALL" {
+                    ControlTransferKind::IndirectCall
+                } else {
+                    ControlTransferKind::IndirectJump
+                };
+                return Some(ControlTransferInfo {
+                    caller: caller.to_string(),
+                    target: None,
+                    kind,
+                    line,
+                    raw_operand: "A".to_string(),
+                    offset: None,
+                    via: Some(trampoline),
+                    address_line: None,
+                });
+            }
+        }
+    }
+
     let fields: Vec<&str> = operand.split_whitespace().collect();
     let embedded = fields
         .iter()
@@ -438,12 +511,6 @@ impl LanguageParser for AgcParser {
             };
             let opcode = line.opcode.map(upper);
 
-            if line.label.is_some() {
-                if let Some(function_index) = current_function.take() {
-                    result.functions[function_index].end_line = Some(line.number.saturating_sub(1));
-                }
-            }
-
             if let (Some(label), Some(opcode)) = (line.label, opcode.as_deref()) {
                 if DATA_OPS.contains(&opcode) {
                     result.constants.push(ConstantInfo {
@@ -460,6 +527,9 @@ impl LanguageParser for AgcParser {
                 }
                 if is_directive(opcode) {
                     continue;
+                }
+                if let Some(function_index) = current_function.take() {
+                    result.functions[function_index].end_line = Some(line.number.saturating_sub(1));
                 }
                 current_function = Some(emit_function(
                     &mut result,
@@ -743,5 +813,50 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn inter_bank_trampolines_resolve_only_direct_address_forms() {
+        let parsed = parse(
+            "START\tTC BANKCALL\n\tCADR CALLEE\n\tTC IBNKCALL\n\tFCADR CALLEE\n\tTC POSTJUMP\n\tCADR EXIT\n\tTC BANKJUMP\n\tCA CALLEE\n\tTC SWCALL\nCALLEE\tTC Q\nEXIT\tTC Q\n",
+        );
+        let sites: Vec<_> = parsed
+            .control_transfers
+            .iter()
+            .filter(|site| site.caller == "Comanche055.START")
+            .collect();
+        assert_eq!(sites.len(), 5);
+        assert_eq!(sites[0].target.as_deref(), Some("Comanche055.CALLEE"));
+        assert_eq!(sites[0].via.as_deref(), Some("BANKCALL"));
+        assert_eq!(sites[0].address_line, Some(2));
+        assert_eq!(sites[1].target.as_deref(), Some("Comanche055.CALLEE"));
+        assert_eq!(sites[1].via.as_deref(), Some("IBNKCALL"));
+        assert_eq!(sites[1].address_line, Some(4));
+        assert_eq!(sites[2].target.as_deref(), Some("Comanche055.EXIT"));
+        assert_eq!(sites[2].kind, ControlTransferKind::Jump);
+        assert_eq!(sites[2].via.as_deref(), Some("POSTJUMP"));
+        assert_eq!(sites[3].target, None);
+        assert_eq!(sites[3].kind, ControlTransferKind::IndirectJump);
+        assert_eq!(sites[3].via.as_deref(), Some("BANKJUMP"));
+        assert_eq!(sites[3].address_line, None);
+        assert_eq!(sites[4].target, None);
+        assert_eq!(sites[4].kind, ControlTransferKind::IndirectCall);
+        assert_eq!(sites[4].via.as_deref(), Some("SWCALL"));
+        assert!(!parsed.control_transfers.iter().any(|site| {
+            site.target.as_deref().is_some_and(|target| {
+                ["BANKCALL", "IBNKCALL", "POSTJUMP", "BANKJUMP", "SWCALL"]
+                    .iter()
+                    .any(|name| target.ends_with(name))
+            })
+        }));
+    }
+
+    #[test]
+    fn direct_trampoline_does_not_search_past_the_next_source_line() {
+        let parsed = parse("START\tTC BANKCALL\n\tCA VALUE\n\tCADR CALLEE\nCALLEE\tTC Q\n");
+        let site = &parsed.control_transfers[0];
+        assert_eq!(site.via.as_deref(), Some("BANKCALL"));
+        assert_eq!(site.target, None);
+        assert_eq!(site.address_line, None);
     }
 }
