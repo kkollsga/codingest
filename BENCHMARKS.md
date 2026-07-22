@@ -8,6 +8,25 @@
 > codingest builder** and checks query-result parity across the two builds
 > (determinism); the "in-tree" columns are the historical authority side.
 
+## Release 0.1.3 snapshot — 2026-07-22
+
+Release build on Apple M4 / macOS. Three `codingest_bench` repetitions against
+this workspace produced independent build pairs of 0.079/0.047, 0.071/0.050,
+and 0.071/0.048 seconds. The 0.047 s minimum is within noise of 0.1.2's 0.046 s
+minimum (+2.2%). Every repetition returned identical results for all 11
+queries: 33 OK, 0 mismatches. The workspace graph now contains 1,170 nodes /
+3,760 edges; the increase is expected from the new AGC semantic builder code
+and bundled MCP installation surface.
+
+The pinned Apollo-11 corpus produced 14,756 nodes / 46,825 edges (including 74
+documentation nodes) with a 0.107 s minimum across three independent build
+pairs. The previous model produced 14,682 nodes / 54,987 edges at 0.052 s. The
+roughly 2.1x build cost is a known regression from richer per-site semantic
+metadata; the large edge reduction is intentional removal of false
+cross-program references, partly offset by explicit jump, branch, alias, and
+data-point relationships. All 33 Apollo query comparisons matched. A dedicated
+performance follow-up remains tracked in `dev-docs/todos.md`.
+
 ## Release 0.1.2 snapshot — 2026-07-22
 
 Release build on Apple M4 / macOS. Three `codingest_bench` repetitions against

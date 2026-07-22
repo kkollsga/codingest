@@ -7,6 +7,21 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.1.3 verification — 2026-07-22
+
+The frozen-record gate passes: all seven corpus digests match, and
+`rev_self_consistency` passes. The AGC semantic-fidelity work intentionally
+changed only `agc_basic` (now `4e0c3d4aad2`); all six historical authority
+digests remain byte-identical. Three release benchmark repetitions returned
+identical results for all 11 Cypher queries in both independent builds (33/33,
+zero mismatches).
+
+The pinned Apollo-11 acceptance test also passes at commit
+`911e5c0283c629c50cb97666f34065e8c07d71a5`: 737 direct inter-bank trampoline
+sites resolve to their real program-local destinations, no semantic control
+edge targets a trampoline helper, and no control or reference edge crosses an
+AGC program boundary.
+
 ## Release 0.1.2 verification — 2026-07-22
 
 The current frozen-record gate passes: all seven corpus digests match, and
@@ -103,7 +118,8 @@ SHA-256 golden digests at `crates/codingest/tests/goldens/<corpus>.sha256`.
   `rust_xfile a44952b16301`, `ts_callback ea30ba202d55`,
   `cross_ts_py 16abbe05f4bc`, `dup_minified_assets 5a0799382c3b`.
   The additive AGC corpus was reviewed and captured with the AGC parser on
-  2026-07-21: `agc_basic fdc3f1bac326`. It supplements the six historical
+  2026-07-21, then intentionally refreshed for the 0.1.3 semantic model on
+  2026-07-22: `agc_basic 4e0c3d4aad2c`. It supplements the six historical
   authority digests without changing them.
 - `capture_goldens` (`#[ignore]`) regenerates the goldens; while the in-tree
   builder exists it captures from that authority, and retargets to the
