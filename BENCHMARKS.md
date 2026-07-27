@@ -8,6 +8,64 @@
 > codingest builder** and checks query-result parity across the two builds
 > (determinism); the "in-tree" columns are the historical authority side.
 
+## kglite 0.15.0 engine migration — 2026-07-27
+
+Matched before/after capture isolating the engine bump (kglite 0.14.5 ->
+0.15.0). **No detectable regression, and no change in graph output.**
+
+Methodology deviates from the sections below in one deliberate way, and it
+matters. Both binaries were pointed at a **single fixed target directory** (this
+workspace) rather than each at its own checkout. The builder ingests gitignored
+local content — `dev-docs/`, `inbox/` — through the docs pass, so a `git
+worktree` of the pre-migration commit scores 1,115 nodes / 3,692 edges while the
+working tree scores 1,170 / 3,759. Giving each engine its own checkout would
+have booked that ~5% tree-content difference as an engine effect. Runs also
+alternated BEFORE/AFTER/BEFORE/AFTER rather than three-then-three, so background
+load is shared across both arms instead of loading one.
+
+All six runs (3 repetitions x 2 engines) produced **1,170 nodes / 3,759 edges**
+and **11 queries, 11 OK, 0 MISMATCH** — 33 checks per side, 66 total. The two
+engine versions produce byte-identical graphs and identical query results.
+
+Per-query minimum over 6 samples per side (3 repetitions x 2 independent builds),
+milliseconds:
+
+| Query | before | after | delta |
+|---|---:|---:|---:|
+| count_functions (full-label scan + count) | ~0.000 | ~0.000 | n/a¹ |
+| eq_filter_pub (equality property filter) | 0.026 | 0.027 | +3.8% |
+| contains_new (CONTAINS string filter) | 0.018 | 0.018 | +0.0% |
+| top20_by_branch_count (ORDER BY + LIMIT) | 0.320 | 0.307 | −4.1% |
+| defs_per_file (grouped aggregation) | 0.017 | 0.017 | +0.0% |
+| calls_edge_scan (1-hop edge scan + count) | 0.083 | 0.085 | +2.4% |
+| anchored_callers (anchored 1-hop, in-hub) | 0.156 | 0.155 | −0.6% |
+| two_hop_into_hot (2-hop traversal + count) | 0.432 | 0.431 | −0.2% |
+| varlen_callers_1_3 (`[:CALLS*1..3]` + count DISTINCT) | 0.374 | 0.373 | −0.3% |
+| reverse_callees_of_hub (reverse-direction 1-hop) | 0.094 | 0.095 | +1.1% |
+| method_calls_mix (Struct-`HAS_METHOD`→Fn-`CALLS`→Fn) | 0.015 | 0.015 | +0.0% |
+
+Deltas are un-signed and scattered (three negative, four positive, three at the
+measurement floor), with the largest movement in *either* direction near 4%.
+Per the "Reading the results" note below, a genuine divergence would appear as a
+MISMATCH or as a systematic same-signed delta across queries; neither is present.
+
+Build-time minimum moved 0.046 s → 0.048 s. **This is not reported as a
+regression**: `build_secs` has 1 ms resolution and the workload is ~47 ms, so the
+difference is two ticks, at the harness's floor — the same caveat footnote ¹ in
+the build-times section describes. It is also uncorroborated by the query
+workload above, which moved un-signed.
+
+**Capture conditions were not ideal and are stated rather than smoothed over.**
+Three repository migrations were running on this machine concurrently. Load
+average held flat across the window (1-min 2.87 → 2.88; 5-min 3.54 → 3.53) and
+`syspolicyd` was ~14–20% throughout (Gatekeeper assessing freshly linked
+binaries). The absolute milliseconds therefore run hot and should not be compared
+against the quiet-machine numbers in the sections below; the **before/after
+delta** is the load-bearing result, because shared contention lifts both arms
+together and the alternating layout distributes it evenly. This is the same
+confound the closing note of this document already records from the other
+direction.
+
 ## Release 0.1.3 snapshot — 2026-07-22
 
 Release build on Apple M4 / macOS. Three `codingest_bench` repetitions against

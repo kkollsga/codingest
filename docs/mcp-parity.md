@@ -15,7 +15,7 @@ producer and is therefore the supported builder-backed server.
 
 ## The generic workspace extension
 
-KGLite 0.14.5 exposes the builder seam through `WorkspaceGraphHooks` and
+KGLite 0.15.0 exposes the builder seam through `WorkspaceGraphHooks` and
 `ServerExtensions`:
 
 ```rust

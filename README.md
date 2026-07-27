@@ -153,7 +153,7 @@ codingest skill install        # code-review Agent Skill
 ```
 
 The wheel bundles every grammar plus the `codingest` and `codingest-mcp`
-commands. KGLite ≥0.14.5 is installed automatically as the query/storage
+commands. KGLite ≥0.15.0 is installed automatically as the query/storage
 engine; its MCP server and the transitive `mcp-methods` framework power the
 builder-aware Codingest server. Nothing else needs to be installed.
 
@@ -166,7 +166,7 @@ Python prerequisites.
 ```toml
 [dependencies]
 codingest = "0.1"
-kglite = "0.14.5"
+kglite = "0.15.0"
 ```
 
 ```rust
@@ -226,7 +226,7 @@ goldens only for deliberate builder-behavior changes:
 ## Dependency policy
 
 `kglite` and `kglite-mcp-server` use matching crates.io requirements with a
-0.14.5 minimum and a shared lockfile. This keeps the builder, persistence
+0.15.0 minimum and a shared lockfile. This keeps the builder, persistence
 handoff, and embedded MCP server on one compatible engine patch line.
 
 ## Parity with the (now-removed) in-tree component
