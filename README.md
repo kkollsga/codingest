@@ -210,18 +210,30 @@ cargo test --workspace
 cargo test -p codingest --test parity
 ```
 
-### The golden-digest oracle
+### The golden-digest oracle (also the determinism gate)
 
 KGLite deleted its in-tree `code_tree` builder on 2026-07-16, so the old
 two-builder parity sweep is gone. The authority it enforced was **frozen** while
 the builders were still verified identical, into per-corpus SHA-256 digests
 under `crates/codingest/tests/goldens/` (committed fixtures — no network). The
-`golden_parity` test builds each corpus with only the codingest builder, digests
-a canonical exhaustive graph rendering, and compares to the frozen golden. The
-multi-rev fixture is guarded instead by `rev_self_consistency`. Regenerate
-goldens only for deliberate builder-behavior changes:
+`golden_parity` test builds each corpus **three times** with only the codingest
+builder, digests a canonical exhaustive graph rendering, and requires every
+build to match every other build *and* the frozen golden. Repeating the build is
+what makes this the determinism gate: hash iteration order is randomized per
+`HashMap`, so an order-dependent builder fails it (the
+`tests/corpus/dup_minified_assets` fixture reproduces the original DEFINES-edge
+nondeterminism bug). Disagreement between builds is reported as NONDETERMINISM;
+agreement between builds but not with the golden is reported as a behaviour
+change. The multi-rev fixture is guarded instead by `rev_self_consistency`.
+Regenerate goldens only for deliberate builder-behavior changes:
 `cargo test -p codingest --test parity -- --ignored capture_goldens` (details in
 `crates/codingest/tests/goldens/README.md`).
+
+Everything the gate needs is committed to this repository, so it is hermetic and
+runs in CI. It replaced a local-only `make` step that asserted an exact edge
+count against a *sibling* checkout — a verdict this project did not control.
+`make determinism-soak REPO=…` keeps the large-repo reproducer available as a
+diagnostic.
 
 ## Dependency policy
 

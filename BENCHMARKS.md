@@ -8,7 +8,71 @@
 > codingest builder** and checks query-result parity across the two builds
 > (determinism); the "in-tree" columns are the historical authority side.
 
+## ⚠ The benchmark corpus changed on 2026-07-27 — earlier numbers are not comparable
+
+**Read this before comparing any two numbers in this file.**
+
+Every workspace-targeted measurement published below (`0.1.2`, `0.1.3`, and the
+kglite 0.15.0 migration section) was taken by pointing `codingest_bench` at this
+repository's **working directory**. The builder skips dot-directories,
+`target/`, `node_modules/`, `venv/` and `__pycache__/` by name, but it has no
+notion of `.gitignore` — so the gitignored `dev-docs/` and `inbox/` working
+folders were ingested through the docs pass and counted as corpus. Those folders
+are local scratch: they differ between machines, between checkouts, and between
+one hour and the next on the same machine.
+
+The size of the effect was measured, not assumed:
+
+| Corpus | nodes | edges |
+|---|---:|---:|
+| clean `git worktree` of the pre-migration commit | 1,115 | 3,692 |
+| working tree at that same commit | 1,170 | 3,759 |
+| working tree, ~4 hours later, no commits | 1,177 | 3,867 |
+| working tree, one scratch `.md` file added | 1,178 | 3,868 |
+
+A single untracked markdown file moves the graph. The published 0.1.3 snapshot
+records 3,760 edges for a tree that measures differently today with no code
+change at all, and the migration capture had to freeze the tree mid-task once
+the agent realised its own doc edits were changing the thing being measured.
+
+**As of 2026-07-27 `codingest_bench` defines its own corpus.** It copies the
+target's *git-tracked* files into a temporary directory and builds that, so the
+input is a function of the revision (plus uncommitted edits to tracked files)
+and nothing else. Every run now prints a corpus line:
+
+```
+corpus : tracked-only — 198 files, 1687711 bytes, sha256 2d081a2b…
+```
+
+`corpus_sha256` is the comparability token: **two numbers are comparable only if
+their corpus digests match.** `--include-untracked` restores the old
+build-the-directory-as-is behaviour for one-off measurement of a non-git tree
+and prints a NOT-REPRODUCIBLE banner instead of a digest. `make gate`'s
+bench-smoke step fails if the harness does not resolve a tracked-only corpus.
+
+Consequences for this document:
+
+- The **methodology below is unchanged** — same 11 queries, same alternating
+  A/B timed iterations, same min-of-repetitions reporting, same 33-check
+  per-side parity gate. Only the *input* changed.
+- Node/edge counts and absolute timings from before this date describe a corpus
+  that cannot be reconstructed. Do **not** read a delta across the 2026-07-27
+  line as a builder or engine effect.
+- The external-target sections (mistral.rs, KGLite, distillPDF, petekSuite,
+  Apollo-11) were never affected by this: they were measured on other
+  checkouts, whose own untracked state is a separate (and unrecorded) variable.
+- The first tracked-only reading of this workspace, at
+  `chore/harden-gate-corpus`, is **1,122 nodes / 3,800 edges**, corpus
+  `2d081a2bd90a58e2…` (198 files, 1,687,711 bytes). No timings were captured
+  with it: the machine was not idle, and per the performance protocol a timing
+  baseline is captured in release mode on a quiet machine at release time. The
+  next release capture starts the new comparable series.
+
 ## kglite 0.15.0 engine migration — 2026-07-27
+
+> **Corpus caveat (2026-07-27):** measured on the working tree, which then
+> included the gitignored `dev-docs/` and `inbox/` folders. Not reproducible;
+> see the corpus-change notice at the top of this file.
 
 Matched before/after capture isolating the engine bump (kglite 0.14.5 ->
 0.15.0). **No detectable regression, and no change in graph output.**
@@ -68,6 +132,10 @@ direction.
 
 ## Release 0.1.3 snapshot — 2026-07-22
 
+> **Corpus caveat (2026-07-27):** measured on the working tree, which then
+> included the gitignored `dev-docs/` and `inbox/` folders. Not reproducible;
+> see the corpus-change notice at the top of this file.
+
 Release build on Apple M4 / macOS. Three `codingest_bench` repetitions against
 this workspace produced independent build pairs of 0.079/0.047, 0.071/0.050,
 and 0.071/0.048 seconds. The 0.047 s minimum is within noise of 0.1.2's 0.046 s
@@ -86,6 +154,10 @@ data-point relationships. All 33 Apollo query comparisons matched. A dedicated
 performance follow-up remains tracked in `dev-docs/todos.md`.
 
 ## Release 0.1.2 snapshot — 2026-07-22
+
+> **Corpus caveat (2026-07-27):** measured on the working tree, which then
+> included the gitignored `dev-docs/` and `inbox/` folders. Not reproducible;
+> see the corpus-change notice at the top of this file.
 
 Release build on Apple M4 / macOS. Three `codingest_bench` repetitions against
 this workspace produced independent build pairs of 0.075/0.046, 0.048/0.050,
@@ -250,9 +322,14 @@ consecutive runs then disagreed on total edge count (observed values 24,317 /
 24,449 / 24,464 across runs), while `nodes` (13,555) and `resolved_edges`
 (1,099) were stable. The root cause (randomized HashMap iteration over DEFINES
 pairs) has since been **fixed** in codingest (BTreeMap + within-pair
-consolidation); the canonical edge count is now a stable 24,317, pinned by the
-release determinism gate. Every deterministic target above matched
-exactly on every run.
+consolidation). The edge count observed on distillPDF at the time was 24,317;
+that number is **not** a pin and is not gated — distillPDF is an externally
+owned checkout that has since been refactored and now yields 24,173 from the
+same builder. Determinism is enforced instead by
+`crates/codingest/tests/parity.rs::golden_parity`, which builds each committed
+in-repo corpus three times and requires all three digests to match each other
+and the frozen golden (`tests/corpus/dup_minified_assets` is the reproducer for
+this exact bug). Every deterministic target above matched exactly on every run.
 
 An earlier benchmark pass ran concurrently with a large release compile and
 showed +2–5% deltas on the last two targets; the quiet-machine re-run above

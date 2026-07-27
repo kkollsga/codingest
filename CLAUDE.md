@@ -38,10 +38,11 @@ against. Fidelity to its last-known-good output is still a hard goal, now
 enforced against a **frozen record** rather than a second builder. The
 rationale + history live in `dev-docs/designs/parity-and-upstream-sync.md`.
 - The gate is `cargo test -p codingest --test parity` — it must stay green.
-  `golden_parity` rebuilds each corpus with the codingest builder and asserts
-  its canonical digest matches the frozen golden captured (2026-07-16) from the
-  last in-sync in-tree authority; `rev_self_consistency` covers the multi-rev
-  path. `PARITY.md` is the committed record.
+  `golden_parity` rebuilds each corpus **three times** with the codingest
+  builder and asserts every build's canonical digest matches every other build
+  (determinism) and the frozen golden captured (2026-07-16) from the last
+  in-sync in-tree authority (behaviour); `rev_self_consistency` covers the
+  multi-rev path. `PARITY.md` is the committed record.
 - A red `golden_parity` after a builder change is a **conscious decision**: if
   the graph change is intended, regenerate the goldens
   (`--ignored capture_goldens`) in the same commit and note why; never
@@ -49,7 +50,12 @@ rationale + history live in `dev-docs/designs/parity-and-upstream-sync.md`.
 
 ## Performance protocol
 Perf claims come from a **release build only** (`--release`), `min` over
-`median` for sub-ms work. The harness is `codingest_bench` (now two independent
+`median` for sub-ms work. **A number is meaningless without its corpus.**
+`codingest_bench` builds the target's *git-tracked* files copied into a tempdir
+and prints a `corpus_sha256`; quote that digest with any number you publish, and
+never compare two numbers whose digests differ. `--include-untracked` measures
+the directory as-is (the builder ingests gitignored content through the docs
+pass) and is for one-off, explicitly-non-reproducible measurement only. The harness is `codingest_bench` (now two independent
 codingest builds — per-query medians across the two, plus a cross-build
 query-result parity check) + `codingest_stats` (build-time, node/edge counts).
 Log ad-hoc runs to

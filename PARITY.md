@@ -47,11 +47,16 @@ two-builder tests (`corpus_parity`, `rev_path_parity`) were removed from
 `crates/codingest/tests/parity.rs`. Parity is now enforced by three surviving,
 single-builder mechanisms:
 
-1. **Golden digests** (`golden_parity`) — per-corpus SHA-256s captured
-   2026-07-16 from the last in-sync in-tree authority, while the two builders
-   were still verified byte-for-byte identical (§1 below was green). Each corpus
-   is rebuilt with the codingest builder and its canonical digest compared to
-   the frozen golden.
+1. **Golden digests + determinism** (`golden_parity`) — per-corpus SHA-256s
+   captured 2026-07-16 from the last in-sync in-tree authority, while the two
+   builders were still verified byte-for-byte identical (§1 below was green).
+   Each corpus is rebuilt with the codingest builder **three times**; every
+   build's canonical digest must equal every other build's (determinism —
+   randomized `HashMap` iteration order is what the `dup_minified_assets`
+   corpus reproduces) and must equal the frozen golden (behaviour). The two
+   failure modes are reported separately because they call for opposite
+   responses: a behaviour change may legitimately be regenerated,
+   nondeterminism never may.
 2. **Rev self-consistency** (`rev_self_consistency`) — the multi-rev fixture
    can't be frozen (fresh commit SHAs leak into `revs`), so it builds the same
    2-commit repo twice with the codingest builder and asserts equivalence,

@@ -47,8 +47,11 @@ jobs:
 
       - name: Run Rust tests
         # Includes crates/codingest/tests/parity.rs — the golden oracle
-        # (golden_parity + rev_self_consistency). Goldens are committed
-        # fixtures under crates/codingest/tests/goldens/; the test is offline.
+        # (golden_parity + rev_self_consistency), which is ALSO the builder
+        # determinism gate: golden_parity builds each corpus three times and
+        # requires all three digests to agree with each other and the golden.
+        # Goldens are committed fixtures under crates/codingest/tests/goldens/;
+        # the test is offline and needs no sibling checkout.
         run: cargo test --workspace
 
   python:

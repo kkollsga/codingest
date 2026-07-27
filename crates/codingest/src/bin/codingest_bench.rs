@@ -16,16 +16,41 @@
 //! MISMATCH is a query-result determinism regression, and the A/B delta is
 //! run-to-run timing variance. The release gate fails on any MISMATCH.
 //!
+//! # The corpus is defined by the harness, not by the working directory
+//!
+//! A benchmark number is comparable to another only if both were measured on
+//! the same input. The builder walks whatever is on disk: it skips dot-dirs,
+//! `target/`, `node_modules/`, `venv/` and `__pycache__/` by name, but it has
+//! no notion of `.gitignore`, so a repository's *untracked* working state
+//! (scratch folders, local notes, generated markdown) is ingested — notably
+//! through the docs pass. Benchmarking a working tree therefore measures a
+//! corpus nobody else can reconstruct. Measured on this workspace: a clean
+//! `git worktree` of a commit scored 1,115 nodes / 3,692 edges while the
+//! working tree at that same commit scored 1,170 / 3,759 — a ~5% swing with no
+//! builder or engine involvement, which silently invalidated published numbers.
+//!
+//! So this harness defines its own corpus. By default it materializes the
+//! target's **git-tracked** files into a temporary directory and builds that:
+//! the input is then a function of the committed content plus any uncommitted
+//! edits to tracked files, reproducible on any machine at the same revision.
+//! Every run prints `corpus_sha256`, so two numbers can be *checked* for
+//! comparability rather than assumed comparable. `--include-untracked` restores
+//! the old build-the-directory-as-is behaviour for a one-off measurement of a
+//! non-git tree, and prints a NOT-REPRODUCIBLE banner.
+//!
 //! Usage:
 //!   cargo run -p codingest --bin codingest_bench --release -- <path>
 //!   cargo run -p codingest --bin codingest_bench --release -- <path> --json
+//!   cargo run -p codingest --bin codingest_bench --release -- <path> --include-untracked
 
 use kglite::api::session::{execute_read, ExecuteOptions, ExecuteOutcome};
 use kglite::api::{DirGraph, GraphRead, Value};
+use sha2::{Digest, Sha256};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
 const WARMUP: usize = 3;
@@ -92,6 +117,153 @@ fn min(v: &[f64]) -> f64 {
     v.iter().cloned().fold(f64::INFINITY, f64::min)
 }
 
+// ── corpus selection ─────────────────────────────────────────────────────
+
+/// How the benchmark input was assembled. See the module docs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CorpusMode {
+    /// Git-tracked files of the target, copied into a tempdir. Reproducible.
+    TrackedOnly,
+    /// The target directory exactly as it sits on disk. Not reproducible if
+    /// the tree carries untracked or git-ignored content.
+    WorkingTree,
+}
+
+impl CorpusMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            CorpusMode::TrackedOnly => "tracked-only",
+            CorpusMode::WorkingTree => "working-tree",
+        }
+    }
+}
+
+/// The resolved benchmark input: the directory to build, plus the identity of
+/// the content in it.
+struct Corpus {
+    build_dir: PathBuf,
+    mode: CorpusMode,
+    /// Why we ended up in `mode` — printed so the choice is never silent.
+    reason: String,
+    files: usize,
+    bytes: u64,
+    /// `None` in `WorkingTree` mode: the ingested set is not enumerable
+    /// without duplicating the builder's walk, and an approximate identity is
+    /// worse than an explicit absence.
+    sha256: Option<String>,
+    /// Owns the tempdir for the process lifetime; dropping it deletes the copy.
+    _tmp: Option<tempfile::TempDir>,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Git-tracked paths under `target`, relative to it. `None` when `target` is
+/// not inside a git work tree (or git is unavailable).
+fn git_tracked_files(target: &Path) -> Option<Vec<String>> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(target)
+        .args(["ls-files", "-z", "--cached"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(out.stdout).ok()?;
+    Some(
+        stdout
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// Copy `rels` (relative to `target`) into a fresh tempdir and return the
+/// corpus, including a content digest over the sorted `(path, sha256(bytes))`
+/// pairs. Two runs with the same digest measured the same input.
+fn materialize_tracked(target: &Path, mut rels: Vec<String>) -> std::io::Result<Corpus> {
+    rels.sort();
+    let tmp = tempfile::Builder::new()
+        .prefix("codingest-bench-corpus-")
+        .tempdir()?;
+    let root = tmp.path().to_path_buf();
+
+    let mut manifest = Sha256::new();
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+
+    for rel in &rels {
+        let src = target.join(rel);
+        // `ls-files` lists index entries; a tracked-but-deleted file, or a
+        // gitlink (submodule) directory, has nothing to copy.
+        let Ok(data) = std::fs::read(&src) else {
+            continue;
+        };
+        let dst = root.join(rel);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&dst, &data)?;
+
+        let mut file_hash = Sha256::new();
+        file_hash.update(&data);
+        manifest.update(rel.as_bytes());
+        manifest.update(b"\0");
+        manifest.update(hex(&file_hash.finalize()).as_bytes());
+        manifest.update(b"\n");
+
+        files += 1;
+        bytes += data.len() as u64;
+    }
+
+    Ok(Corpus {
+        build_dir: root,
+        mode: CorpusMode::TrackedOnly,
+        reason: format!("git-tracked content of {}", target.display()),
+        files,
+        bytes,
+        sha256: Some(hex(&manifest.finalize())),
+        _tmp: Some(tmp),
+    })
+}
+
+/// Resolve the benchmark input for `target`.
+///
+/// Default is `TrackedOnly`; it degrades to `WorkingTree` only when the target
+/// is not in a git work tree, and says so. `--include-untracked` forces
+/// `WorkingTree`.
+fn resolve_corpus(target: &Path, include_untracked: bool) -> Corpus {
+    let working_tree = |reason: String| Corpus {
+        build_dir: target.to_path_buf(),
+        mode: CorpusMode::WorkingTree,
+        reason,
+        files: 0,
+        bytes: 0,
+        sha256: None,
+        _tmp: None,
+    };
+
+    if include_untracked {
+        return working_tree("--include-untracked requested".to_string());
+    }
+    let Some(rels) = git_tracked_files(target) else {
+        return working_tree(format!("{} is not in a git work tree", target.display()));
+    };
+    if rels.is_empty() {
+        return working_tree(format!("git tracks no files under {}", target.display()));
+    }
+    match materialize_tracked(target, rels) {
+        Ok(corpus) => corpus,
+        Err(e) => {
+            eprintln!("warning: could not materialize the tracked-only corpus: {e}");
+            working_tree(format!("tracked-only materialization failed: {e}"))
+        }
+    }
+}
+
 struct QueryResult {
     name: String,
     rows: usize,
@@ -114,12 +286,30 @@ fn main() {
     };
     let rest: Vec<String> = args.collect();
     let json = rest.iter().any(|a| a == "--json");
+    let include_untracked = rest.iter().any(|a| a == "--include-untracked");
+    // Reject unknown flags rather than silently ignoring them: a typo'd
+    // `--include-untraked` would otherwise change nothing and be reported as a
+    // measurement taken under a mode it never ran in.
+    if let Some(bad) = rest
+        .iter()
+        .find(|a| !matches!(a.as_str(), "--json" | "--include-untracked"))
+    {
+        eprintln!("unknown argument `{bad}`");
+        eprintln!("usage: codingest_bench <path> [--json] [--include-untracked]");
+        std::process::exit(2);
+    }
     let target = Path::new(&path);
+
+    // Resolve the corpus BEFORE any timing: by default this copies the
+    // target's git-tracked files into a tempdir so the measured input is
+    // reproducible from the revision alone (see the module docs).
+    let corpus = resolve_corpus(target, include_untracked);
+    let build_dir = corpus.build_dir.as_path();
 
     // Two independent codingest builds with identical arguments:
     // verbose=false, include_tests=false, save_to=None, max_loc=None, docs=true.
     let t = Instant::now();
-    let graph_a = codingest::builder::run_with_options(target, false, false, None, None, true)
+    let graph_a = codingest::builder::run_with_options(build_dir, false, false, None, None, true)
         .unwrap_or_else(|e| {
             eprintln!("build A failed: {e}");
             std::process::exit(1);
@@ -127,7 +317,7 @@ fn main() {
     let build_a_secs = t.elapsed().as_secs_f64();
 
     let t = Instant::now();
-    let graph_b = codingest::builder::run_with_options(target, false, false, None, None, true)
+    let graph_b = codingest::builder::run_with_options(build_dir, false, false, None, None, true)
         .unwrap_or_else(|e| {
             eprintln!("build B failed: {e}");
             std::process::exit(1);
@@ -291,6 +481,11 @@ fn main() {
     if json {
         let out = serde_json::json!({
             "path": path,
+            "corpus_mode": corpus.mode.as_str(),
+            "corpus_reason": corpus.reason,
+            "corpus_files": corpus.sha256.as_ref().map(|_| corpus.files),
+            "corpus_bytes": corpus.sha256.as_ref().map(|_| corpus.bytes),
+            "corpus_sha256": corpus.sha256,
             "nodes": nodes,
             "edges": edges,
             "build_a_secs": (build_a_secs * 1000.0).round() / 1000.0,
@@ -316,6 +511,22 @@ fn main() {
 
     println!("codingest Cypher benchmark — query-parity across two independent builds");
     println!("target : {path}");
+    match &corpus.sha256 {
+        Some(digest) => println!(
+            "corpus : {} — {} files, {} bytes, sha256 {}\n         ({})",
+            corpus.mode.as_str(),
+            corpus.files,
+            corpus.bytes,
+            digest,
+            corpus.reason,
+        ),
+        None => println!(
+            "corpus : {} — NOT REPRODUCIBLE: untracked and git-ignored content \
+             is ingested\n         ({})",
+            corpus.mode.as_str(),
+            corpus.reason,
+        ),
+    }
     println!("graph  : {nodes} nodes / {edges} edges  (identical across both builds)");
     println!("build  : A {build_a_secs:.3}s | B {build_b_secs:.3}s  (one-off, context)");
     println!("anchor : in-hub  = {hot_in}");

@@ -16,13 +16,34 @@ ship time — it's the only place the version bumps.
   `.kgl` handoff — the Rust kglite compiled into the wheel that writes the
   bytes, and the separately-installed Python kglite wheel that reads them — on
   the same minor, mirroring the Cargo semver range exactly.
-- Defaulted the `Makefile` Python-wheel gate (`make gate` steps 7-8) to a
+- Defaulted the `Makefile` Python-wheel gate (`make gate` steps 6-7) to a
   codingest-local `.venv` instead of the sibling KGLite checkout's `.venv`, and
-  made step 7 print the absolute path it writes into. The previous default made
+  made the wheel step print the absolute path it writes into. The previous default made
   a gate in this repo `maturin develop --release` into *another repo's*
   environment, replacing whatever extension that repo's own conventions require,
   with no warning in either repo. Sharing an environment is now opt-in via
   `VENV=...`.
+- **`codingest_bench` now defines its own corpus.** It copies the target's
+  git-tracked files into a temporary directory and builds that, and prints
+  `corpus_sha256` (plus file/byte counts) with every run. Previously it built
+  the target directory as it sat on disk; because the builder has no notion of
+  `.gitignore`, a repository's untracked working state was ingested through the
+  docs pass, and the measured input could not be reconstructed on another
+  machine or at another time — a single scratch `.md` file moved this
+  workspace's graph. `--include-untracked` restores the old behaviour for
+  one-off measurement of a non-git tree and prints a NOT-REPRODUCIBLE banner.
+  Unknown flags are now rejected instead of ignored. **Node/edge counts and
+  timings published before 2026-07-27 are not comparable with later ones** —
+  see the notice at the top of `BENCHMARKS.md`.
+- Made `golden_parity` build each corpus three times and require every build to
+  agree with every other build as well as with the frozen golden, so it is the
+  builder-determinism gate in addition to the behaviour gate. This replaced a
+  `make gate` step that ran three builds of an unrelated *sibling* checkout and
+  asserted an exact edge count against it: that verdict depended on a repository
+  this project does not own (upstream refactoring alone turned it red), it never
+  ran in CI, and it skipped silently when the sibling was absent. Determinism is
+  now hermetic, in-repo, and CI-enforced on both OSes. `make determinism-soak
+  REPO=…` keeps the large-repo reproducer as an opt-in diagnostic.
 
 ## [0.1.3] - 2026-07-22
 
@@ -175,7 +196,8 @@ component, extracted so the kglite engine can ship without tree-sitter grammars.
   - The DEFINES-edge nondeterminism bug (randomized HashMap iteration over
     duplicate `(file, entity)` pairs) is fixed (BTreeMap + within-pair
     consolidation) and guarded by the `dup_minified_assets` corpus + the
-    `make gate` determinism reproducer.
+    `make gate` determinism reproducer. (Superseded in `[Unreleased]`: the
+    reproducer moved into `golden_parity`'s repeat-build loop.)
 - `tests/python-legacy/` preserves KGLite's full 47-file `kglite.code_tree`
   behavioral suite verbatim as the dormant behavioral spec (see its README).
 

@@ -9,9 +9,18 @@
 //! builders were still verified-identical) into per-corpus SHA-256 golden
 //! digests, and the surviving tests carry it forward:
 //!
-//!   * `golden_parity` builds each corpus once with `codingest` and asserts
-//!     its canonical digest matches the frozen golden (see
-//!     `tests/goldens/README.md`).
+//!   * `golden_parity` builds each corpus `BUILDS_PER_CORPUS` times with
+//!     `codingest` and asserts every build's canonical digest matches the
+//!     frozen golden (see `tests/goldens/README.md`). Repeating the build is
+//!     what makes this the project's **determinism** gate as well: hash
+//!     iteration order is randomized per `HashMap` instance, so an
+//!     order-dependent builder produces digests that disagree with each other
+//!     (reported as NONDETERMINISM) or agree with each other but not the
+//!     golden (reported as a behaviour change). This replaced a Makefile-only
+//!     step that ran three builds of an *external sibling checkout* and pinned
+//!     its exact edge count — a gate whose verdict depended on a repository
+//!     this project does not own, which never ran in CI, and which skipped
+//!     silently when the checkout was absent.
 //!   * `rev_self_consistency` builds the same 2-commit tempdir repo twice with
 //!     `codingest` and asserts the graphs are equivalent — INCLUDING the
 //!     `revs` / `rev_fp` list properties stamped onto every node and edge — a
@@ -44,6 +53,20 @@ const CORPORA: &[&str] = &[
     "dup_minified_assets",
     "agc_basic",
 ];
+
+/// Independent builds of each corpus per `golden_parity` run.
+///
+/// One build proves the output still matches the frozen golden; repeating it
+/// also proves the output does not depend on hash iteration order. The
+/// original nondeterminism bug (randomized `HashMap` iteration over DEFINES
+/// (source_type, target_type) pairs — whichever pair went first got
+/// skip-existence-check dedup semantics) is reproduced by the
+/// `dup_minified_assets` corpus, which defines the same selector/element id
+/// from one file more than once. Three builds is enough to make an
+/// order-dependent builder fail loudly and quickly; the digest comparison
+/// against the golden catches the residual case where all three happen to
+/// agree on a wrong order.
+const BUILDS_PER_CORPUS: usize = 3;
 
 fn corpus_root() -> PathBuf {
     // tests/parity.rs lives in crates/code-tree; corpus is at the workspace root.
@@ -229,62 +252,62 @@ fn read_golden(corpus: &str) -> String {
 
 /// Assert the two graphs are equivalent along every dimension, with
 /// pinpointed diffs on failure.
-fn assert_graphs_equiv(label: &str, in_tree: &DirGraph, standalone: &DirGraph) {
+fn assert_graphs_equiv(label: &str, left: &DirGraph, right: &DirGraph) {
     // 1. node-type counts
-    let (a, b) = (node_type_counts(in_tree), node_type_counts(standalone));
+    let (a, b) = (node_type_counts(left), node_type_counts(right));
     assert_eq!(
         a, b,
-        "[{label}] node-type counts differ\nin-tree={a:?}\nstandalone={b:?}"
+        "[{label}] node-type counts differ\nleft={a:?}\nright={b:?}"
     );
 
     // 2. edge-type counts
-    let (a, b) = (edge_type_counts(in_tree), edge_type_counts(standalone));
+    let (a, b) = (edge_type_counts(left), edge_type_counts(right));
     assert_eq!(
         a, b,
-        "[{label}] edge-type counts differ\nin-tree={a:?}\nstandalone={b:?}"
+        "[{label}] edge-type counts differ\nleft={a:?}\nright={b:?}"
     );
 
     // 3. node identity set
-    let (a, b) = (node_identities(in_tree), node_identities(standalone));
+    let (a, b) = (node_identities(left), node_identities(right));
     if a != b {
         let only_in: Vec<_> = a.iter().filter(|x| !b.contains(x)).take(10).collect();
         let only_st: Vec<_> = b.iter().filter(|x| !a.contains(x)).take(10).collect();
         panic!(
-            "[{label}] node identity sets differ\nonly in-tree (<=10): {only_in:?}\nonly standalone (<=10): {only_st:?}"
+            "[{label}] node identity sets differ\nonly left (<=10): {only_in:?}\nonly right (<=10): {only_st:?}"
         );
     }
 
     // 4. per-node property sweep
-    let (a, b) = (node_props(in_tree), node_props(standalone));
+    let (a, b) = (node_props(left), node_props(right));
     if a != b {
         for (x, y) in a.iter().zip(b.iter()) {
             if x != y {
                 panic!(
-                    "[{label}] node properties differ\nfirst mismatch:\n  in-tree=({}, {}) {:?}\n  standalone=({}, {}) {:?}",
+                    "[{label}] node properties differ\nfirst mismatch:\n  left=({}, {}) {:?}\n  right=({}, {}) {:?}",
                     x.0, x.1, x.2, y.0, y.1, y.2
                 );
             }
         }
         panic!(
-            "[{label}] node property lists differ in length: in-tree={} standalone={}",
+            "[{label}] node property lists differ in length: left={} right={}",
             a.len(),
             b.len()
         );
     }
 
     // 5. per-edge property sweep
-    let (a, b) = (edge_props(in_tree), edge_props(standalone));
+    let (a, b) = (edge_props(left), edge_props(right));
     if a != b {
         for (x, y) in a.iter().zip(b.iter()) {
             if x != y {
                 panic!(
-                    "[{label}] edge properties differ\nfirst mismatch:\n  in-tree=({}, {}->{}) {:?}\n  standalone=({}, {}->{}) {:?}",
+                    "[{label}] edge properties differ\nfirst mismatch:\n  left=({}, {}->{}) {:?}\n  right=({}, {}->{}) {:?}",
                     x.0, x.1, x.2, x.3, y.0, y.1, y.2, y.3
                 );
             }
         }
         panic!(
-            "[{label}] edge property lists differ in length: in-tree={} standalone={}",
+            "[{label}] edge property lists differ in length: left={} right={}",
             a.len(),
             b.len()
         );
@@ -298,6 +321,12 @@ fn assert_graphs_equiv(label: &str, in_tree: &DirGraph, standalone: &DirGraph) {
 // (see `tests/goldens/README.md`). This is the test that carries the
 // authority forward now that KGLite has deleted its in-tree builder: it keeps
 // proving that codingest reproduces the frozen graph byte-for-byte.
+//
+// It is also the determinism gate: each corpus is built `BUILDS_PER_CORPUS`
+// times and every build must produce the same digest as every other *and* as
+// the golden. The two failure modes are reported separately, because they call
+// for opposite responses — a behaviour change may be legitimate and
+// regenerated, while nondeterminism is always a bug.
 #[test]
 fn golden_parity() {
     let root = corpus_root();
@@ -305,14 +334,40 @@ fn golden_parity() {
         let dir = root.join(name);
         assert!(dir.is_dir(), "missing corpus dir: {}", dir.display());
 
-        let g = codingest::builder::run_with_options(&dir, false, true, None, None, true)
-            .unwrap_or_else(|e| panic!("[{name}] codingest build failed: {e}"));
-        let got = graph_digest(&g);
+        let build = || {
+            codingest::builder::run_with_options(&dir, false, true, None, None, true)
+                .unwrap_or_else(|e| panic!("[{name}] codingest build failed: {e}"))
+        };
+
+        let first = build();
+        let got = graph_digest(&first);
+
+        // 1. Determinism: repeat builds must be identical to the first.
+        for run in 2..=BUILDS_PER_CORPUS {
+            let again = build();
+            let again_digest = graph_digest(&again);
+            if again_digest != got {
+                // Pinpoint the divergence before reporting it.
+                assert_graphs_equiv(
+                    &format!("{name} nondeterminism run 1 vs {run}"),
+                    &first,
+                    &again,
+                );
+                panic!(
+                    "[{name}] NONDETERMINISM: build 1 and build {run} of the same corpus \
+                     produced different digests ({got} != {again_digest}) but compared equal \
+                     dimension-by-dimension — widen the canonical rendering."
+                );
+            }
+        }
+
+        // 2. Frozen authority: the (now proven stable) digest must be the golden.
         let want = read_golden(name);
         assert_eq!(
             got, want,
             "[{name}] golden digest mismatch\n  golden (frozen authority) = {want}\n  codingest build           = {got}\n\
-             If this change to builder behavior is deliberate, regenerate with\n\
+             All {BUILDS_PER_CORPUS} builds agreed, so this is a builder BEHAVIOUR change, not nondeterminism.\n\
+             If it is deliberate, regenerate with\n\
              `cargo test -p codingest --test parity -- --ignored capture_goldens`."
         );
     }

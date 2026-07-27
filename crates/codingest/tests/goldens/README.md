@@ -25,6 +25,14 @@ in-tree vs codingest check) is gone. `golden_parity` — which builds each corpu
 with only the `codingest` builder and compares to these frozen digests — is now
 the sole guardian that codingest still produces the historically-correct graph.
 
+`golden_parity` builds each corpus **three times** (`BUILDS_PER_CORPUS`), so it
+is also the builder-determinism gate: hash iteration order is randomized per
+`HashMap` instance, and `dup_minified_assets` reproduces the DEFINES-edge
+ordering bug that once flapped edge totals run-to-run. A disagreement *between
+builds* is nondeterminism and is never a reason to regenerate; agreement between
+builds that differs from the golden is a behaviour change and may be. The test
+reports the two cases distinctly.
+
 ## Regenerating (deliberate builder-behavior changes only)
 
 Do **not** regenerate to make a red `golden_parity` go green. A digest change
