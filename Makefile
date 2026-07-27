@@ -24,7 +24,17 @@ EXPECTED_EDGES ?= 24317
 # have `kglite` + `maturin` installed — the wheel's build-then-load handoff
 # returns the installed kglite wheel's KnowledgeGraph. Override on the command
 # line: `make pytest-py VENV=/path/to/.venv`.
-VENV ?= /Volumes/EksternalHome/Koding/Rust/KGLite/.venv
+#
+# This defaults to a codingest-LOCAL venv on purpose. It previously defaulted to
+# the sibling KGLite checkout's `.venv` (inherited from the initial extraction
+# scaffold, where that venv happened to be the one with kglite + maturin already
+# installed — never a deliberate requirement). That made `make gate` in this
+# repo silently `maturin develop --release` into *another repo's* environment,
+# clobbering whatever extension that repo's own conventions require to be
+# installed, with nothing in either repo warning about it. Sharing an
+# environment is now something you opt *into* explicitly via `VENV=...`, and
+# step 7 prints the absolute path it is about to write into either way.
+VENV ?= $(CURDIR)/.venv
 
 .PHONY: gate fmt fmt-check clippy build test determinism bench-smoke wheel pytest-py clean
 
@@ -124,6 +134,7 @@ bench-smoke:
 ##    cleanly if the venv (or its maturin) is not present.
 wheel:
 	@echo "== [7/8] maturin develop the codingest wheel into $(VENV) =="
+	@echo "  writing into: $(abspath $(VENV))"
 	@if [ ! -x "$(VENV)/bin/maturin" ]; then \
 		echo "  SKIP: $(VENV)/bin/maturin not present (pass VENV=... to run)"; \
 		exit 0; \

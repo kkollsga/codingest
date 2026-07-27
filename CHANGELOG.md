@@ -8,6 +8,22 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- Moved the kglite engine and MCP server pins to 0.15.0, and the Python engine
+  requirement to `>=0.15.0,<0.16`. The upper bound keeps the two halves of the
+  `.kgl` handoff — the Rust kglite compiled into the wheel that writes the
+  bytes, and the separately-installed Python kglite wheel that reads them — on
+  the same minor, mirroring the Cargo semver range exactly.
+- Defaulted the `Makefile` Python-wheel gate (`make gate` steps 7-8) to a
+  codingest-local `.venv` instead of the sibling KGLite checkout's `.venv`, and
+  made step 7 print the absolute path it writes into. The previous default made
+  a gate in this repo `maturin develop --release` into *another repo's*
+  environment, replacing whatever extension that repo's own conventions require,
+  with no warning in either repo. Sharing an environment is now opt-in via
+  `VENV=...`.
+
 ## [0.1.3] - 2026-07-22
 
 ### Added

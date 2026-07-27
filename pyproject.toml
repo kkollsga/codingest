@@ -34,8 +34,17 @@ dynamic = ["version"]
 # `load()`. So the returned object is a real `kglite.KnowledgeGraph`, and the
 # wheel depends on kglite at runtime. Keep the Python engine aligned with the
 # Rust crates so both halves use the same persistence and MCP fixes.
+#
+# The upper bound is a `.kgl` format guard, not stylistic. The two halves of
+# this handoff are versioned independently: the *Rust* kglite compiled into
+# this wheel writes the bytes, and the separately-installed *Python* kglite
+# wheel reads them. KGLite deliberately hard-breaks the `.kgl` format across
+# minor releases (e.g. the v3->v4 break, which refuses old files outright), so
+# pip must never be free to pair our writer with a reader from a different
+# minor. This range therefore mirrors the Cargo semver range for the pin above
+# (`version = "0.15.0"` == `>=0.15.0,<0.16.0`) exactly — bump both together.
 dependencies = [
-    "kglite>=0.14.5,<0.15",
+    "kglite>=0.15.0,<0.16",
 ]
 
 [project.urls]
