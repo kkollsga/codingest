@@ -1,5 +1,5 @@
 # Rust build artifacts
-/target/
+/target
 
 # Generated graph files (regenerable; heavy). The small .sha256 golden
 # digests under crates/codingest/tests/goldens/ are text, tracked normally.
