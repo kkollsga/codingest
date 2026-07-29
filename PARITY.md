@@ -7,6 +7,31 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.1.4 verification — 2026-07-30
+
+The frozen-record gate passes: `golden_parity` and `rev_self_consistency` both
+green in the release-mode workspace run, all seven corpus digests matching.
+
+This release changed **no builder code**, and the record reflects that rather
+than re-deriving it. The only `crates/codingest/src` changes since `v0.1.3` are
+the `codingest_bench` harness (which defines the measured corpus, not the graph)
+and a comment in `rev.rs`; all seven `tests/goldens/*.sha256` files are
+byte-identical to `v0.1.3`. The engine floor moved from kglite 0.15.0 to 0.15.3,
+which is the one change that *could* have shifted output — it did not, and that
+was confirmed twice independently: the goldens did not move, and a matched
+before/after bench capture (varying only the linked engine, against two
+digest-identical corpora) reported identical node/edge counts on both, 991/3,518
+for `crates/codingest/src` and 7,291/36,719 for the KGLite checkout.
+
+Cross-build query parity: 0 mismatches in 220 checks (11 Cypher queries × 20
+runs across two independent builds).
+
+Per the performance protocol the release bench was **skipped deliberately**: no
+perf-sensitive path changed since `v0.1.3`, so there is nothing to re-measure.
+The engine-bump capture is recorded at
+`dev-docs/bench/out/phase1-kglite-0153-engine-bump.md` (verdict: flat; the large
+corpus agrees to 0.1%).
+
 ## Release 0.1.3 verification — 2026-07-22
 
 The frozen-record gate passes: all seven corpus digests match, and

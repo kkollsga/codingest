@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-30
+
 ### Changed
 - Moved the kglite engine and MCP server pins to 0.15.3, and the Python engine
   requirement to `>=0.15.3,<0.16` (including the exact `kglite==0.15.3` pin the
@@ -52,6 +54,38 @@ ship time — it's the only place the version bumps.
   ran in CI, and it skipped silently when the sibling was absent. Determinism is
   now hermetic, in-repo, and CI-enforced on both OSes. `make determinism-soak
   REPO=…` keeps the large-repo reproducer as an opt-in diagnostic.
+- Hardened the release workflow against checks that could not report failure.
+  Ten such gates were found on the publish path; the four externally reported
+  ones were the least serious. The extracted version is now asserted to be
+  well-formed (the old `grep … | cut` reported *cut's* status, always 0), the
+  wheel and sdist uploads set `if-no-files-found: error` instead of the default
+  `warn`, the artifact *set* is asserted against the build matrix rather than
+  `ls`-ed, an inconclusive crates.io probe fails loudly instead of silently
+  skipping all three publishes, a missing CHANGELOG section is fatal rather than
+  degrading to auto-generated notes, and `continue-on-error` is narrowed from
+  the whole `release-binaries` job to its three genuinely fragile steps.
+  `workflow_dispatch` is removed as a trigger: on a dispatch run the ref is a
+  branch, and `softprops/action-gh-release` handed a non-tag ref creates a tag
+  and release named after it. Because `release.yml` runs only on a `v*` tag and
+  so can never be *seen* to fail on a branch, the logic now lives in
+  `scripts/release_gates.sh` behind 206 offline tests that drive every function
+  through both its pass and its fail path on every push.
+
+### Fixed
+- **The five internal path-dependency pins now match the workspace version.**
+  Each crate's own `package.version` inherits `[workspace.package] version`, but
+  the *requirement* on an internal path dependency does not — it is a
+  hand-written literal that `cargo publish` emits verbatim. All five had sat at
+  `0.1.0` across two releases, so published `codingest-cli 0.1.3` declared a
+  dependency on `codingest ^0.1.0`. Nothing broke in the field (`^0.1.0`
+  resolves to `0.1.x`), but the published metadata was wrong, it would have
+  broken outright at the first minor bump, and it was already wrong under
+  minimal-versions resolution. A discovery-based gate now asserts every internal
+  pin against the workspace version on each release, deriving the site list from
+  `[workspace] members` so a newly added crate cannot slip past it.
+- Removed a `dev-docs/` citation from committed source (`rev.rs`). `dev-docs/`
+  is gitignored working state, so the reference outlived the file and was
+  already dead for anyone cloning the repository.
 
 ## [0.1.3] - 2026-07-22
 
