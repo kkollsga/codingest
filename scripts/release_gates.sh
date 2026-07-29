@@ -220,6 +220,365 @@ assert_publish_ref() {
 }
 
 # ---------------------------------------------------------------------------
+# Internal path-dependency pins (the workspace-version lockstep)
+# ---------------------------------------------------------------------------
+#
+# WHAT DRIFTS, AND WHY NOTHING NOTICED. Every crate's own `package.version` is
+# `version.workspace = true`, so bumping `[workspace.package] version` moves all
+# of them at once. The REQUIREMENT on an internal path dependency does not
+# inherit — `codingest = { version = "0.1.0", path = "../codingest" }` is a
+# hand-written literal. `cargo publish` refuses a path-only dependency and emits
+# exactly that `version` string into the packaged manifest, so a stale pin ships:
+# `codingest-cli 0.1.3` was published declaring a dependency on `codingest
+# ^0.1.0`. All five pins had been left at 0.1.0 across two version bumps under a
+# green release gate, because nothing compared them to anything.
+#
+# SEVERITY, STATED HONESTLY: low and latent, not high. `^0.1.0` resolves to
+# 0.1.3 for every real consumer today, so nothing is broken in the field. It
+# becomes a real break at the first minor bump (`^0.1.0` cannot resolve to
+# 0.2.x, so the published dependent would pull an old builder or fail to
+# resolve), and it is already wrong under `-Z minimal-versions`, which would
+# build `codingest-cli 0.1.3` against `codingest 0.1.0`.
+#
+# WHY THE SITE LIST IS DISCOVERED, NOT WRITTEN DOWN. "check these five lines" is
+# the same dead gate as "assert 6 wheels": it is correct until a crate is added,
+# and the crate that is added is precisely the one whose pin nobody thought
+# about. The manifests to scan come from the root `[workspace] members` list —
+# the same declaration that decides what cargo builds — so a new member is
+# scanned the moment it can be built. `crates/*/Cargo.toml` on disk is
+# cross-checked against that list, so a crate dir that was added and NOT
+# registered is an error rather than an invisible one.
+#
+# KNOWN FAILURE MODES OF A LINE-ORIENTED TOML SCAN, EACH TURNED LOUD RATHER THAN
+# SILENT (a scanner that quietly sees nothing is the vacuous-gate failure again):
+#   * a multi-line inline table (`dep = {` ... `}` across lines) — reported as
+#     `openinline`, rc 1, with instructions to reformat;
+#   * a dotted key (`dep.path = "../x"`) — reported as `dotted`, rc 1;
+#   * a `path` that does not resolve to an existing manifest — rc 1;
+#   * zero members, or zero internal pins found — rc 1, on the same principle as
+#     `wheel_matrix_legs`: never derive an empty expectation.
+# What is NOT covered, and does not need to be: a path dependency resolving
+# OUTSIDE the workspace is skipped with a note, because its version is not the
+# workspace version. The `[dependencies.<name>]` section form and the root
+# `[workspace.dependencies]` table ARE both covered — the latter matters because
+# moving a pin there would otherwise take it out of scope.
+
+# COMPUTE. Print the absolute, symlink-free path of an existing manifest.
+#   rc 0 — path on stdout.
+#   rc 1 — no such file (or its directory is unreachable).
+canonical_manifest() {
+  local path="${1:-}" dir base
+  [ -f "$path" ] || return 1
+  dir=$(dirname "$path")
+  base=$(basename "$path")
+  dir=$(cd "$dir" && pwd -P) || return 1
+  printf '%s/%s\n' "$dir" "$base"
+}
+
+# COMPUTE. Print the canonical manifest path of every `[workspace] members`
+# entry of <root_manifest>, one per line, in declaration order.
+#
+# Discovery, not enumeration — see the section header. Two things fail here
+# rather than shrinking the scan silently: a member whose manifest is missing,
+# and a `crates/*/Cargo.toml` on disk that no `members` entry claims.
+#
+#   rc 0 — at least one member manifest, printed to stdout.
+#   rc 1 — unreadable root manifest, an empty/absent members list, a member
+#          without a manifest, or an unregistered crate dir; ::error:: on stderr.
+workspace_member_manifests() {
+  local root="${1:-Cargo.toml}" rootdir raw member manifest cand out="" n=0 bad=0
+  rootdir=$(dirname "$root")
+  raw=$(awk '
+    BEGIN { QC = "[\"'"'"']"; NQC = "[^\"'"'"']" }
+    /^[ \t]*\[/ {
+      inws = ($0 ~ /^[ \t]*\[workspace\][ \t]*(#.*)?$/)
+      inlist = 0
+      next
+    }
+    inws == 0 { next }
+    /^[ \t]*members[ \t]*=/ { inlist = 1 }
+    inlist == 0 { next }
+    {
+      line = $0
+      while (match(line, QC NQC "*" QC)) {
+        v = substr(line, RSTART + 1, RLENGTH - 2)
+        if (v != "") print v
+        line = substr(line, RSTART + RLENGTH)
+      }
+      if (index($0, "]") > 0) inlist = 0
+    }
+  ' "$root") || return 1
+
+  if [ -z "$raw" ]; then
+    printf '::error::no `[workspace] members` entries in %s — the workspace layout moved, so the set of manifests whose internal version pins must be checked is unknown. Refusing to derive an EMPTY set (it would make the pin-lockstep gate vacuously true).\n' \
+      "'${root}'" >&2
+    return 1
+  fi
+
+  while IFS= read -r member; do
+    [ -n "$member" ] || continue
+    member="${member#./}"
+    if ! manifest=$(canonical_manifest "$rootdir/$member/Cargo.toml"); then
+      printf '::error::[workspace] member %s of %s has no Cargo.toml at %s — the pin scan cannot read a manifest that is not there\n' \
+        "'${member}'" "'${root}'" "'${rootdir}/${member}/Cargo.toml'" >&2
+      bad=1
+      continue
+    fi
+    n=$((n + 1))
+    out="$out$manifest"$'\n'
+  done <<EOF
+$raw
+EOF
+
+  for cand in "$rootdir"/crates/*/Cargo.toml; do
+    [ -f "$cand" ] || continue
+    cand=$(canonical_manifest "$cand") || continue
+    case $'\n'"$out" in
+      *$'\n'"$cand"$'\n'*) continue ;;
+    esac
+    printf '::error::%s exists but is not a `[workspace] members` entry of %s — cargo does not build it and the pin-lockstep gate cannot see its internal version pins. Register it (or delete it); a crate must not be able to join the tree unscanned.\n' \
+      "'${cand}'" "'${root}'" >&2
+    bad=1
+  done
+
+  [ "$bad" -eq 0 ] || return 1
+  [ "$n" -ne 0 ] || return 1
+  printf '%s' "$out"
+}
+
+# COMPUTE. Print `name<TAB>version<TAB>path` for every dependency in <manifest>
+# that carries a `path` key, across `[dependencies]`, `[dev-dependencies]`,
+# `[build-dependencies]`, their `[target.<cfg>.…]` variants, the
+# `[…dependencies.<name>]` section form, and `[workspace.dependencies]`.
+#
+# A dependency with a path but no `version` prints `-` for the version. The
+# placeholder is not cosmetic: `IFS=$'\t' read` collapses runs of tabs (tab is
+# IFS whitespace), so an empty middle field would silently shift `path` into the
+# version slot and the caller would compare the wrong string.
+#
+# The awk below is a PURE EXTRACTOR that judges nothing — same reason as
+# `wheel_matrix_legs`: awk's only failure signal is `exit`, which this file
+# forbids. It emits `dotted` / `openinline` records for the two forms it cannot
+# read, and the shell below turns those into the verdict.
+#
+#   rc 0 — zero or more `dep` lines on stdout.
+#   rc 1 — unreadable manifest, or a dependency written in a form the scanner
+#          cannot read; ::error:: on stderr.
+manifest_path_deps() {
+  local manifest="${1:-}" raw kind name version path out="" bad=0
+  raw=$(awk '
+    BEGIN { QC = "[\"'"'"']"; NQC = "[^\"'"'"']" }
+    function kv(s, key,   re, v) {
+      re = "(^|[{,[:space:]])" key "[ \t]*=[ \t]*" QC NQC "*" QC
+      if (!match(s, re)) return ""
+      v = substr(s, RSTART, RLENGTH)
+      sub("^" NQC "*" QC, "", v)
+      sub(QC ".*$", "", v)
+      return v
+    }
+    function flushsec(   ) {
+      if (secname != "" && secpath != "")
+        printf("dep\t%s\t%s\t%s\n", secname, (secver == "" ? "-" : secver), secpath)
+      secname = ""; secver = ""; secpath = ""
+    }
+    /^[ \t]*#/ { next }
+    /^[ \t]*\[/ {
+      flushsec()
+      hdr = $0
+      sub(/^[ \t]*\[/, "", hdr)
+      sub(/\].*$/, "", hdr)
+      if (hdr ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
+        intable = 1
+        next
+      }
+      if (hdr ~ ("(^|\\.)(dependencies|dev-dependencies|build-dependencies)\\." \
+                 QC "?[A-Za-z0-9_.-]+" QC "?$")) {
+        intable = 2
+        secname = hdr
+        sub(/^.*\./, "", secname)
+        gsub(QC, "", secname)
+        next
+      }
+      intable = 0
+      next
+    }
+    intable == 1 {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (line == "" || substr(line, 1, 1) == "#") next
+      idx = index(line, "=")
+      if (idx == 0) next
+      name = substr(line, 1, idx - 1)
+      gsub(/[ \t]/, "", name)
+      gsub(QC, "", name)
+      val = substr(line, idx + 1)
+      sub(/^[ \t]+/, "", val)
+      if (name ~ /\.(path|version)$/) { printf("dotted\t%s\t%d\t-\n", name, FNR); next }
+      if (substr(val, 1, 1) != "{") next
+      if (index(val, "}") == 0) { printf("openinline\t%s\t%d\t-\n", name, FNR); next }
+      p = kv(val, "path")
+      if (p == "") next
+      v = kv(val, "version")
+      printf("dep\t%s\t%s\t%s\n", name, (v == "" ? "-" : v), p)
+      next
+    }
+    intable == 2 {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (line == "" || substr(line, 1, 1) == "#") next
+      if (line ~ /^path[ \t]*=/)    secpath = kv(line, "path")
+      if (line ~ /^version[ \t]*=/) secver  = kv(line, "version")
+      next
+    }
+    END { flushsec() }
+  ' "$manifest") || return 1
+
+  while IFS=$'\t' read -r kind name version path; do
+    [ -n "$kind" ] || continue
+    case "$kind" in
+      dep)
+        out="$out$name"$'\t'"$version"$'\t'"$path"$'\n'
+        ;;
+      openinline)
+        printf '::error::%s declares dependency %s as a MULTI-LINE inline table (line %s). This scanner reads one line per dependency, so its version pin would go unchecked. Put the inline table on one line, or use a [dependencies.%s] section.\n' \
+          "'${manifest}'" "'${name}'" "$version" "$name" >&2
+        bad=1
+        ;;
+      dotted)
+        printf '::error::%s uses the dotted-key form %s (line %s). This scanner reads `name = { … }` and [dependencies.<name>] sections, so a dotted pin would go unchecked. Rewrite it in one of those two forms.\n' \
+          "'${manifest}'" "'${name}'" "$version" >&2
+        bad=1
+        ;;
+    esac
+  done <<EOF
+$raw
+EOF
+
+  [ "$bad" -eq 0 ] || return 1
+  printf '%s' "$out"
+}
+
+# COMPUTE. Print `manifest<TAB>dep<TAB>pin` for every path dependency, in every
+# workspace member manifest, that resolves to ANOTHER workspace member. The
+# manifest is printed relative to the workspace root for readable log lines.
+#
+#   rc 0 — at least one internal pin, printed to stdout.
+#   rc 1 — members unreadable, a dependency form the scanner cannot read, a
+#          `path` that resolves to nothing, or ZERO internal pins found;
+#          ::error:: on stderr.
+internal_pins() {
+  local root="${1:-Cargo.toml}" rootcanon rootmanifest manifests scan manifest
+  local deps name pin path target out="" n=0 bad=0
+  rootmanifest=$(canonical_manifest "$root") || return 1
+  rootcanon=$(dirname "$rootmanifest")
+  manifests=$(workspace_member_manifests "$root") || return 1
+
+  # The ROOT manifest is scanned too, on top of the members. A pin can live in
+  # its `[workspace.dependencies]` table (with the members carrying
+  # `dep = { workspace = true }`), and a scan limited to `crates/*/Cargo.toml`
+  # would let the drift become invisible by RELOCATION rather than by editing.
+  # It is only added when it is not already a member, so a root-package
+  # workspace is not scanned twice.
+  scan="$manifests"
+  case $'\n'"$manifests" in
+    *$'\n'"$rootmanifest"$'\n'*) ;;
+    *) scan="$rootmanifest"$'\n'"$manifests" ;;
+  esac
+
+  while IFS= read -r manifest; do
+    [ -n "$manifest" ] || continue
+    if ! deps=$(manifest_path_deps "$manifest"); then
+      bad=1
+      continue
+    fi
+    while IFS=$'\t' read -r name pin path; do
+      [ -n "$name" ] || continue
+      if ! target=$(canonical_manifest "$(dirname "$manifest")/$path/Cargo.toml"); then
+        printf '::error::%s declares %s = { path = %s } but there is no Cargo.toml there. A path dependency the scanner cannot resolve is one whose version pin nothing checks.\n' \
+          "'${manifest}'" "'${name}'" "'${path}'" >&2
+        bad=1
+        continue
+      fi
+      case $'\n'"$manifests" in
+        *$'\n'"$target"$'\n'*) ;;
+        *)
+          printf '%s: path dependency %s resolves outside the workspace (%s) — not subject to the workspace-version lockstep\n' \
+            "${manifest#"$rootcanon"/}" "$name" "$target" >&2
+          continue
+          ;;
+      esac
+      n=$((n + 1))
+      out="$out${manifest#"$rootcanon"/}"$'\t'"$name"$'\t'"$pin"$'\n'
+    done <<EOF
+$deps
+EOF
+  done <<EOF
+$scan
+EOF
+
+  [ "$bad" -eq 0 ] || return 1
+  if [ "$n" -eq 0 ]; then
+    printf '::error::no internal path-dependency pins found in the members of %s. Every crate here depends on a sibling, so finding none means the scan stopped matching the manifests — and an empty set makes the pin-lockstep gate vacuously true.\n' \
+      "'${root}'" >&2
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
+# ASSERT. Every internal path-dependency pin equals the workspace version.
+#
+#   assert_internal_pins_lockstep <version> [root_manifest]
+#
+# THE DRIFT THIS CATCHES is described in the section header: `cargo publish`
+# emits the pin verbatim, so a stale one ships a wrong dependency requirement in
+# a green run. Equality is the whole rule — a pin is a lockstep pin or it is
+# drift; there is no tolerated range, because the only version of a sibling this
+# workspace can ever have built against is its own.
+#
+#   rc 0 — every pin equals <version>; a per-pin trace is on stderr.
+#   rc 1 — any pin differs, any pin is absent, or the pin set could not be read;
+#          ::error:: annotations on stderr.
+assert_internal_pins_lockstep() {
+  local version="${1:-}" root="${2:-Cargo.toml}" pins manifest name pin
+  local bad=0 n=0
+  if [ -z "$version" ]; then
+    printf '::error::assert_internal_pins_lockstep needs the workspace version to compare against — an empty one would make every pin comparison meaningless\n' >&2
+    return 1
+  fi
+  if ! pins=$(internal_pins "$root"); then
+    printf '::error::refusing to publish: the internal path-dependency pins could not be read from the members of %s, so nothing verified that a published crate declares the version of its sibling that it was actually built against.\n' \
+      "'${root}'" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r manifest name pin; do
+    [ -n "$manifest" ] || continue
+    n=$((n + 1))
+    if [ "$pin" = "-" ]; then
+      printf '::error::%s declares path dependency %s with no `version` key. `cargo publish` rejects a path-only dependency, so this crate cannot be published at all — and a path-only sibling has no pin for the lockstep gate to verify. Add version = "%s".\n' \
+        "$manifest" "'${name}'" "$version" >&2
+      bad=$((bad + 1))
+      continue
+    fi
+    if [ "$pin" != "$version" ]; then
+      printf '::error::version-pin drift: %s pins %s at %s but [workspace.package] version is %s. `cargo publish` emits that pin verbatim, so the published crate would declare a dependency on %s ^%s while having been built against %s. Latent today (^%s still resolves to %s) but wrong under minimal-versions and a hard break at the next minor bump. Set it to %s.\n' \
+        "$manifest" "'${name}'" "'${pin}'" "'${version}'" "$name" "$pin" \
+        "$version" "$pin" "$version" "'${version}'" >&2
+      bad=$((bad + 1))
+      continue
+    fi
+    printf '%s pins %s at %s\n' "$manifest" "$name" "$pin" >&2
+  done <<EOF
+$pins
+EOF
+  if [ "$bad" -ne 0 ]; then
+    printf '::error::%d of %d internal path-dependency pin(s) disagree with the workspace version %s. These pins do NOT inherit `version.workspace = true`; they are hand-written literals and all five of them sat at 0.1.0 through two releases under a green gate.\n' \
+      "$bad" "$n" "'${version}'" >&2
+    return 1
+  fi
+  printf '%d internal path-dependency pin(s) in lockstep at %s\n' "$n" "$version" >&2
+}
+
+# ---------------------------------------------------------------------------
 # crates.io publish decision
 # ---------------------------------------------------------------------------
 
@@ -333,9 +692,10 @@ crate_output_key() {
 # GitHub Actions always sets; both default to empty, and an empty ref_type is
 # not `tag`, so a local run skips the skew gate rather than inventing a verdict.
 #
-# ORDER MATTERS, TWICE OVER. Both version assertions run BEFORE the first
-# `gh_output`, so a bad version can never reach `$GITHUB_OUTPUT` and no crates.io
-# probe is even sent. And every crate is PROBED AND CHECKED before ANY decision
+# ORDER MATTERS, TWICE OVER. All three manifest assertions (version shape,
+# tag/manifest skew, internal-pin lockstep) run BEFORE the first `gh_output`, so
+# a bad manifest can never reach `$GITHUB_OUTPUT` and no crates.io probe is even
+# sent. And every crate is PROBED AND CHECKED before ANY decision
 # is written, so one inconclusive status leaves the whole step's output empty
 # instead of a half-written set — a step that fails after emitting
 # `publish_codingest=true` is a step whose outputs describe a decision that was
@@ -355,6 +715,7 @@ check_crates_to_publish() {
   assert_version_shape "$version" || return 1
   assert_tag_matches_manifest \
     "$version" "${GITHUB_REF_NAME:-}" "${GITHUB_REF_TYPE:-}" || return 1
+  assert_internal_pins_lockstep "$version" "$manifest" || return 1
   for crate in "$@"; do
     status=$(crates_io_probe "$crate" "$version")
     if ! assert_status_conclusive "$crate" "$version" "$status"; then
@@ -695,6 +1056,8 @@ main() {
   case "$cmd" in
     extract_version | assert_version_shape | version_from_ref | \
       assert_tag_matches_manifest | assert_publish_ref | crates_io_status | \
+      canonical_manifest | workspace_member_manifests | manifest_path_deps | \
+      internal_pins | assert_internal_pins_lockstep | \
       crates_io_probe | assert_status_conclusive | \
       publish_decision_for | crate_output_key | check_crates_to_publish | \
       extract_changelog_section | changelog_notes | wheel_matrix_legs | \

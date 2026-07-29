@@ -531,6 +531,463 @@ def test_publish_decision_still_refuses_to_publish_on_an_odd_status():
 
 
 # --------------------------------------------------------------------------
+# internal path-dependency pins — the workspace-version lockstep
+# --------------------------------------------------------------------------
+#
+# THE BUG. Each crate's own `package.version` is `version.workspace = true`, so
+# one line in the root manifest moves all four. An internal path dependency's
+# `version` REQUIREMENT does not inherit — it is a hand-written literal — and all
+# five of them sat at `0.1.0` while the workspace was at `0.1.3`, across two
+# releases, under a fully green release gate. `cargo publish` rejects a path-only
+# dependency and emits that literal verbatim, so published `codingest-cli 0.1.3`
+# declares a dependency on `codingest ^0.1.0`.
+#
+# Severity is LOW AND LATENT, and these tests do not pretend otherwise: `^0.1.0`
+# resolves to 0.1.3 for every consumer today. It breaks at the first minor bump
+# and is already wrong under `-Z minimal-versions`.
+#
+# WHAT IS ACTUALLY BEING TESTED is the discovery, not the comparison. Comparing
+# five known lines is easy and rots the day a crate is added — and the crate that
+# is added is exactly the one whose pin nobody thought about. So the fixtures
+# below include "add a whole new member with a stale pin", and
+# `test_inverted_control_a_hardcoded_pin_list_misses_a_new_crate` shows the naive
+# form staying green through it.
+#
+# FIXTURES, NOT THE LIVE REPO, for everything except the one regression guard:
+# the real version bumps on every release and a suite that asserted against
+# `0.1.3` would go red on the next one for no reason. The single test that DOES
+# read the real manifests reads the version out of them too.
+
+OMIT = object()  # a path dependency declared with no `version` key at all
+
+# The real workspace's shape: four members, five internal pins, one crate
+# (`codingest`) depending on nothing.
+DEFAULT_CRATES: dict[str, list] = {
+    "codingest": [],
+    "codingest-cli": [("codingest", None)],
+    "codingest-mcp": [("codingest", None)],
+    "codingest-py": [
+        ("codingest", None),
+        ("codingest-cli", None),
+        ("codingest-mcp", None),
+    ],
+}
+
+# The five real pin sites, as `internal_pins` reports them. A LIST IN A TEST IS
+# FINE — a test that goes red when a crate is added is a prompt; a GATE that
+# stays green when a crate is added is the dead gate this whole section exists to
+# prevent. See test_the_real_repo_pin_sites_are_all_discovered.
+REAL_PIN_SITES = [
+    ("crates/codingest-cli/Cargo.toml", "codingest"),
+    ("crates/codingest-mcp/Cargo.toml", "codingest"),
+    ("crates/codingest-py/Cargo.toml", "codingest"),
+    ("crates/codingest-py/Cargo.toml", "codingest-cli"),
+    ("crates/codingest-py/Cargo.toml", "codingest-mcp"),
+]
+
+
+def write_workspace(
+    root: Path,
+    version: str,
+    crates: dict[str, list] | None = None,
+    *,
+    root_extra: str = "",
+) -> Path:
+    """Write a miniature cargo workspace under `root`; return its root manifest.
+
+    `crates` maps crate name -> list of `(sibling, pin)`. A pin of `None` means
+    "the workspace version" (the correct state), `OMIT` means "declare the path
+    dependency with no `version` key", and any string is written literally — that
+    is how a single stale pin is planted without touching anything else.
+    """
+    if crates is None:
+        crates = DEFAULT_CRATES
+    members = "".join(f'    "crates/{name}",\n' for name in crates)
+    manifest = root / "Cargo.toml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        f"[workspace]\nmembers = [\n{members}]\nresolver = \"2\"\n\n"
+        f'[workspace.package]\nversion = "{version}"\n{root_extra}'
+    )
+    for name, deps in crates.items():
+        crate_dir = root / "crates" / name
+        crate_dir.mkdir(parents=True, exist_ok=True)
+        body = [f'[package]\nname = "{name}"\nversion.workspace = true\n']
+        if deps:
+            body.append("\n[dependencies]\n")
+            for dep, pin in deps:
+                if pin is OMIT:
+                    body.append(f'{dep} = {{ path = "../{dep}" }}\n')
+                else:
+                    resolved = version if pin is None else pin
+                    body.append(
+                        f'{dep} = {{ version = "{resolved}", path = "../{dep}" }}\n'
+                    )
+        (crate_dir / "Cargo.toml").write_text("".join(body))
+    return manifest
+
+
+def stale(site: tuple[str, str], pin: str = "0.1.0") -> dict[str, list]:
+    """DEFAULT_CRATES with exactly one pin changed.
+
+    `site` is a REAL_PIN_SITES entry — (manifest path, sibling) — so the
+    parametrised fail-path tests are driven by the real pin sites rather than by a
+    second list written just for the fixtures.
+    """
+    crate = Path(site[0]).parent.name
+    sibling = site[1]
+    out = {k: list(v) for k, v in DEFAULT_CRATES.items()}
+    out[crate] = [(d, pin if d == sibling else p) for d, p in out[crate]]
+    assert out[crate] != DEFAULT_CRATES[crate], f"premise broken: {site} not planted"
+    return out
+
+
+def pin_lines(res) -> list[tuple[str, str, str]]:
+    return [tuple(l.split("\t")) for l in res.stdout.splitlines() if l]
+
+
+def test_internal_pins_finds_every_internal_pin(tmp_path: Path):
+    """The whole gate rests on this: the discovered set is the complete set."""
+    manifest = write_workspace(tmp_path, "0.1.3")
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 0, res.stderr
+    assert pin_lines(res) == [
+        ("crates/codingest-cli/Cargo.toml", "codingest", "0.1.3"),
+        ("crates/codingest-mcp/Cargo.toml", "codingest", "0.1.3"),
+        ("crates/codingest-py/Cargo.toml", "codingest", "0.1.3"),
+        ("crates/codingest-py/Cargo.toml", "codingest-cli", "0.1.3"),
+        ("crates/codingest-py/Cargo.toml", "codingest-mcp", "0.1.3"),
+    ]
+
+
+def test_internal_pins_discovers_a_crate_that_did_not_exist_yet(tmp_path: Path):
+    """DISCOVERY, NOT ENUMERATION. A new member's pins are scanned because the
+    scan set comes from `[workspace] members` — the same declaration that decides
+    what cargo builds — not from a list in the gate."""
+    crates = {**DEFAULT_CRATES, "codingest-extra": [("codingest", None)]}
+    manifest = write_workspace(tmp_path, "0.1.3", crates)
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 0, res.stderr
+    assert ("crates/codingest-extra/Cargo.toml", "codingest", "0.1.3") in pin_lines(res)
+    assert len(pin_lines(res)) == 6
+
+
+def test_assert_internal_pins_lockstep_pass_path(tmp_path: Path):
+    manifest = write_workspace(tmp_path, "0.1.3")
+    res = call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)])
+    assert res.returncode == 0, res.stderr
+    assert "5 internal path-dependency pin(s) in lockstep at 0.1.3" in res.stderr
+
+
+@pytest.mark.parametrize("site", REAL_PIN_SITES, ids=lambda s: f"{s[0]}:{s[1]}")
+def test_assert_internal_pins_lockstep_fail_path_one_stale_pin(
+    tmp_path: Path, site: tuple[str, str]
+):
+    """FAIL PATH, once per real pin site: reverting ANY ONE of them must go red.
+
+    A gate that only notices when all five drift together is no gate — the five
+    are edited by hand, one at a time, by whoever adds a dependency.
+    """
+    manifest = write_workspace(tmp_path, "0.1.3", stale(site))
+    res = call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)])
+    assert res.returncode == 1, f"{site} drifted to 0.1.0 and the gate stayed green"
+    assert "::error::version-pin drift" in res.stderr
+    assert f"{site[0]} pins '{site[1]}' at '0.1.0'" in res.stderr
+    assert "1 of 5 internal path-dependency pin(s) disagree" in res.stderr
+
+
+def test_assert_internal_pins_lockstep_fail_path_a_new_crate_with_a_stale_pin(
+    tmp_path: Path,
+):
+    """THE DESIGN REQUIREMENT. Adding a workspace crate whose pin is stale must
+    NOT be able to leave this gate passing.
+
+    This is the failure class the gate is guarding against being: correct for the
+    crates that existed when it was written, blind to the next one. The five
+    correct pins are untouched, so nothing but the new crate can fail it.
+    """
+    crates = {**DEFAULT_CRATES, "codingest-extra": [("codingest", "0.1.0")]}
+    manifest = write_workspace(tmp_path, "0.1.3", crates)
+    res = call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)])
+    assert res.returncode == 1, (
+        "a NEW crate with a stale pin passed the gate — the gate is a snapshot of "
+        "the crates that existed when it was written, which is the dead-gate "
+        "failure it exists to prevent"
+    )
+    assert "crates/codingest-extra/Cargo.toml pins 'codingest' at '0.1.0'" in res.stderr
+    assert "1 of 6 internal path-dependency pin(s) disagree" in res.stderr
+
+
+def test_assert_internal_pins_lockstep_fail_path_a_pin_ahead_of_the_workspace(
+    tmp_path: Path,
+):
+    """Drift is not "older than" — it is "not equal to". A pin bumped ahead of
+    the workspace version cannot resolve at all once published."""
+    manifest = write_workspace(tmp_path, "0.1.3", stale(REAL_PIN_SITES[0], "0.1.4"))
+    res = call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)])
+    assert res.returncode == 1, "a pin AHEAD of the workspace version passed"
+
+
+def test_assert_internal_pins_lockstep_fail_path_no_version_key(tmp_path: Path):
+    """A path-only sibling has no pin to check — and `cargo publish` refuses it
+    outright, so the crate could not be published anyway."""
+    manifest = write_workspace(tmp_path, "0.1.3", stale(REAL_PIN_SITES[0], OMIT))
+    res = call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)])
+    assert res.returncode == 1, "a path-only internal dependency passed the gate"
+    assert "with no `version` key" in res.stderr
+
+
+def test_assert_internal_pins_lockstep_fail_path_without_a_version(tmp_path: Path):
+    """An empty version makes every comparison meaningless — it must not pass."""
+    manifest = write_workspace(tmp_path, "0.1.3")
+    res = call(["assert_internal_pins_lockstep", "", str(manifest)])
+    assert res.returncode == 1
+    assert "::error::" in res.stderr
+
+
+def test_internal_pins_reads_the_dependencies_section_form(tmp_path: Path):
+    """`[dependencies.codingest]` with the keys on their own lines is the same
+    declaration in TOML, and a scanner that only reads one-line inline tables
+    would report zero pins for it — silently."""
+    manifest = write_workspace(tmp_path, "0.1.3", {"codingest": [], "b": []})
+    (tmp_path / "crates" / "b" / "Cargo.toml").write_text(
+        '[package]\nname = "b"\nversion.workspace = true\n\n'
+        '[dependencies.codingest]\nversion = "0.1.0"\npath = "../codingest"\n'
+    )
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 0, res.stderr
+    assert pin_lines(res) == [("crates/b/Cargo.toml", "codingest", "0.1.0")]
+    assert call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)]).returncode == 1
+
+
+def test_internal_pins_reads_the_root_workspace_dependencies_table(tmp_path: Path):
+    """A pin moved to the root `[workspace.dependencies]` table is still a pin.
+
+    Scanning only `crates/*/Cargo.toml` would take it out of scope, so the drift
+    would become invisible by relocation rather than by editing.
+    """
+    manifest = write_workspace(
+        tmp_path,
+        "0.1.3",
+        {"codingest": [], "b": []},
+        root_extra='\n[workspace.dependencies]\n'
+        'codingest = { version = "0.1.0", path = "crates/codingest" }\n',
+    )
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 0, res.stderr
+    assert pin_lines(res) == [("Cargo.toml", "codingest", "0.1.0")]
+    assert call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)]).returncode == 1
+
+
+def test_internal_pins_skips_a_path_dep_outside_the_workspace(tmp_path: Path):
+    """An external path dependency's version is not the workspace version, so
+    holding it to the lockstep would be wrong. It is skipped WITH A NOTE, never
+    mutely."""
+    manifest = write_workspace(tmp_path, "0.1.3")
+    outside = tmp_path / "vendor" / "thing"
+    outside.mkdir(parents=True)
+    (outside / "Cargo.toml").write_text('[package]\nname = "thing"\nversion = "9.9.9"\n')
+    cli = tmp_path / "crates" / "codingest-cli" / "Cargo.toml"
+    cli.write_text(
+        cli.read_text() + 'thing = { version = "9.9.9", path = "../../vendor/thing" }\n'
+    )
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 0, res.stderr
+    assert len(pin_lines(res)) == 5, "an external path dep was pulled into the lockstep"
+    assert "resolves outside the workspace" in res.stderr
+
+
+@pytest.mark.parametrize(
+    ("label", "dep_block", "needle"),
+    [
+        (
+            "multi-line inline table",
+            '[dependencies]\ncodingest = {\n  version = "0.1.0",\n  path = "../codingest",\n}\n',
+            "MULTI-LINE inline table",
+        ),
+        (
+            "dotted key",
+            '[dependencies]\ncodingest.version = "0.1.0"\ncodingest.path = "../codingest"\n',
+            "dotted-key form",
+        ),
+    ],
+)
+def test_internal_pins_fail_path_unreadable_dependency_form(
+    tmp_path: Path, label: str, dep_block: str, needle: str
+):
+    """FAIL PATH — the line-oriented scan's own blind spots, turned LOUD.
+
+    These are legal TOML that a one-line-per-dependency scan cannot read. The
+    dangerous outcome is not "unsupported", it is "reports zero pins for that
+    crate and passes": the pin would go unchecked with nothing said. So the
+    scanner recognises both forms and refuses instead.
+    """
+    manifest = write_workspace(tmp_path, "0.1.3", {"codingest": [], "b": []})
+    (tmp_path / "crates" / "b" / "Cargo.toml").write_text(
+        f'[package]\nname = "b"\nversion.workspace = true\n\n{dep_block}'
+    )
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 1, f"{label}: a pin the scanner cannot read passed silently"
+    assert needle in res.stderr
+    gate = call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)])
+    assert gate.returncode == 1, f"{label}: the gate did not inherit the failure"
+    assert "could not be read" in gate.stderr
+
+
+def test_internal_pins_fail_path_a_path_that_resolves_to_nothing(tmp_path: Path):
+    manifest = write_workspace(tmp_path, "0.1.3")
+    cli = tmp_path / "crates" / "codingest-cli" / "Cargo.toml"
+    cli.write_text(cli.read_text().replace("../codingest", "../ghost"))
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 1
+    assert "no Cargo.toml there" in res.stderr
+
+
+def test_internal_pins_fail_path_no_members(tmp_path: Path):
+    """REFUSE AN EMPTY EXPECTATION — the `wheel_matrix_legs` principle. If the
+    workspace layout moved, zero manifests to scan must not read as zero
+    problems."""
+    manifest = tmp_path / "Cargo.toml"
+    manifest.write_text('[workspace.package]\nversion = "0.1.3"\n')
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 1
+    assert "vacuously true" in res.stderr
+
+
+def test_internal_pins_fail_path_zero_pins_found(tmp_path: Path):
+    """Same principle one level down: members that declare no internal path
+    dependency at all means the scan stopped matching, because every publishable
+    crate here depends on a sibling."""
+    manifest = write_workspace(tmp_path, "0.1.3", {"codingest": [], "b": []})
+    res = call(["internal_pins", str(manifest)])
+    assert res.returncode == 1
+    assert "no internal path-dependency pins found" in res.stderr
+
+
+def test_workspace_member_manifests_fail_path_unregistered_crate_dir(tmp_path: Path):
+    """A crate dir that no `members` entry claims is an ERROR, not a skip.
+
+    Without this, "add a crate" has a second silent path: create
+    `crates/foo/Cargo.toml`, forget the members entry, and its pins are outside
+    every scan.
+    """
+    manifest = write_workspace(tmp_path, "0.1.3")
+    rogue = tmp_path / "crates" / "codingest-rogue"
+    rogue.mkdir()
+    (rogue / "Cargo.toml").write_text(
+        '[package]\nname = "codingest-rogue"\n\n[dependencies]\n'
+        'codingest = { version = "0.1.0", path = "../codingest" }\n'
+    )
+    res = call(["workspace_member_manifests", str(manifest)])
+    assert res.returncode == 1, "an unregistered crate dir was scanned past silently"
+    assert "not a `[workspace] members` entry" in res.stderr
+    assert call(["assert_internal_pins_lockstep", "0.1.3", str(manifest)]).returncode == 1
+
+
+def test_workspace_member_manifests_fail_path_member_without_a_manifest(tmp_path: Path):
+    manifest = write_workspace(tmp_path, "0.1.3")
+    manifest.write_text(manifest.read_text().replace(
+        '    "crates/codingest",\n',
+        '    "crates/codingest",\n    "crates/ghost",\n',
+        1,
+    ))
+    res = call(["workspace_member_manifests", str(manifest)])
+    assert res.returncode == 1
+    assert "has no Cargo.toml" in res.stderr
+
+
+def test_workspace_member_manifests_reads_the_real_root_manifest():
+    res = call(["workspace_member_manifests", "Cargo.toml"])
+    assert res.returncode == 0, res.stderr
+    got = [Path(l).relative_to(REPO.resolve()).as_posix() for l in res.stdout.split()]
+    assert got == [
+        "crates/codingest/Cargo.toml",
+        "crates/codingest-cli/Cargo.toml",
+        "crates/codingest-mcp/Cargo.toml",
+        "crates/codingest-py/Cargo.toml",
+    ]
+
+
+def test_the_real_repo_pins_are_in_lockstep_with_the_workspace_version():
+    """THE REGRESSION GUARD for the bug this gate was written for.
+
+    The five real pins sat at 0.1.0 with the workspace at 0.1.3. The version is
+    read out of the manifest rather than written here, so this test does not go
+    red on the next release — only on drift.
+    """
+    version = call(["extract_version", "Cargo.toml"]).stdout.strip()
+    assert version, "could not read the real workspace version"
+    res = call(["assert_internal_pins_lockstep", version, "Cargo.toml"])
+    assert res.returncode == 0, (
+        "the REAL manifests are out of lockstep — a published crate would declare "
+        f"the wrong requirement on its sibling:\n{res.stderr}"
+    )
+
+
+def test_the_real_repo_pin_sites_are_all_discovered():
+    """Coverage of the real tree, not just of the fixtures.
+
+    `internal_pins` refusing an EMPTY set catches a scanner that matches nothing;
+    it cannot catch one that matches three of five. This pins the discovered set
+    to the five known sites, so a scanner regression is visible and a new crate
+    prompts an update here.
+    """
+    res = call(["internal_pins", "Cargo.toml"])
+    assert res.returncode == 0, res.stderr
+    assert [(m, d) for m, d, _ in pin_lines(res)] == REAL_PIN_SITES
+
+
+def test_inverted_control_a_hardcoded_pin_list_misses_a_new_crate(tmp_path: Path):
+    """INVERTED CONTROL: both naive forms stay GREEN through mutations the real
+    gate fails on.
+
+    NAIVE 1 — check the three manifests known at writing time. A new member with
+    a stale pin is simply not looked at, so it passes.
+    NAIVE 2 — grep for the literal `0.1.0`. Drift to any other wrong value (a pin
+    left at `0.1.2` through a patch bump) contains no `0.1.0` at all, so it
+    passes.
+    Both are exactly how this gate would have been born dead.
+    """
+    known = ["codingest-cli", "codingest-mcp", "codingest-py"]
+
+    def naive_known_three(root: Path, version: str) -> bool:
+        """GREEN iff every pin in the three hardcoded manifests matches."""
+        for name in known:
+            text = (root / "crates" / name / "Cargo.toml").read_text()
+            for line in text.splitlines():
+                if "path = " in line and "version = " in line:
+                    if f'version = "{version}"' not in line:
+                        return False
+        return True
+
+    def naive_grep_0_1_0(root: Path, _version: str) -> bool:
+        """GREEN iff the literal `0.1.0` appears nowhere."""
+        return not any(
+            "0.1.0" in p.read_text() for p in root.rglob("Cargo.toml")
+        )
+
+    # Mutation A: a NEW crate, with a stale pin.
+    a = tmp_path / "a"
+    write_workspace(a, "0.1.3", {**DEFAULT_CRATES, "codingest-extra": [("codingest", "0.1.0")]})
+    assert naive_known_three(a, "0.1.3"), "premise broken: naive 1 should not see it"
+    assert call(["assert_internal_pins_lockstep", "0.1.3", str(a / "Cargo.toml")]).returncode == 1
+
+    # Mutation B: drift to a value that is not the literal `0.1.0`.
+    b = tmp_path / "b"
+    write_workspace(b, "0.1.3", stale(REAL_PIN_SITES[0], "0.1.2"))
+    assert naive_grep_0_1_0(b, "0.1.3"), "premise broken: naive 2 should not see it"
+    assert call(["assert_internal_pins_lockstep", "0.1.3", str(b / "Cargo.toml")]).returncode == 1
+
+    # And the control is a control: both naive forms DO pass the clean tree, so
+    # their greens above are not a constant `True`.
+    clean = tmp_path / "clean"
+    write_workspace(clean, "0.1.3")
+    assert naive_known_three(clean, "0.1.3")
+    assert naive_grep_0_1_0(clean, "0.1.3")
+    assert call(["assert_internal_pins_lockstep", "0.1.3", str(clean / "Cargo.toml")]).returncode == 0
+
+
+# --------------------------------------------------------------------------
 # check_crates_to_publish — the whole step, incl. the $GITHUB_OUTPUT contract
 # --------------------------------------------------------------------------
 
@@ -544,13 +1001,16 @@ def _run_check(
     *,
     manifest_body: str | None = None,
     ref: dict[str, str] | None = None,
+    crates: dict[str, list] | None = None,
 ):
-    manifest = tmp_path / "Cargo.toml"
-    manifest.write_text(
-        manifest_body
-        if manifest_body is not None
-        else f'[workspace.package]\nversion = "{version}"\n'
-    )
+    if manifest_body is None:
+        # A REAL fixture workspace, not a two-line manifest: the step now also
+        # asserts the internal path-dependency pins are in lockstep, and a gate
+        # that its own step-level tests route around is not wired in.
+        manifest = write_workspace(tmp_path, version, crates)
+    else:
+        manifest = tmp_path / "Cargo.toml"
+        manifest.write_text(manifest_body)
     stub = stub_curl(tmp_path, statuses)
     out_file = tmp_path / "github_output"
     out_file.write_text("")
@@ -697,6 +1157,31 @@ def test_check_crates_fail_path_tag_manifest_skew(tmp_path: Path):
     assert "::error::" in res.stderr
     assert out_file.read_text() == "", "no outputs may be written on the fail path"
     assert not (tmp_path / "curl_argv").exists(), "crates.io probed despite skew"
+
+
+def test_check_crates_fail_path_stale_pin_never_reaches_github_output(tmp_path: Path):
+    """FAIL PATH (gate 3) AT STEP LEVEL — this is the wiring proof.
+
+    The lockstep assertion has to run inside the step that already carries the
+    version-shape and tag-skew gates, before the first `$GITHUB_OUTPUT` write and
+    before any network probe. Asserting on those three properties is what makes
+    the wiring itself testable: an assertion added below the first `gh_output`, or
+    left out of the step entirely, fails here.
+    """
+    res, out_file = _run_check(
+        tmp_path,
+        "0.1.3",
+        {c: "404" for c in CRATES},
+        crates=stale(REAL_PIN_SITES[0]),
+        ref={"GITHUB_REF_NAME": "v0.1.3", "GITHUB_REF_TYPE": "tag"},
+    )
+    assert res.returncode == 1, "a stale internal pin did not fail the release step"
+    assert "::error::version-pin drift" in res.stderr
+    assert out_file.read_text() == "", "no outputs may be written on the fail path"
+    assert not (tmp_path / "curl_argv").exists(), (
+        "crates.io was probed before the pin gate ran — the gate must sit with the "
+        "other manifest assertions, ahead of every network call"
+    )
 
 
 def test_check_crates_pass_path_matching_tag(tmp_path: Path):
