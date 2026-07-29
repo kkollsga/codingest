@@ -141,11 +141,20 @@ jobs:
           args: --release --out dist
       - name: Verify wheel entry points and payload
         run: python scripts/verify_wheel.py "dist/*.whl"
+      # `if-no-files-found: error` is load-bearing, not tidiness. The action's
+      # DEFAULT is `warn`: a leg that somehow reaches this step without having
+      # produced a wheel uploads an EMPTY artifact and the job stays green. The
+      # PyPI publish then runs with `skip-existing: true`, which swallows the
+      # resulting partial wheel set without a word, and nothing in this flow
+      # checks the artifact SET (only the version). Deleting this line restores
+      # that silent-partial-release path. Second net: `Verify the artifact set
+      # is complete` in publish-pypi.
       - name: Upload wheels
         uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: dist/*.whl
+          if-no-files-found: error
 
   build-sdist:
     name: Build sdist
@@ -159,6 +168,28 @@ jobs:
         with:
           command: sdist
           args: --out dist
+      # KEEP THE `shell: bash` LINE BELOW — it is load-bearing and invisible.
+      # GitHub's default `run` shell is `bash -e {0}`; an explicit `shell: bash`
+      # is `bash --noprofile --norc -eo pipefail {0}`. The delta is PIPEFAIL,
+      # and this step is a pipeline whose producer can fail while its consumer
+      # succeeds.
+      #
+      # Measured, not assumed (probes run 2026-07-29 on bash 3.2):
+      #   * a licence-LESS sdist goes red under `bash`, `bash -e` and
+      #     `bash -eo pipefail` alike — grep prints 0, and `test "$count" -eq 1`
+      #     is the step's last command, so its status is the step's. The plan's
+      #     "deleting shell: bash silently kills the check" is too strong for
+      #     that case; recorded here so nobody re-derives it the hard way.
+      #   * a `tar` that DIES PARTWAY (truncated/corrupt archive) after listing
+      #     a LICENSE entry is the case that needs pipefail: grep exits 0,
+      #     count=1, and the step is green on a broken archive. With pipefail
+      #     the substitution inherits tar's status and `-e` kills the step
+      #     (probe: rc 0 without pipefail, rc 2 with it).
+      # So the line buys corrupt-archive detection, not the empty case. It also
+      # still has no `-u`: a typo'd variable expands to empty instead of
+      # erroring, which is what `test -n "$archive"` stands in for by hand.
+      # If this ever grows a line AFTER `test "$count" -eq 1`, the check stops
+      # being the step's exit status and starts depending on `-e` alone.
       - name: Verify sdist license payload
         shell: bash
         run: |
@@ -166,11 +197,14 @@ jobs:
           test -n "$archive"
           count=$(tar -tzf "$archive" | grep -Ec '/LICENSE$')
           test "$count" -eq 1
+      # See the wheels upload above: the default is `warn`, which would let an
+      # empty sdist artifact through and hand publish-pypi a set with no sdist.
       - name: Upload sdist
         uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
+          if-no-files-found: error
 
   publish-pypi:
     name: Publish to PyPI + GitHub Release
@@ -197,8 +231,24 @@ jobs:
         with:
           name: sdist
           path: dist
-      - name: List artifacts
-        run: ls -la dist
+      # THE LAST CHANCE TO NOTICE A PARTIAL RELEASE. This step used to be
+      # `ls -la dist`: verification-shaped, asserting nothing, on a directory
+      # `download-artifact` always creates. Everything downstream is silent
+      # about a short set — `skip-existing: true` treats the missing wheels as
+      # "nothing to do", and the flow only ever verifies the *version* on PyPI,
+      # never the artifact *set*.
+      #
+      # The expectation is DERIVED from the build-wheels matrix above (one wheel
+      # per leg, mapped to the platform tag it must carry) plus exactly one
+      # sdist, so a hardcoded count cannot go stale behind a matrix edit: add a
+      # leg and the expected set grows with it; add a leg with an os/target the
+      # mapping does not know and the gate hard-fails asking for a mapping.
+      # Logic + unit tests: scripts/release_gates.sh assert_artifact_set,
+      # tests/release/test_release_gates.py.
+      - name: Verify the artifact set is complete
+        shell: bash
+        run: |
+          scripts/release_gates.sh assert_artifact_set dist .github/workflows/release.yml
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

@@ -274,6 +274,244 @@ changelog_notes() {
 }
 
 # ---------------------------------------------------------------------------
+# Artifact set (the wheels + sdist that go to PyPI)
+# ---------------------------------------------------------------------------
+#
+# WHAT THIS REPLACES. `publish-pypi` used to "verify" its downloaded artifacts
+# with `ls -la dist` — verification-shaped, asserting nothing, on a directory
+# `download-artifact` always creates. Combined with `if-no-files-found`'s
+# default of `warn` on the two upload steps and `skip-existing: true` on the
+# PyPI publish, a build leg that exited 0 without producing a wheel would upload
+# an empty artifact, and a PARTIAL wheel set would ship with the whole run
+# green. The release flow verifies the *version* on PyPI, never the artifact
+# *set*, so nothing downstream catches it either.
+#
+# WHY THE EXPECTATION IS DERIVED, NOT WRITTEN DOWN. "assert 6 files" is a dead
+# gate the day someone adds or drops a matrix leg: the constant is now wrong and
+# nothing says so. The expected set is therefore read out of the build-wheels
+# matrix in release.yml itself — the same definition that decides how many
+# wheels are built — and each leg is mapped to the platform tag its wheel must
+# carry. Adding a leg cannot leave this passing on a short set:
+#   * new leg, known os/target -> a new expected wheel; a short set fails;
+#   * new leg, unknown os/target -> `wheel_pattern_for_leg` has no mapping and
+#     hard-fails, demanding one (it never falls back to "anything goes");
+#   * new leg whose tag duplicates an existing leg's -> the bijection below
+#     leaves the second leg with nothing to claim, so it fails;
+#   * a wheel nobody expected -> left unclaimed, which also fails.
+
+# COMPUTE. Print one `os<TAB>target` line per leg of the `build-wheels` job's
+# `strategy.matrix.include` list, in file order.
+#
+# Scoped to that one job on purpose: `release-binaries` has its own matrix whose
+# legs carry `suffix`, not `target`. A leg missing `os` or `target` is an
+# ::error::, not a skip — an unparseable matrix must not silently shrink the
+# expected set (that is exactly the "gate passes on a short set" failure).
+#
+#   rc 0 — at least one well-formed leg, printed to stdout.
+#   rc 1 — the file could not be read, no legs were found, or a leg lacked
+#          os/target; an ::error:: annotation is on stderr.
+#
+# The awk below is a PURE EXTRACTOR — it prints `os<TAB>target` per leg and
+# judges nothing, leaving empty fields where a key was absent. All the verdicts
+# are taken in shell afterwards. That is not style: awk's only way to signal
+# failure is `exit`, and this file's rule (enforced by
+# `test_no_function_calls_exit`) is that nothing here may `exit`, because an
+# `exit` inside a `$( )` is swallowed by the enclosing command. Keeping the
+# judgement in shell keeps the guard absolute instead of carving an exception
+# into it.
+wheel_matrix_legs() {
+  local workflow="${1:-.github/workflows/release.yml}" raw os target out="" n=0
+  raw=$(awk '
+    function flush(   ) {
+      if (started) printf("%s\t%s\n", os, target)
+      started = 0; os = ""; target = ""
+    }
+    # A job header is the only key at indent 2 with no value.
+    /^  [A-Za-z0-9_-]+:[ \t]*$/ {
+      if (injob) { flush(); injob = 0; inmatrix = 0 }
+      if ($0 ~ /^  build-wheels:[ \t]*$/) injob = 1
+      next
+    }
+    injob == 0 { next }
+    /^[ \t]*include:[ \t]*$/ { inmatrix = 1; next }
+    /^[ \t]*steps:[ \t]*$/   { flush(); inmatrix = 0; next }
+    inmatrix == 0 { next }
+    {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (line == "") next
+      if (substr(line, 1, 1) == "-") {
+        flush()
+        started = 1
+        line = substr(line, 2)
+        sub(/^[ \t]+/, "", line)
+        if (line == "") next
+      }
+      idx = index(line, ":")
+      if (idx == 0) next
+      k = substr(line, 1, idx - 1)
+      v = substr(line, idx + 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", v)
+      gsub(/^['"'"'"]|['"'"'"]$/, "", v)
+      if (k == "os") os = v
+      else if (k == "target") target = v
+    }
+    END { flush() }
+  ' "$workflow") || return 1
+
+  if [ -z "$raw" ]; then
+    printf '::error::no build-wheels matrix legs found in %s — the wheel matrix moved or was restructured, so the expected artifact set is unknown. Refusing to derive an EMPTY expectation (it would make the artifact-set gate vacuously true).\n' \
+      "'${workflow}'" >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r os target; do
+    n=$((n + 1))
+    if [ -z "${os:-}" ] || [ -z "${target:-}" ]; then
+      printf '::error::build-wheels matrix leg %d in %s declares os=%s target=%s — a half-declared leg must not silently shrink the expected wheel set\n' \
+        "$n" "'${workflow}'" "'${os:-}'" "'${target:-}'" >&2
+      return 1
+    fi
+    out="$out$os"$'\t'"$target"$'\n'
+  done <<EOF
+$raw
+EOF
+  printf '%s' "$out"
+}
+
+# COMPUTE. Print the filename glob the wheel for one matrix leg must match.
+#
+# THE MAPPING IS DELIBERATELY EXHAUSTIVE-BY-FAILURE. Only the os/target pairs
+# the matrix actually uses are listed; anything else is an error, not a
+# permissive default. That is what makes "add a matrix leg" impossible to get
+# silently wrong: the new leg has no mapping, the gate fails, and the author has
+# to state what tag the new wheel carries. A catch-all `*) printf '*.whl'` here
+# would re-open the exact hole this whole function exists to close.
+#
+#   rc 0 — glob on stdout.
+#   rc 1 — unmapped leg; an ::error:: annotation is on stderr.
+wheel_pattern_for_leg() {
+  local os="${1:-}" target="${2:-}"
+  case "$os:$target" in
+    ubuntu-*:x86_64)  printf '*manylinux*_x86_64.whl\n' ;;
+    ubuntu-*:aarch64) printf '*manylinux*_aarch64.whl\n' ;;
+    macos-*:aarch64)  printf '*macosx_*_arm64.whl\n' ;;
+    macos-*:x86_64)   printf '*macosx_*_x86_64.whl\n' ;;
+    windows-*:x64)    printf '*win_amd64.whl\n' ;;
+    *)
+      printf '::error::build-wheels matrix leg %s/%s has no wheel-tag mapping in wheel_pattern_for_leg (scripts/release_gates.sh). Add one — a new matrix leg must not be able to pass this gate unnoticed.\n' \
+        "'${os}'" "'${target}'" >&2
+      return 1
+      ;;
+  esac
+}
+
+# COMPUTE. Number of non-empty lines in a newline-separated list.
+count_lines() {
+  local list="${1:-}"
+  if [ -z "$list" ]; then
+    printf '0\n'
+  else
+    printf '%s\n' "$list" | grep -c '[^[:space:]]'
+  fi
+}
+
+# ASSERT. The downloaded artifact set is exactly what the matrix promises.
+#
+#   assert_artifact_set <dist_dir> [workflow]
+#
+# It is a BIJECTION, not a count: every matrix leg claims exactly one wheel, and
+# every wheel is claimed by exactly one leg. A count alone would pass a set that
+# has the right number of wrong wheels (two manylinux builds and no macOS one),
+# and a per-leg check alone would pass a set with an extra unexpected wheel in
+# it. Plus exactly one sdist.
+#
+#   rc 0 — complete set; a per-leg trace is on stderr.
+#   rc 1 — missing wheel, unexpected wheel, ambiguous leg mapping, wrong sdist
+#          count, or an unreadable matrix; ::error:: annotations on stderr.
+assert_artifact_set() {
+  local dist="${1:-dist}" workflow="${2:-.github/workflows/release.yml}"
+  local legs wheels sdists remaining rest pattern os target w matched
+  local n_matched failures=0 n_leg=0 leftover n_wheel n_sdist
+
+  if [ ! -d "$dist" ]; then
+    printf '::error::artifact directory %s does not exist — the download step produced nothing\n' \
+      "'${dist}'" >&2
+    return 1
+  fi
+  if ! legs=$(wheel_matrix_legs "$workflow"); then
+    printf '::error::refusing to publish: the expected wheel set could not be derived from %s\n' \
+      "'${workflow}'" >&2
+    return 1
+  fi
+
+  wheels=$(find "$dist" -maxdepth 1 -type f -name '*.whl' -exec basename {} \; | LC_ALL=C sort)
+  sdists=$(find "$dist" -maxdepth 1 -type f -name '*.tar.gz' -exec basename {} \; | LC_ALL=C sort)
+  n_wheel=$(count_lines "$wheels")
+  n_sdist=$(count_lines "$sdists")
+  remaining="$wheels"
+
+  while IFS=$'\t' read -r os target; do
+    [ -n "$os" ] || continue
+    n_leg=$((n_leg + 1))
+    if ! pattern=$(wheel_pattern_for_leg "$os" "$target"); then
+      failures=$((failures + 1))
+      continue
+    fi
+    n_matched=0
+    matched=""
+    rest=""
+    while IFS= read -r w; do
+      [ -n "$w" ] || continue
+      case "$w" in
+        $pattern)
+          n_matched=$((n_matched + 1))
+          matched="$w"
+          ;;
+        *)
+          rest="$rest$w"$'\n'
+          ;;
+      esac
+    done <<EOF
+$remaining
+EOF
+    if [ "$n_matched" -eq 1 ]; then
+      printf 'leg %s/%s -> %s\n' "$os" "$target" "$matched" >&2
+      remaining="$rest"
+    elif [ "$n_matched" -eq 0 ]; then
+      printf '::error::no wheel for build-wheels matrix leg %s/%s — nothing in %s matches %s. A build leg produced no wheel and `if-no-files-found` let the empty artifact through.\n' \
+        "$os" "$target" "'${dist}'" "'${pattern}'" >&2
+      failures=$((failures + 1))
+    else
+      printf '::error::%d wheels match build-wheels matrix leg %s/%s (%s) — two legs share one tag mapping, so the set cannot be checked leg-by-leg. Fix wheel_pattern_for_leg.\n' \
+        "$n_matched" "$os" "$target" "'${pattern}'" >&2
+      failures=$((failures + 1))
+    fi
+  done <<EOF
+$legs
+EOF
+
+  leftover=$(count_lines "$remaining")
+  if [ "$leftover" -ne 0 ]; then
+    printf '::error::%d wheel(s) in %s belong to no build-wheels matrix leg: %s\n' \
+      "$leftover" "'${dist}'" "$(printf '%s' "$remaining" | tr '\n' ' ')" >&2
+    failures=$((failures + 1))
+  fi
+  if [ "$n_sdist" -ne 1 ]; then
+    printf '::error::expected exactly 1 sdist (*.tar.gz) in %s, found %d\n' \
+      "'${dist}'" "$n_sdist" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [ "$failures" -ne 0 ]; then
+    printf '::error::artifact set incomplete: %d problem(s) across %d wheel(s) + %d sdist(s) for %d matrix leg(s). Refusing to publish — `skip-existing: true` would ship the partial set to PyPI silently.\n' \
+      "$failures" "$n_wheel" "$n_sdist" "$n_leg" >&2
+    return 1
+  fi
+  printf 'artifact set complete: %d wheel(s), one per build-wheels matrix leg, + %d sdist\n' \
+    "$n_wheel" "$n_sdist" >&2
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -290,7 +528,8 @@ main() {
     extract_version | assert_version_shape | version_from_ref | \
       assert_tag_matches_manifest | crates_io_status | \
       publish_decision_for | crate_output_key | check_crates_to_publish | \
-      extract_changelog_section | changelog_notes)
+      extract_changelog_section | changelog_notes | wheel_matrix_legs | \
+      wheel_pattern_for_leg | assert_artifact_set)
       "$cmd" "$@"
       ;;
     *)
