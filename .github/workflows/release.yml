@@ -11,11 +11,30 @@ name: Release
 # crates.io (HTTP-404 guard), the PyPI publish uses `skip-existing: true`, and
 # softprops updates an existing release — so a re-run after a partial failure is
 # safe.
+#
+# A `v*` TAG PUSH IS THE ONLY TRIGGER, deliberately. There used to be a
+# `workflow_dispatch:` here too, and on a dispatch run GITHUB_REF_NAME is a
+# BRANCH: `${GITHUB_REF_NAME#v}` is then `main`, the changelog lookup asks for a
+# `## [main]` section and silently degrades to auto-generated notes, the
+# binaries are packaged `codingest-main-linux-x86_64.tar.gz`, and
+# `softprops/action-gh-release` — handed a non-tag ref — CREATES a tag and
+# release named after the branch. Every step of that is green.
+#
+# The alternative to removing the trigger was a degraded dry-run mode, i.e.
+# conditioning every publish and release action on `github.ref_type == 'tag'`.
+# Rejected: each of those conditions is itself something branch CI can never
+# exercise, so it would add unfailable surface to buy a rehearsal `ci.yml`
+# already gives on every push (workspace build, wheel build + verify_wheel,
+# and the release-gates unit suite). Re-running a release is done with GitHub's
+# "Re-run jobs" on the tag's own run, which keeps GITHUB_REF_TYPE=tag.
+#
+# `Guard: this ref may publish` is the backstop, in every job that publishes or
+# names an artifact after the ref. See assert_publish_ref in
+# scripts/release_gates.sh.
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,6 +47,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+      # FIRST, before a toolchain is even installed: nothing downstream may run
+      # on a ref that is not a `v<N.N.N>` tag. This job gates every other job in
+      # the file (`needs: [publish-crate]` transitively reaches all of them), so
+      # failing here stops the whole publish path. Repeated in publish-pypi and
+      # release-binaries anyway — that reachability is a property of today's
+      # `needs:` graph, not an invariant.
+      - name: Guard the publish ref
+        shell: bash
+        run: |
+          scripts/release_gates.sh assert_publish_ref \
+            "$GITHUB_REF_NAME" "$GITHUB_REF_TYPE" "$GITHUB_EVENT_NAME"
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Set up Python (libpython for the workspace's PyO3 crate)
@@ -220,6 +250,14 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # This job reads GITHUB_REF_NAME for the changelog lookup and hands the
+      # ref to softprops, which creates the tag if it does not exist. Guard it
+      # here too rather than trusting publish-crate to have run.
+      - name: Guard the publish ref
+        shell: bash
+        run: |
+          scripts/release_gates.sh assert_publish_ref \
+            "$GITHUB_REF_NAME" "$GITHUB_REF_TYPE" "$GITHUB_EVENT_NAME"
       - name: Download all wheels
         uses: actions/download-artifact@v8
         with:
@@ -249,42 +287,72 @@ jobs:
         shell: bash
         run: |
           scripts/release_gates.sh assert_artifact_set dist .github/workflows/release.yml
-      - name: Publish to PyPI (trusted publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # Idempotent re-runs: a file already on PyPI is skipped, not an error.
-          skip-existing: true
+      # BEFORE the PyPI publish, not after it. A missing changelog section is now
+      # fatal on a tag build (below), and a fatal check is worth more on the near
+      # side of an irreversible action: PyPI accepts a filename exactly once.
+      # Nothing here needs the publish to have happened.
+      #
       # Two statements, not one nested `$( )`: an assertion inside a
       # substitution nested in another command has its status swallowed by the
       # outer command. See the header of scripts/release_gates.sh.
-      # Emits `has_notes`.
+      #
+      # GITHUB_REF_TYPE is passed because it is what makes the section
+      # MANDATORY. A missing `## [x.y.z]` used to set has_notes=false and fall
+      # through to a second release step with `generate_release_notes: true` —
+      # a silent downgrade from the curated changelog to a list of commit
+      # subjects, and a downgrade that fired precisely when something was wrong
+      # (the CHANGELOG was never promoted, or the tag disagrees with the
+      # manifest). That fallback step is GONE, not merely unreachable: leaving a
+      # degrade-quietly branch in the file is an invitation to re-enable the
+      # behaviour by relaxing the gate. Emits `has_notes`.
       - name: Extract changelog for this version
         id: changelog
         shell: bash
         run: |
           version=$(scripts/release_gates.sh version_from_ref "$GITHUB_REF_NAME")
-          scripts/release_gates.sh changelog_notes "$version" CHANGELOG.md /tmp/release_notes.md
+          scripts/release_gates.sh changelog_notes "$version" CHANGELOG.md /tmp/release_notes.md "$GITHUB_REF_TYPE"
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-runs: a file already on PyPI is skipped, not an error.
+          skip-existing: true
       - name: Create GitHub Release (with changelog body)
         if: steps.changelog.outputs.has_notes == 'true'
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body_path: /tmp/release_notes.md
-      - name: Create GitHub Release (auto-generated notes)
-        if: steps.changelog.outputs.has_notes != 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: dist/*
-          generate_release_notes: true
 
   # ---- best-effort: attach standalone codingest-cli / codingest-mcp binaries ----
   # Convenience for users who want the CLI / MCP server without `cargo install`
   # or the wheel. Best-effort: a build hiccup here must not block the crates.io
-  # or PyPI publish, so the job never gates them (it only `needs` publish-crate
-  # to run after the version is confirmed publishable) and tolerates failures.
+  # or PyPI publish.
+  #
+  # `needs: [publish-crate, publish-pypi]` — the publish-pypi edge FIXES A RACE,
+  # it does not add a gate. Both this job and publish-pypi call
+  # softprops/action-gh-release, and whichever arrives first CREATES the release;
+  # the second only updates it. This job needed just publish-crate, so it
+  # habitually won — creating the release with an EMPTY body, after which
+  # publish-pypi's `body_path` update was the only thing that ever wrote the
+  # changelog into it. Ordering it after publish-pypi means the release is
+  # always created with its notes and this job only attaches files.
+  #
+  # THE NON-BLOCKING PROPERTY IS UNCHANGED, and it is worth being precise about
+  # why, because "add a needs: edge" sounds like it could not be. `needs:` makes
+  # THIS job wait for that one; blocking would require the reverse edge, some
+  # other job declaring `needs: release-binaries`. No job in this file does
+  # (publish-crate needs nothing, build-wheels/build-sdist need publish-crate,
+  # publish-pypi needs the two build jobs) — which is what actually makes this
+  # job unable to block anything, dependency-graph-first and
+  # `continue-on-error` second. A unit test asserts no job ever gains that
+  # reverse edge. By the time this job runs, both publishes are already done, so
+  # even a hard failure here cannot reach them.
+  #
+  # Phase 6 narrows the job-level `continue-on-error` below to the genuinely
+  # fragile packaging steps; the reasoning above is what makes that safe.
   release-binaries:
     name: Release binaries - ${{ matrix.os }}
-    needs: [publish-crate]
+    needs: [publish-crate, publish-pypi]
     continue-on-error: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -302,6 +370,18 @@ jobs:
             suffix: windows-x86_64
     steps:
       - uses: actions/checkout@v7
+      # THE JOB THAT NAMES FILES AFTER THE REF. Both Package steps below
+      # interpolate GITHUB_REF_NAME straight into an archive filename, and the
+      # attach step hands the ref to softprops, which creates a tag+release if
+      # one does not exist. Off a tag that produces `codingest-main-…` archives
+      # attached to a release named `main`. This job also carries
+      # `continue-on-error: true`, so it is the one place a bad ref could fail
+      # quietly — hence the guard runs before anything is built.
+      - name: Guard the publish ref
+        shell: bash
+        run: |
+          scripts/release_gates.sh assert_publish_ref \
+            "$GITHUB_REF_NAME" "$GITHUB_REF_TYPE" "$GITHUB_EVENT_NAME"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

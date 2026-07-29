@@ -97,6 +97,40 @@ def stub_curl(tmp_path: Path, statuses: dict[str, str], *, rc: int = 0) -> Path:
     return stub
 
 
+def stub_curl_sequence(tmp_path: Path, statuses: list[str]) -> Path:
+    """A curl stub that answers a DIFFERENT status on each successive call.
+
+    Needed to drive the probe's retry: a stub with one fixed answer cannot tell
+    "retried and settled" apart from "never retried at all". The call counter
+    lives in a file so it survives the subshells `$( )` puts each call in.
+    """
+    arms = "\n".join(f"  {i}) printf '%s' '{s}' ;;" for i, s in enumerate(statuses, 1))
+    stub = tmp_path / "curl"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'n=$(cat "{tmp_path}/curl_calls" 2>/dev/null || echo 0)\n'
+        "n=$((n + 1))\n"
+        f'printf "%s" "$n" > "{tmp_path}/curl_calls"\n'
+        f'printf "%s\\n" "$*" >> "{tmp_path}/curl_argv"\n'
+        "case \"$n\" in\n"
+        f"{arms}\n"
+        f"  *) printf '%s' '{statuses[-1]}' ;;\n"
+        "esac\n"
+    )
+    stub.chmod(0o755)
+    return stub
+
+
+def curl_calls(tmp_path: Path) -> int:
+    path = tmp_path / "curl_argv"
+    return len(path.read_text().splitlines()) if path.exists() else 0
+
+
+# A no-op stand-in for `sleep`, so retry tests cost nothing in wall time. It is
+# indirected through CODINGEST_RELEASE_SLEEP for exactly this reason.
+NO_SLEEP = {"CODINGEST_RELEASE_SLEEP": "/usr/bin/true"}
+
+
 def _code_lines(path: Path) -> list[str]:
     """Stripped, non-blank, non-comment lines of a file.
 
@@ -129,6 +163,29 @@ def _step_block(path: Path, step_name: str) -> list[str]:
             break
         block.append(line)
     return block
+
+
+def _job_block(path: Path, job: str) -> list[str]:
+    """The stripped, comment-free lines of one top-level job.
+
+    Scoped like `_step_block`, and for the same reason: three jobs now carry an
+    identically-named `Guard the publish ref` step, so a file-wide assertion
+    would be satisfied by three copies in ONE job. Indentation has to be read
+    from the RAW lines here — `_code_lines` strips it, which is exactly what
+    makes a job header indistinguishable from any other key.
+    """
+    raw = path.read_text().splitlines()
+    start = next((i for i, l in enumerate(raw) if l == f"  {job}:"), None)
+    assert start is not None, f"{path.name}: no job named {job!r}"
+    out = []
+    for line in raw[start + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith("    "):  # back out to indent 2 -> next job
+            break
+        out.append(stripped)
+    return out
 
 
 def assert_has_line(path: Path, expected: str) -> None:
@@ -370,6 +427,110 @@ def test_crates_io_status_fail_path_curl_error(tmp_path: Path):
 
 
 # --------------------------------------------------------------------------
+# crates_io_probe + assert_status_conclusive  (Phase 5 gate 1)
+# --------------------------------------------------------------------------
+#
+# THE DEFECT. `curl -s -o /dev/null -w "%{http_code}"` carries no `-f`, so curl
+# exits 0 for ANY outcome — including none, which it reports as "000". The
+# decision was a two-way branch on `= 404`, so a DNS blip, a 403 from the rate
+# limiter or a crates.io 5xx all fell into the else arm and skipped ALL THREE
+# crate publishes with the run still green: a release that shipped nothing to
+# crates.io was indistinguishable from one with nothing to ship.
+#
+# THE FIX SPLITS THE THREE CASES rather than bolting on `curl -f`. The
+# skip-on-unknown was deliberate and is kept — `publish_decision_for` still
+# refuses to publish on anything but a 404 — but uncertainty no longer exits
+# green. 404 publishes, 200 skips cleanly (the documented idempotent re-run),
+# anything else is retried a bounded number of times and then FAILS THE STEP.
+
+
+def test_crates_io_probe_conclusive_on_the_first_try(tmp_path: Path):
+    stub = stub_curl_sequence(tmp_path, ["404"])
+    res = call(
+        ["crates_io_probe", "codingest", "0.1.3"],
+        env={"CODINGEST_RELEASE_CURL": str(stub), **NO_SLEEP},
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout == "404\n"
+    assert curl_calls(tmp_path) == 1, "a conclusive answer must not be re-asked"
+
+
+def test_crates_io_probe_retries_a_transient_status_and_settles(tmp_path: Path):
+    """A blip then a real answer: the retry is what stops a one-off 503 from
+    failing a release that is otherwise perfectly fine."""
+    stub = stub_curl_sequence(tmp_path, ["000", "503", "404"])
+    res = call(
+        ["crates_io_probe", "codingest", "0.1.3"],
+        env={"CODINGEST_RELEASE_CURL": str(stub), **NO_SLEEP},
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout == "404\n", "the settled answer must win, not the blip"
+    assert curl_calls(tmp_path) == 3
+
+
+def test_crates_io_probe_gives_up_after_the_attempt_budget(tmp_path: Path):
+    """A PERSISTENT outage is not retried forever, and it is not laundered into
+    a conclusive-looking status either — the last inconclusive one is printed
+    and `assert_status_conclusive` is what refuses it."""
+    stub = stub_curl_sequence(tmp_path, ["000"])
+    res = call(
+        ["crates_io_probe", "codingest", "0.1.3"],
+        env={
+            "CODINGEST_RELEASE_CURL": str(stub),
+            "CRATES_IO_PROBE_ATTEMPTS": "3",
+            **NO_SLEEP,
+        },
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout == "000\n"
+    assert curl_calls(tmp_path) == 3, "the attempt budget must be honoured exactly"
+
+
+def test_crates_io_probe_folds_a_hard_curl_error_into_an_inconclusive_status(
+    tmp_path: Path,
+):
+    """A curl that EXITS non-zero (rc 7, connection refused) must not kill the
+    function under `set -e` — that is the transient case retrying exists for.
+    It becomes "000", which is inconclusive, which fails loudly downstream."""
+    stub = stub_curl(tmp_path, {"codingest": "000"}, rc=7)
+    res = call(
+        ["crates_io_probe", "codingest", "0.1.3"],
+        env={
+            "CODINGEST_RELEASE_CURL": str(stub),
+            "CRATES_IO_PROBE_ATTEMPTS": "2",
+            **NO_SLEEP,
+        },
+    )
+    assert res.returncode == 0, res.stderr
+    assert res.stdout == "000\n"
+
+
+@pytest.mark.parametrize("status", ["200", "404"])
+def test_assert_status_conclusive_accepts_the_two_real_answers(status: str):
+    res = call(["assert_status_conclusive", "codingest", "0.1.3", status])
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize("status", ["000", "403", "429", "500", "502", "301", ""])
+def test_assert_status_conclusive_fail_path(status: str):
+    """FAIL PATH — THE PHASE 5 GATE. Every one of these used to be a silent skip
+    of all three crate publishes with the run green."""
+    res = call(["assert_status_conclusive", "codingest", "0.1.3", status])
+    assert res.returncode == 1, f"HTTP {status!r} was accepted as an answer"
+    assert "::error::" in res.stderr
+
+
+def test_publish_decision_still_refuses_to_publish_on_an_odd_status():
+    """The FAIL-SAFE half of the old behaviour is deliberately KEPT.
+
+    `assert_status_conclusive` now stops these reaching the mapping at all, but
+    "never blindly publish on uncertainty" is worth two independent guards.
+    """
+    for status in ("000", "403", "500", ""):
+        assert call(["publish_decision_for", status]).stdout == "false\n"
+
+
+# --------------------------------------------------------------------------
 # check_crates_to_publish — the whole step, incl. the $GITHUB_OUTPUT contract
 # --------------------------------------------------------------------------
 
@@ -398,6 +559,7 @@ def _run_check(
         env={
             "CODINGEST_RELEASE_CURL": str(stub),
             "GITHUB_OUTPUT": str(out_file),
+            **NO_SLEEP,
             **(ref or {}),
         },
     )
@@ -418,11 +580,16 @@ def test_check_crates_all_absent_publishes_everything(tmp_path: Path):
 
 
 def test_check_crates_mixed_statuses(tmp_path: Path):
-    """200 = already there, 500 = unverifiable; both must yield false."""
+    """200 = already there (skip), 404 = publish. Both are CONCLUSIVE.
+
+    This used to include a 500 leg asserting it silently yielded `false`. That
+    was the defect, not the contract: see
+    `test_check_crates_fail_path_inconclusive_status` below.
+    """
     res, out_file = _run_check(
         tmp_path,
         "0.1.3",
-        {"codingest": "200", "codingest-cli": "404", "codingest-mcp": "500"},
+        {"codingest": "200", "codingest-cli": "404", "codingest-mcp": "200"},
     )
     assert res.returncode == 0, res.stderr
     assert out_file.read_text().splitlines() == [
@@ -431,6 +598,43 @@ def test_check_crates_mixed_statuses(tmp_path: Path):
         "publish_codingest_cli=true",
         "publish_codingest_mcp=false",
     ]
+
+
+def test_check_crates_all_present_skips_cleanly(tmp_path: Path):
+    """GREEN: every crate already on crates.io — the documented idempotent
+    re-run. A genuine 200 must stay a quiet, successful skip; only UNCERTAINTY
+    became loud."""
+    res, out_file = _run_check(tmp_path, "0.1.3", {c: "200" for c in CRATES})
+    assert res.returncode == 0, res.stderr
+    assert out_file.read_text().splitlines() == [
+        "version=0.1.3",
+        "publish_codingest=false",
+        "publish_codingest_cli=false",
+        "publish_codingest_mcp=false",
+    ]
+
+
+@pytest.mark.parametrize("status", ["000", "403", "500", "502"])
+def test_check_crates_fail_path_inconclusive_status(tmp_path: Path, status: str):
+    """FAIL PATH — THE PHASE 5 GATE, at step level.
+
+    One crate the probe cannot resolve fails the whole step and writes NOTHING.
+    Before this, HTTP 000 from a transient network error fell into the else arm
+    of a `= 404` branch and set all three `publish_*` outputs to `false`: every
+    crate publish skipped, no annotation, run green.
+
+    Nothing is written even for the crates that DID answer, on purpose — a step
+    that fails after emitting `publish_codingest=true` leaves outputs describing
+    a decision that was never taken.
+    """
+    res, out_file = _run_check(
+        tmp_path,
+        "0.1.4",
+        {"codingest": "404", "codingest-cli": status, "codingest-mcp": "404"},
+    )
+    assert res.returncode == 1, f"HTTP {status} was silently skipped again"
+    assert "::error::" in res.stderr
+    assert out_file.read_text() == "", "no outputs may be written on the fail path"
 
 
 def test_check_crates_fail_path_no_version_line(tmp_path: Path):
@@ -526,6 +730,70 @@ def test_check_crates_workflow_dispatch_does_not_compare_a_branch(tmp_path: Path
 
 
 # --------------------------------------------------------------------------
+# assert_publish_ref  (Phase 5 gate 3 — the workflow_dispatch path)
+# --------------------------------------------------------------------------
+#
+# release.yml used to also carry a `workflow_dispatch:` trigger, and on a
+# dispatch run GITHUB_REF_NAME is a BRANCH. `${GITHUB_REF_NAME#v}` is then
+# `main`, so the changelog lookup asks for a `## [main]` section and degrades to
+# auto-generated notes; the binaries are packaged
+# `codingest-main-linux-x86_64.tar.gz`; and softprops, handed a non-tag ref,
+# CREATES a tag and release named after the branch. All green.
+#
+# THE DECISION: dispatch is blocked from the publish path outright, not allowed
+# in a degraded dry-run mode. A dry-run would have to condition every publish
+# and release action on the ref type, and each such condition is itself
+# something branch CI can never exercise — more unfailable surface, to buy a
+# rehearsal `ci.yml` already provides. The `on:` block therefore lists only the
+# `v*` tag push, and this function is the backstop.
+
+
+def test_assert_publish_ref_accepts_a_version_tag():
+    res = call(["assert_publish_ref", "v0.1.3", "tag", "push"])
+    assert res.returncode == 0, res.stderr
+
+
+def test_assert_publish_ref_accepts_a_prerelease_tag():
+    res = call(["assert_publish_ref", "v1.0.0-rc.1", "tag", "push"])
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize(
+    ("ref_name", "ref_type", "event"),
+    [
+        ("main", "branch", "workflow_dispatch"),  # THE case
+        ("fix/publish-path-gates", "branch", "workflow_dispatch"),
+        ("v0.1.3", "branch", "workflow_dispatch"),  # a BRANCH named like a tag
+        ("main", "", ""),  # ref_type unset entirely
+        ("", "", ""),
+    ],
+)
+def test_assert_publish_ref_fail_path_not_a_tag(ref_name, ref_type, event):
+    """FAIL PATH: anything that is not a tag cannot reach a publish step."""
+    res = call(["assert_publish_ref", ref_name, ref_type, event])
+    assert res.returncode == 1, f"{ref_name!r}/{ref_type!r} reached the publish path"
+    assert "::error::" in res.stderr
+
+
+@pytest.mark.parametrize("ref_name", ["nightly", "v1.2", "latest", "0.1.3", "v", "vnext"])
+def test_assert_publish_ref_fail_path_tag_is_not_a_version(ref_name: str):
+    """FAIL PATH: a real tag whose name is not `v<N.N.N>`.
+
+    There is no manifest version for it to agree with and no changelog section
+    for it to find, so every downstream gate would be comparing against noise.
+    """
+    res = call(["assert_publish_ref", ref_name, "tag", "push"])
+    assert res.returncode == 1, f"tag {ref_name!r} was accepted as a release tag"
+    assert "::error::" in res.stderr
+
+
+def test_assert_publish_ref_fail_path_with_no_arguments():
+    res = call(["assert_publish_ref"])
+    assert res.returncode == 1
+    assert "::error::" in res.stderr
+
+
+# --------------------------------------------------------------------------
 # INVERTED CONTROLS — prove the strictness of each gate is load-bearing.
 #
 # Each runs a deliberately NAIVE version of the assertion against an input the
@@ -561,6 +829,68 @@ def test_inverted_control_a_substring_tag_check_would_pass_a_near_miss():
     assert "NAIVE_PASS" in naive.stdout, "premise broken: the near-miss no longer matches"
     res = call(["assert_tag_matches_manifest", "0.1.3", "v0.1.30", "tag"])
     assert res.returncode == 1, "the real gate must reject the near-miss"
+
+
+def test_inverted_control_a_not_404_skip_would_swallow_a_transient_status():
+    """NAIVE: `[ "$status" = 404 ] && publish || skip` — the SHIPPED behaviour.
+
+    It is green on HTTP 000, 403 and 5xx alike, having decided to publish
+    nothing. That is the whole Phase 5 defect: the fail-safe was right, its
+    silence was not. The real gate refuses the same inputs out loud.
+    """
+    for status in ("000", "403", "500"):
+        naive = run_shell(
+            f'status="{status}"\n'
+            'if [ "$status" = "404" ]; then echo NAIVE_PUBLISH; else echo NAIVE_PASS; fi\n'
+        )
+        assert "NAIVE_PASS" in naive.stdout, f"premise broken for {status!r}"
+        assert naive.returncode == 0, "premise broken: the naive form must be green"
+        res = call(["assert_status_conclusive", "codingest", "0.1.3", status])
+        assert res.returncode == 1, (
+            f"the real gate must fail on {status!r} where the naive skip passes"
+        )
+
+
+def test_inverted_control_a_v_prefix_check_would_pass_a_branch():
+    """NAIVE: `case "$GITHUB_REF_NAME" in v*)` — "it looks like a tag".
+
+    A branch named `vnext`, or a dispatch on a branch someone tagged-and-named
+    `v0.1.3`, satisfies it. The real gate keys on GITHUB_REF_TYPE, which is the
+    only thing that actually distinguishes a dispatch from a tag push.
+    """
+    for ref in ("vnext", "v0.1.3"):
+        naive = run_shell(
+            f'ref="{ref}"\n'
+            'case "$ref" in v*) echo NAIVE_PASS ;; *) echo NAIVE_FAIL ;; esac\n'
+        )
+        assert "NAIVE_PASS" in naive.stdout, f"premise broken for {ref!r}"
+        assert call(["assert_publish_ref", ref, "branch", "workflow_dispatch"]).returncode == 1, (
+            f"the real gate must reject the branch {ref!r} the naive check passes"
+        )
+
+
+def test_inverted_control_a_presence_check_would_pass_an_absent_changelog(
+    tmp_path: Path,
+):
+    """NAIVE: `[ -f CHANGELOG.md ]` — "the changelog exists", the honour-system
+    version of the release skill's promote step.
+
+    A CHANGELOG.md with no `## [0.9.9]` section satisfies it; that is exactly
+    the state a forgotten promotion leaves behind, and it used to degrade to
+    auto-generated notes without a word.
+    """
+    changelog = _changelog(tmp_path)
+    naive = run_shell(
+        f'if [ -f "{changelog}" ]; then echo NAIVE_PASS; else echo NAIVE_FAIL; fi'
+    )
+    assert "NAIVE_PASS" in naive.stdout, "premise broken: the changelog is missing"
+    out_file = tmp_path / "github_output"
+    out_file.write_text("")
+    res = call(
+        ["changelog_notes", "0.9.9", str(changelog), str(tmp_path / "n.md"), "tag"],
+        env={"GITHUB_OUTPUT": str(out_file)},
+    )
+    assert res.returncode == 1, "the real gate must reject the unpromoted changelog"
 
 
 # --------------------------------------------------------------------------
@@ -616,18 +946,63 @@ def test_changelog_notes_pass_path(tmp_path: Path):
     assert "the AGC semantics" in notes.read_text()
 
 
-def test_changelog_notes_fail_path_missing_section(tmp_path: Path):
-    """FAIL PATH: no section -> has_notes=false and no notes file written."""
+@pytest.mark.parametrize("ref_type", ["", "branch", "unknown"])
+def test_changelog_notes_missing_section_off_a_tag_degrades(tmp_path, ref_type):
+    """OFF A TAG: no section -> has_notes=false and no notes file written.
+
+    The requirement is scoped to tag builds — a local run has no release to
+    gate. Kept as a real branch rather than made unreachable, so a caller that
+    forgets the ref_type argument degrades instead of erroring on a version it
+    had no business looking up.
+    """
     out_file = tmp_path / "github_output"
     out_file.write_text("")
     notes = tmp_path / "release_notes.md"
+    args = ["changelog_notes", "9.9.9", str(_changelog(tmp_path)), str(notes)]
     res = call(
-        ["changelog_notes", "9.9.9", str(_changelog(tmp_path)), str(notes)],
+        args + ([ref_type] if ref_type else []),
         env={"GITHUB_OUTPUT": str(out_file)},
     )
     assert res.returncode == 0, res.stderr
     assert out_file.read_text().splitlines() == ["has_notes=false"]
     assert not notes.exists()
+
+
+def test_changelog_notes_fail_path_missing_section_on_a_tag(tmp_path: Path):
+    """FAIL PATH — THE PHASE 5 GATE. A missing `## [x.y.z]` on a `v*` tag.
+
+    It used to set has_notes=false, which the workflow read as "use
+    auto-generated notes": a silent downgrade from the curated changelog to a
+    list of commit subjects, fired at precisely the moment something was wrong
+    — the release skill's promote-the-CHANGELOG step was skipped, or the tag
+    disagrees with the manifest. This is what makes that step a gate rather
+    than an honour-system one.
+    """
+    out_file = tmp_path / "github_output"
+    out_file.write_text("")
+    notes = tmp_path / "release_notes.md"
+    res = call(
+        ["changelog_notes", "9.9.9", str(_changelog(tmp_path)), str(notes), "tag"],
+        env={"GITHUB_OUTPUT": str(out_file)},
+    )
+    assert res.returncode == 1, "an unpromoted CHANGELOG still released quietly"
+    assert "::error::" in res.stderr
+    assert out_file.read_text() == "", "no outputs may be written on the fail path"
+    assert not notes.exists()
+
+
+def test_changelog_notes_pass_path_on_a_tag(tmp_path: Path):
+    """GREEN: a promoted section on a tag build behaves exactly as before."""
+    out_file = tmp_path / "github_output"
+    out_file.write_text("")
+    notes = tmp_path / "release_notes.md"
+    res = call(
+        ["changelog_notes", "0.1.3", str(_changelog(tmp_path)), str(notes), "tag"],
+        env={"GITHUB_OUTPUT": str(out_file)},
+    )
+    assert res.returncode == 0, res.stderr
+    assert out_file.read_text().splitlines() == ["has_notes=true"]
+    assert "the AGC semantics" in notes.read_text()
 
 
 def test_changelog_notes_fail_path_missing_changelog(tmp_path: Path):
@@ -1094,7 +1469,8 @@ def test_release_workflow_calls_the_changelog_script():
     )
     assert_has_line(
         RELEASE_WORKFLOW,
-        'scripts/release_gates.sh changelog_notes "$version" CHANGELOG.md /tmp/release_notes.md',
+        'scripts/release_gates.sh changelog_notes "$version" CHANGELOG.md'
+        ' /tmp/release_notes.md "$GITHUB_REF_TYPE"',
     )
 
 
@@ -1197,6 +1573,159 @@ def test_sdist_license_step_keeps_its_explicit_shell_bash():
     behaviour; this test is what stops the line being deleted as noise.
     """
     assert "shell: bash" in _step_block(RELEASE_WORKFLOW, "Verify sdist license payload")
+
+
+# --------------------------------------------------------------------------
+# Phase 5 wiring: the trigger, the ref guard, the notes fallback, the race
+# --------------------------------------------------------------------------
+
+
+def test_job_block_does_not_leak_into_the_next_job(tmp_path: Path):
+    """VERIFY THE PROBE: the job extractor must stop at the next job header.
+
+    If it ran on, the `Guard the publish ref` step in `publish-crate` would
+    satisfy the assertion made about `release-binaries` two jobs later — and the
+    per-job scoping below would be worth nothing.
+    """
+    sample = tmp_path / "s.yml"
+    sample.write_text(
+        "jobs:\n  a:\n    needs: [x]\n    steps:\n      - name: A\n"
+        "  # a comment between jobs\n  b:\n    needs: [y]\n"
+    )
+    assert _job_block(sample, "a") == ["needs: [x]", "steps:", "- name: A"]
+    assert _job_block(sample, "b") == ["needs: [y]"]
+
+
+def test_release_workflow_only_triggers_on_a_version_tag():
+    """`workflow_dispatch:` IS GONE — the primary block on the dispatch path.
+
+    On dispatch GITHUB_REF_NAME is a BRANCH, so `${GITHUB_REF_NAME#v}` is
+    `main`: the changelog lookup asks for `## [main]`, the binaries are named
+    `codingest-main-…`, and softprops creates a tag+release named after the
+    branch. Asserted as the exact shape of the trigger block, not as "the string
+    is absent", so re-adding the trigger anywhere in it goes red.
+    """
+    lines = _code_lines(RELEASE_WORKFLOW)
+    start = lines.index("on:")
+    assert lines[start : start + 4] == ["on:", "push:", "tags:", "- 'v*'"]
+    assert lines[start + 4] == "env:", (
+        f"an extra trigger was added to release.yml: {lines[start + 4]!r}"
+    )
+
+
+GUARD_CALL = 'scripts/release_gates.sh assert_publish_ref \\'
+GUARD_ARGS = '"$GITHUB_REF_NAME" "$GITHUB_REF_TYPE" "$GITHUB_EVENT_NAME"'
+
+
+@pytest.mark.parametrize("job", ["publish-crate", "publish-pypi", "release-binaries"])
+def test_every_publishing_job_guards_the_ref(job: str):
+    """The backstop, checked PER JOB.
+
+    Three jobs carry an identically-named guard step, so a file-wide count would
+    be satisfied by three copies in one job and none in the others. Whole-line
+    equality (not `in`) keeps a neutered `… --dry-run` from passing.
+    """
+    block = _job_block(RELEASE_WORKFLOW, job)
+    assert GUARD_CALL in block, f"job {job!r} does not run assert_publish_ref"
+    assert GUARD_ARGS in block, f"job {job!r} calls the guard without the ref"
+
+
+def _job_steps(path: Path, job: str) -> list[str]:
+    """The step headers of one job, in order.
+
+    Anchored on `steps:` because a job's `strategy.matrix.include` entries are
+    also `- ` lines and sit ABOVE it.
+    """
+    block = _job_block(path, job)
+    return [l for l in block[block.index("steps:") + 1 :] if l.startswith("- ")]
+
+
+@pytest.mark.parametrize(
+    ("job", "dangerous"),
+    [
+        ("publish-crate", "- name: Publish codingest"),
+        ("publish-pypi", "- name: Publish to PyPI (trusted publishing)"),
+        ("release-binaries", "- name: Build codingest-cli + codingest-mcp (release)"),
+    ],
+)
+def test_the_ref_guard_is_the_first_step_after_checkout(job: str, dangerous: str):
+    """POSITION. A guard that runs after `cargo publish` guards nothing.
+
+    Asserted as "immediately after checkout" rather than "somewhere before the
+    dangerous step". The weaker form was a real hole, found by mutation: moving
+    the guard down one step left it still ahead of the build and the assertion
+    stayed GREEN, so the guard could drift arbitrarily far down the job one
+    harmless-looking step at a time. Immediately-after-checkout is a position
+    that cannot drift, and checkout has to come first because the guard is a
+    script in the repo.
+
+    The `dangerous` leg is kept alongside it so the fixture cannot rot into
+    vacuity: it names the step whose lateness is the actual consequence, and
+    fails loudly if that step is renamed or moved out of the job.
+    """
+    steps = _job_steps(RELEASE_WORKFLOW, job)
+    assert steps[:2] == ["- uses: actions/checkout@v7", "- name: Guard the publish ref"], (
+        f"job {job!r} does not guard the ref immediately after checkout: {steps[:3]}"
+    )
+    assert steps.index("- name: Guard the publish ref") < steps.index(dangerous)
+
+
+def test_release_workflow_has_no_auto_generated_notes_fallback():
+    """The silent downgrade is REMOVED, not merely unreachable.
+
+    A missing changelog section is now fatal on a tag, so this branch could
+    never fire — but leaving a degrade-quietly step in the file is an invitation
+    to restore the behaviour by relaxing the gate.
+    """
+    code = _code_lines(RELEASE_WORKFLOW)
+    assert "generate_release_notes: true" not in code
+    assert "if: steps.changelog.outputs.has_notes != 'true'" not in code
+    assert code.count("uses: softprops/action-gh-release@v3") == 2, (
+        "expected exactly two release actions: the notes one in publish-pypi and "
+        "the attach one in release-binaries"
+    )
+
+
+def test_the_changelog_gate_runs_before_the_pypi_publish():
+    """A fatal check belongs on the near side of an irreversible action.
+
+    PyPI accepts a given filename exactly once; failing the changelog gate after
+    the upload leaves a published version with no release notes and no way to
+    re-upload.
+    """
+    block = _job_block(RELEASE_WORKFLOW, "publish-pypi")
+    assert block.index("- name: Extract changelog for this version") < block.index(
+        "- name: Publish to PyPI (trusted publishing)"
+    )
+
+
+def test_release_binaries_waits_for_publish_pypi():
+    """THE RELEASE-CREATION RACE. Both this job and publish-pypi call
+    softprops/action-gh-release, and whichever arrives first CREATES the
+    release. With `needs: [publish-crate]` only, this job habitually won and
+    created it with an EMPTY body.
+    """
+    assert "needs: [publish-crate, publish-pypi]" in _job_block(
+        RELEASE_WORKFLOW, "release-binaries"
+    )
+
+
+def test_no_job_depends_on_release_binaries():
+    """WHY THE NEW `needs:` EDGE CANNOT MAKE THIS JOB BLOCK A PUBLISH.
+
+    `needs:` makes the DECLARING job wait; blocking would require the reverse
+    edge — some other job declaring `needs: release-binaries`. None does, which
+    is what actually makes this best-effort job unable to gate the crates.io or
+    PyPI publish (the dependency graph, with `continue-on-error` a distant
+    second). This test is what stops that reverse edge appearing later.
+    """
+    needs = [l for l in _code_lines(RELEASE_WORKFLOW) if l.startswith("needs:")]
+    assert len(needs) >= 4, f"premise broken: only {len(needs)} needs: lines found"
+    for line in needs:
+        assert "release-binaries" not in line, (
+            f"a job now waits on the best-effort binaries job: {line!r} — it can "
+            "block the publish path"
+        )
 
 
 def test_release_gates_script_is_executable():

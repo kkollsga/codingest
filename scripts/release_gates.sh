@@ -50,6 +50,13 @@ set -euo pipefail
 # crates.io policy requires a contact-email/URL User-Agent on API requests.
 CRATES_IO_UA="codingest-ci/0.1.0 (https://github.com/kkollsga/codingest)"
 
+# How many times the crates.io probe may ask before it gives up and fails the
+# run. Overridable so the unit test can drive both the "second attempt settles
+# it" and the "never settles" paths without waiting. The sleep is indirected for
+# the same reason.
+CRATES_IO_PROBE_ATTEMPTS="${CRATES_IO_PROBE_ATTEMPTS:-3}"
+CRATES_IO_PROBE_BACKOFF="${CRATES_IO_PROBE_BACKOFF:-5}"
+
 # ---------------------------------------------------------------------------
 # Output plumbing
 # ---------------------------------------------------------------------------
@@ -165,6 +172,53 @@ assert_tag_matches_manifest() {
   printf 'tag %s matches the manifest version %s\n' "$ref_name" "$version" >&2
 }
 
+# ASSERT. The ref this workflow is running on is fit to publish under.
+#
+#   assert_publish_ref <ref_name> <ref_type> [event_name]
+#
+# WHAT THIS BLOCKS. `release.yml` used to also carry a `workflow_dispatch:`
+# trigger. On a dispatch run GITHUB_REF_NAME is a BRANCH, not a tag, and every
+# consumer of it downstream quietly does the wrong thing: `${GITHUB_REF_NAME#v}`
+# becomes `main`, so the changelog lookup asks for a `## [main]` section and
+# degrades to auto-generated notes; the binaries are packaged as
+# `codingest-main-linux-x86_64.tar.gz`; and `softprops/action-gh-release` is
+# handed a non-tag ref, which makes it CREATE a tag+release named after the
+# branch. None of that is a failure anywhere — it is a green run that publishes
+# garbage under a branch name.
+#
+# THE DECISION: dispatch is blocked from the publish path outright rather than
+# allowed in a degraded dry-run mode. A dry-run mode would have to condition
+# every publish and release action on it, and each of those conditions is
+# itself a construct branch CI can never exercise — more unfailable surface, to
+# buy a rehearsal that `ci.yml` already provides on every push (it builds the
+# workspace, builds and verifies a wheel, and runs this suite). The `on:` block
+# therefore lists only the `v*` tag push, and this function is the backstop for
+# any other way a non-tag ref could reach a publish step.
+#
+# Belt and braces on purpose: `publish-crate` gates every other job, so one
+# guard there is already structurally sufficient. It is repeated in the two jobs
+# that would otherwise USE the ref name (`publish-pypi` for the changelog,
+# `release-binaries` for the archive filenames) because "structurally
+# sufficient" is a property of today's `needs:` graph, not an invariant.
+#
+#   rc 0 — a `v<N.N.N>` tag.
+#   rc 1 — anything else; an `::error::` annotation is on stderr.
+assert_publish_ref() {
+  local ref_name="${1:-}" ref_type="${2:-}" event="${3:-}"
+  if [ "$ref_type" != "tag" ]; then
+    printf '::error::refusing to run the publish path on %s: ref %s is a %s, not a tag. GITHUB_REF_NAME would be a branch name, so the crates would publish under it, the binaries would be packaged as codingest-%s-<platform> and softprops would create a release named after the branch — all green. Push a v<N.N.N> tag instead.\n' \
+      "'${event:-this event}'" "'${ref_name}'" "'${ref_type:-unknown}'" \
+      "$ref_name" >&2
+    return 1
+  fi
+  if [[ ! "$ref_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+    printf '::error::refusing to run the publish path on tag %s — a release tag must be v<N.N.N> (e.g. v0.1.3). Anything else has no manifest version to agree with and no changelog section to find.\n' \
+      "'${ref_name}'" >&2
+    return 1
+  fi
+  printf 'publishing from tag %s (event %s)\n' "$ref_name" "'${event:-unknown}'" >&2
+}
+
 # ---------------------------------------------------------------------------
 # crates.io publish decision
 # ---------------------------------------------------------------------------
@@ -181,10 +235,80 @@ crates_io_status() {
     -A "$CRATES_IO_UA" "https://crates.io/api/v1/crates/$crate/$version"
 }
 
-# COMPUTE. Map a crates.io HTTP status to the publish decision, printing exactly
-# `true` or `false`. HTTP 404 is the only publish signal: 200 means the version
-# is already there, and anything else (403 rate-limit, 5xx, 000 no-response)
-# means "can't tell -> skip safely".
+# COMPUTE. Ask crates.io until it gives a CONCLUSIVE answer or the attempts run
+# out; print the last status seen.
+#
+#   crates_io_probe <crate> <version>
+#
+# Conclusive means 200 (already published) or 404 (not published). Everything
+# else — 000 from a connection failure, 403 from the rate limiter, any 5xx — is
+# retried with a fixed backoff, because those are overwhelmingly transient and
+# the alternative (fail the run) costs a maintainer a whole re-run at the one
+# moment a release is in flight. A curl that exits non-zero is folded into "000"
+# here rather than killing the function under `set -e`: a hard curl error is
+# exactly the transient case retrying exists for, and if it persists the caller's
+# `assert_status_conclusive` still fails the run loudly.
+#
+# Retrying is the ONLY leniency added; the retry never invents an answer. When
+# the attempts are exhausted the inconclusive status is printed as-is and the
+# decision of what to do with it belongs to `assert_status_conclusive`.
+crates_io_probe() {
+  local crate="$1" version="$2" attempt=1 status
+  while : ; do
+    status=$(crates_io_status "$crate" "$version") || status="000"
+    case "$status" in
+      200 | 404)
+        printf '%s\n' "$status"
+        return 0
+        ;;
+    esac
+    if [ "$attempt" -ge "$CRATES_IO_PROBE_ATTEMPTS" ]; then
+      break
+    fi
+    printf 'crates.io answered HTTP %s for %s %s (attempt %d/%d) — retrying in %ss\n' \
+      "$status" "$crate" "$version" "$attempt" "$CRATES_IO_PROBE_ATTEMPTS" \
+      "$CRATES_IO_PROBE_BACKOFF" >&2
+    "${CODINGEST_RELEASE_SLEEP:-sleep}" "$CRATES_IO_PROBE_BACKOFF"
+    attempt=$((attempt + 1))
+  done
+  printf '%s\n' "$status"
+}
+
+# ASSERT. A crates.io probe status must be one we can act on.
+#
+#   assert_status_conclusive <crate> <version> <status>
+#
+# THE SILENT SKIP THIS REPLACES. `curl -s -o /dev/null -w '%{http_code}'` has no
+# `-f`, so curl exits 0 for ANY outcome — including no outcome at all, which it
+# reports as the status "000". The old decision was a two-way branch on `= 404`,
+# so a DNS blip, a rate-limit 403 or a crates.io 5xx all landed in the else arm
+# and skipped every one of the three crate publishes with the run still green.
+# The "skip when unsure" half of that was deliberate and is KEPT — see
+# `publish_decision_for`, which still refuses to publish on anything but a 404.
+# What was wrong was that the uncertainty exited GREEN and SILENT, so a release
+# that shipped nothing to crates.io looked exactly like a release that had
+# nothing to ship. Uncertainty now fails the step.
+#
+#   rc 0 — 200 or 404.
+#   rc 1 — anything else; an `::error::` annotation is on stderr.
+assert_status_conclusive() {
+  local crate="${1:-}" version="${2:-}" status="${3:-}"
+  case "$status" in
+    200 | 404) return 0 ;;
+  esac
+  printf '::error::crates.io returned HTTP %s for %s %s after %d attempt(s) — cannot tell whether this version is already published. Refusing to guess: treating it as "already published" would silently skip every crate publish and still leave the run green (the old behaviour), and treating it as "not published" could double-publish. Re-run the workflow once crates.io answers.\n' \
+    "'${status:-none}'" "$crate" "'${version}'" "$CRATES_IO_PROBE_ATTEMPTS" >&2
+  return 1
+}
+
+# COMPUTE. Map a CONCLUSIVE crates.io HTTP status to the publish decision,
+# printing exactly `true` or `false`. HTTP 404 is the only publish signal: 200
+# means the version is already there.
+#
+# The `else` arm stays a `false` — "never blindly publish on uncertainty" is a
+# property worth keeping even though `assert_status_conclusive` now stops an
+# uncertain status from reaching here at all. Two independent reasons not to
+# publish on a status this function does not recognise is the right number.
 publish_decision_for() {
   if [ "$1" = "404" ]; then
     printf 'true\n'
@@ -209,17 +333,21 @@ crate_output_key() {
 # GitHub Actions always sets; both default to empty, and an empty ref_type is
 # not `tag`, so a local run skips the skew gate rather than inventing a verdict.
 #
-# ORDER MATTERS. Both assertions run BEFORE the first `gh_output`, so a bad
-# version can never reach `$GITHUB_OUTPUT` and no crates.io probe is even sent —
-# the step fails on the value itself, not on something downstream of it.
+# ORDER MATTERS, TWICE OVER. Both version assertions run BEFORE the first
+# `gh_output`, so a bad version can never reach `$GITHUB_OUTPUT` and no crates.io
+# probe is even sent. And every crate is PROBED AND CHECKED before ANY decision
+# is written, so one inconclusive status leaves the whole step's output empty
+# instead of a half-written set — a step that fails after emitting
+# `publish_codingest=true` is a step whose outputs describe a decision that was
+# never actually taken.
 #
 #   rc 0 — outputs written.
-#   rc 1 — no version line, a malformed version, or tag/manifest skew; NOTHING
-#          is written.
+#   rc 1 — no version line, a malformed version, tag/manifest skew, or a
+#          crates.io status we cannot act on; NOTHING is written.
 check_crates_to_publish() {
   local manifest="${1:-Cargo.toml}"
   if [ $# -gt 0 ]; then shift; fi
-  local version crate key status decision
+  local version crate key status decision probes="" unknown=0
   if ! version=$(extract_version "$manifest"); then
     printf '::error::no unindented `version` line in %s\n' "$manifest" >&2
     return 1
@@ -227,20 +355,34 @@ check_crates_to_publish() {
   assert_version_shape "$version" || return 1
   assert_tag_matches_manifest \
     "$version" "${GITHUB_REF_NAME:-}" "${GITHUB_REF_TYPE:-}" || return 1
-  gh_output version "$version"
   for crate in "$@"; do
-    status=$(crates_io_status "$crate" "$version")
+    status=$(crates_io_probe "$crate" "$version")
+    if ! assert_status_conclusive "$crate" "$version" "$status"; then
+      unknown=$((unknown + 1))
+    fi
+    probes="$probes$crate"$'\t'"$status"$'\n'
+  done
+  if [ "$unknown" -ne 0 ]; then
+    printf '::error::%d of %d crates.io probes for %s were inconclusive — refusing to decide what to publish. This used to be a silent skip of every crate publish with the run still green.\n' \
+      "$unknown" "$#" "$version" >&2
+    return 1
+  fi
+  gh_output version "$version"
+  while IFS=$'\t' read -r crate status; do
+    [ -n "$crate" ] || continue
     decision=$(publish_decision_for "$status")
     key=$(crate_output_key "$crate")
     if [ "$decision" = "true" ]; then
       printf '%s %s not on crates.io (HTTP %s) — will publish\n' \
         "$crate" "$version" "$status" >&2
     else
-      printf '%s %s already on crates.io or unverifiable (HTTP %s) — skipping\n' \
+      printf '%s %s already on crates.io (HTTP %s) — skipping\n' \
         "$crate" "$version" "$status" >&2
     fi
     gh_output "publish_$key" "$decision"
-  done
+  done <<EOF
+$probes
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -255,17 +397,43 @@ extract_changelog_section() {
   awk "/^## \[${version}\]/{found=1; next} /^## \[/{if(found) exit} found" "$changelog"
 }
 
-# EMIT. The whole `Extract changelog for this version` step: set `has_notes`,
-# and when true write the section body to <notes_path> for the release action's
-# `body_path`.
+# EMIT / ASSERT. The whole `Extract changelog for this version` step: set
+# `has_notes`, and when true write the section body to <notes_path> for the
+# release action's `body_path`.
 #
-#   rc 0     — `has_notes` written (true or false).
+#   changelog_notes <version> <changelog> <notes_path> [ref_type]
+#
+# WHY A MISSING SECTION IS FATAL ON A TAG. It used to set `has_notes=false`,
+# which the workflow read as "fall back to auto-generated notes" — a silent
+# downgrade from the curated changelog to a list of commit subjects, on the one
+# artifact users actually read. Worse, it is a SYMPTOM of two real faults it was
+# masking: the release skill's "promote the CHANGELOG" step having been skipped,
+# and tag/manifest skew (tag v0.1.4 against a changelog that only knows 0.1.3).
+# Degrading quietly turned the honour-system step into something nothing
+# checked. On a tag build the section is now required, which is what makes that
+# step a gate.
+#
+# The `ref_type` argument (GitHub's `GITHUB_REF_TYPE`) is what scopes the
+# requirement. It is the same key `assert_tag_matches_manifest` uses, so a
+# non-tag invocation — a local run, or a workflow trigger that should never have
+# reached here — degrades rather than failing on a version it had no business
+# looking up. Absent, it defaults to empty, i.e. not a tag.
+#
+#   rc 0     — `has_notes` written (true, or false off a tag build).
+#   rc 1     — no `## [<version>]` section on a TAG build; NOTHING is written.
 #   rc != 0  — the changelog file could not be read at all (set -e propagates
 #              awk's failure; it must not silently degrade to has_notes=false).
 changelog_notes() {
-  local version="$1" changelog="$2" notes_path="$3" notes
+  local version="$1" changelog="$2" notes_path="$3" ref_type="${4:-}" notes
   notes=$(extract_changelog_section "$version" "$changelog")
   if [ -z "$notes" ]; then
+    if [ "$ref_type" = "tag" ]; then
+      printf '::error::%s has no `## [%s]` section, but this is a tag build of %s. Refusing to fall back to auto-generated release notes: a missing section means the CHANGELOG was never promoted for this release, or the tag disagrees with the version being released. Add the section and re-tag.\n' \
+        "$changelog" "$version" "'${version}'" >&2
+      return 1
+    fi
+    printf 'no `## [%s]` section in %s and ref_type is %s, not a tag — notes will be auto-generated\n' \
+      "$version" "$changelog" "'${ref_type:-unset}'" >&2
     gh_output has_notes false
   else
     gh_output has_notes true
@@ -526,7 +694,8 @@ main() {
   shift
   case "$cmd" in
     extract_version | assert_version_shape | version_from_ref | \
-      assert_tag_matches_manifest | crates_io_status | \
+      assert_tag_matches_manifest | assert_publish_ref | crates_io_status | \
+      crates_io_probe | assert_status_conclusive | \
       publish_decision_for | crate_output_key | check_crates_to_publish | \
       extract_changelog_section | changelog_notes | wheel_matrix_legs | \
       wheel_pattern_for_leg | assert_artifact_set)
