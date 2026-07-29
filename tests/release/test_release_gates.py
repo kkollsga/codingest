@@ -178,6 +178,56 @@ def test_extract_version_reads_the_real_root_manifest():
 
 
 # --------------------------------------------------------------------------
+# assert_version_shape  (Phase 3 gate 1)
+# --------------------------------------------------------------------------
+#
+# `extract_version` used to return whatever it parsed. The original
+# `grep ... | cut ...` reported CUT's status, always 0, so an empty version
+# passed silently. What that actually breaks is re-run idempotency, NOT the
+# release: crates.io answers 404 for an empty version segment and 404 is the
+# publish signal, so an empty version means "publish everything" and a retry
+# after a partial failure hard-errors "crate version already uploaded".
+
+
+@pytest.mark.parametrize("version", ["0.1.3", "1.0.0", "10.20.30", "1.0.0-rc.1"])
+def test_assert_version_shape_accepts_a_version(version: str):
+    res = call(["assert_version_shape", version])
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "",  # the masked-pipeline outcome
+        "abc",
+        "1.2",  # too few segments
+        "1",
+        "v0.1.3",  # a tag, not a manifest version
+        "version.workspace = true",  # what `cut` prints for an unquoted key
+        ".1.3",
+        " 0.1.3",
+    ],
+)
+def test_assert_version_shape_fail_path(version: str):
+    """FAIL PATH: anything not matching ^N.N.N must be rc 1 with ::error::."""
+    res = call(["assert_version_shape", version])
+    assert res.returncode == 1, f"{version!r} was accepted as a version"
+    assert "::error::" in res.stderr
+
+
+def test_assert_version_shape_fail_path_with_no_argument():
+    """A caller that forgets the argument must fail, not pass vacuously."""
+    res = call(["assert_version_shape"])
+    assert res.returncode == 1
+    assert "::error::" in res.stderr
+
+
+def test_assert_version_shape_accepts_the_real_root_manifest():
+    version = call(["extract_version", "Cargo.toml"]).stdout.strip()
+    assert call(["assert_version_shape", version]).returncode == 0
+
+
+# --------------------------------------------------------------------------
 # version_from_ref  (release.yml:213, ported)
 # --------------------------------------------------------------------------
 
@@ -190,6 +240,64 @@ def test_version_from_ref(ref: str, expected: str):
     res = call(["version_from_ref", ref])
     assert res.returncode == 0, res.stderr
     assert res.stdout == expected + "\n"
+
+
+# --------------------------------------------------------------------------
+# assert_tag_matches_manifest  (Phase 3 gate 2 — the highest-value gate)
+# --------------------------------------------------------------------------
+#
+# THE SILENT NO-OP RELEASE. Tag v0.1.4 with the manifest at 0.1.3: the 404 probe
+# asks about 0.1.3, gets 200, every crate publish skips; the wheels build at
+# 0.1.3 and skip-existing swallows them on PyPI; there is no `## [0.1.4]`
+# section so the notes degrade to auto-generated; and a GitHub Release v0.1.4 is
+# cut with 0.1.3 artifacts. Green throughout. Nothing checked this before.
+
+
+def test_assert_tag_matches_manifest_pass():
+    res = call(["assert_tag_matches_manifest", "0.1.3", "v0.1.3", "tag"])
+    assert res.returncode == 0, res.stderr
+
+
+def test_assert_tag_matches_manifest_pass_without_the_v_prefix():
+    res = call(["assert_tag_matches_manifest", "0.1.3", "0.1.3", "tag"])
+    assert res.returncode == 0, res.stderr
+
+
+@pytest.mark.parametrize(
+    ("version", "ref"),
+    [
+        ("0.1.3", "v0.1.4"),  # the plan's exact scenario
+        ("0.1.4", "v0.1.3"),  # manifest ahead of the tag
+        ("0.1.3", "v0.1.30"),  # near-miss: one is a prefix of the other
+        ("0.1.3", "v1.0.0"),
+        ("0.1.3", "vv0.1.3"),  # only ONE leading v is stripped
+        ("0.1.3", ""),
+    ],
+)
+def test_assert_tag_matches_manifest_fail_path_skew(version: str, ref: str):
+    """FAIL PATH: any tag/manifest disagreement on a tag build is rc 1."""
+    res = call(["assert_tag_matches_manifest", version, ref, "tag"])
+    assert res.returncode == 1, f"skew {version} vs {ref} was accepted"
+    assert "::error::" in res.stderr
+
+
+@pytest.mark.parametrize("ref_type", ["branch", "", "unknown"])
+def test_assert_tag_matches_manifest_does_not_fire_off_a_tag(ref_type: str):
+    """workflow_dispatch: GITHUB_REF_NAME is a BRANCH (`main`), so
+    `${GITHUB_REF_NAME#v}` would compare the manifest against the string
+    `main`. The gate must not invent that comparison — it reports the skip on
+    stderr and returns 0."""
+    res = call(["assert_tag_matches_manifest", "0.1.3", "main", ref_type])
+    assert res.returncode == 0, res.stderr
+    assert "not a tag" in res.stderr, "a skipped gate must say so, not pass mutely"
+
+
+def test_assert_tag_matches_manifest_the_dispatch_skip_is_narrow():
+    """The skip is keyed on ref_type ONLY — a real tag still gets compared even
+    when its name looks nothing like a branch."""
+    res = call(["assert_tag_matches_manifest", "0.1.3", "main", "tag"])
+    assert res.returncode == 1
+    assert "::error::" in res.stderr
 
 
 # --------------------------------------------------------------------------
@@ -250,15 +358,30 @@ def test_crates_io_status_fail_path_curl_error(tmp_path: Path):
 CRATES = ["codingest", "codingest-cli", "codingest-mcp"]
 
 
-def _run_check(tmp_path: Path, version: str, statuses: dict[str, str]):
+def _run_check(
+    tmp_path: Path,
+    version: str,
+    statuses: dict[str, str],
+    *,
+    manifest_body: str | None = None,
+    ref: dict[str, str] | None = None,
+):
     manifest = tmp_path / "Cargo.toml"
-    manifest.write_text(f'[workspace.package]\nversion = "{version}"\n')
+    manifest.write_text(
+        manifest_body
+        if manifest_body is not None
+        else f'[workspace.package]\nversion = "{version}"\n'
+    )
     stub = stub_curl(tmp_path, statuses)
     out_file = tmp_path / "github_output"
     out_file.write_text("")
     res = call(
         ["check_crates_to_publish", str(manifest), *CRATES],
-        env={"CODINGEST_RELEASE_CURL": str(stub), "GITHUB_OUTPUT": str(out_file)},
+        env={
+            "CODINGEST_RELEASE_CURL": str(stub),
+            "GITHUB_OUTPUT": str(out_file),
+            **(ref or {}),
+        },
     )
     return res, out_file
 
@@ -306,6 +429,120 @@ def test_check_crates_fail_path_no_version_line(tmp_path: Path):
     assert res.returncode == 1, f"expected rc 1, got {res.returncode}"
     assert "::error::" in res.stderr
     assert out_file.read_text() == "", "no outputs may be written on the fail path"
+
+
+@pytest.mark.parametrize(
+    ("label", "body"),
+    [
+        ("empty", '[workspace.package]\nversion = ""\n'),
+        ("unquoted", "[workspace.package]\nversion.workspace = true\n"),
+        ("malformed", '[workspace.package]\nversion = "abc"\n'),
+        ("two-segment", '[workspace.package]\nversion = "1.2"\n'),
+    ],
+)
+def test_check_crates_fail_path_bad_version_never_reaches_github_output(
+    tmp_path: Path, label: str, body: str
+):
+    """FAIL PATH (gate 1): a version that does not look like one stops the step.
+
+    An empty version is the masked-pipeline outcome. It does NOT silently skip
+    the release — crates.io 404s on an empty version segment, so it would
+    publish everything and destroy re-run idempotency.
+    """
+    res, out_file = _run_check(
+        tmp_path, "", {c: "404" for c in CRATES}, manifest_body=body
+    )
+    assert res.returncode == 1, f"{label}: expected rc 1, got {res.returncode}"
+    assert "::error::" in res.stderr
+    assert out_file.read_text() == "", f"{label}: outputs written on the fail path"
+    assert not (tmp_path / "curl_argv").exists(), (
+        f"{label}: crates.io was probed with a bad version"
+    )
+
+
+def test_check_crates_fail_path_tag_manifest_skew(tmp_path: Path):
+    """FAIL PATH (gate 2): tag v0.1.4 with the manifest at 0.1.3.
+
+    Without this the run goes green end to end and publishes nothing.
+    """
+    res, out_file = _run_check(
+        tmp_path,
+        "0.1.3",
+        {c: "200" for c in CRATES},
+        ref={"GITHUB_REF_NAME": "v0.1.4", "GITHUB_REF_TYPE": "tag"},
+    )
+    assert res.returncode == 1, f"expected rc 1, got {res.returncode}"
+    assert "::error::" in res.stderr
+    assert out_file.read_text() == "", "no outputs may be written on the fail path"
+    assert not (tmp_path / "curl_argv").exists(), "crates.io probed despite skew"
+
+
+def test_check_crates_pass_path_matching_tag(tmp_path: Path):
+    """GREEN: tag and manifest agree — the step behaves exactly as before."""
+    res, out_file = _run_check(
+        tmp_path,
+        "0.1.4",
+        {c: "404" for c in CRATES},
+        ref={"GITHUB_REF_NAME": "v0.1.4", "GITHUB_REF_TYPE": "tag"},
+    )
+    assert res.returncode == 0, res.stderr
+    assert out_file.read_text().splitlines() == [
+        "version=0.1.4",
+        "publish_codingest=true",
+        "publish_codingest_cli=true",
+        "publish_codingest_mcp=true",
+    ]
+
+
+def test_check_crates_workflow_dispatch_does_not_compare_a_branch(tmp_path: Path):
+    """workflow_dispatch: GITHUB_REF_NAME is `main`. The skew gate must not fire
+    (Phase 5 hardens the dispatch path itself); the version gate still does."""
+    res, out_file = _run_check(
+        tmp_path,
+        "0.1.4",
+        {c: "404" for c in CRATES},
+        ref={"GITHUB_REF_NAME": "main", "GITHUB_REF_TYPE": "branch"},
+    )
+    assert res.returncode == 0, res.stderr
+    assert out_file.read_text().splitlines()[0] == "version=0.1.4"
+
+
+# --------------------------------------------------------------------------
+# INVERTED CONTROLS — prove the strictness of each gate is load-bearing.
+#
+# Each runs a deliberately NAIVE version of the assertion against an input the
+# real gate rejects, and asserts the naive one passes. If a naive check would
+# have caught the same input, the real gate's strictness buys nothing.
+# --------------------------------------------------------------------------
+
+
+def test_inverted_control_a_non_empty_check_would_pass_a_malformed_version():
+    """NAIVE: `[ -n "$version" ]` — the obvious fix for the masked pipeline.
+
+    It accepts `abc`, `1.2` and `version.workspace = true`. The real gate does
+    not, which is why the assertion is a shape match and not a presence check.
+    """
+    for bad in ("abc", "1.2", "version.workspace = true"):
+        naive = run_shell(f'if [ -n "{bad}" ]; then echo NAIVE_PASS; else echo NAIVE_FAIL; fi')
+        assert "NAIVE_PASS" in naive.stdout, f"premise broken for {bad!r}"
+        assert call(["assert_version_shape", bad]).returncode == 1, (
+            f"the real gate must reject {bad!r} where the naive check passes"
+        )
+
+
+def test_inverted_control_a_substring_tag_check_would_pass_a_near_miss():
+    """NAIVE: `case "$ref" in *"$version"*)` — "the tag contains the version".
+
+    Manifest 0.1.3 tagged v0.1.30 satisfies it; the real gate compares whole
+    stripped values and fails. Proves the equality is doing the work.
+    """
+    naive = run_shell(
+        'version=0.1.3; ref=v0.1.30\n'
+        'case "$ref" in *"$version"*) echo NAIVE_PASS ;; *) echo NAIVE_FAIL ;; esac\n'
+    )
+    assert "NAIVE_PASS" in naive.stdout, "premise broken: the near-miss no longer matches"
+    res = call(["assert_tag_matches_manifest", "0.1.3", "v0.1.30", "tag"])
+    assert res.returncode == 1, "the real gate must reject the near-miss"
 
 
 # --------------------------------------------------------------------------
