@@ -60,7 +60,12 @@ description: Cut and publish a codingest release — goal-check, gate (build/cli
    Only touch these when they actually moved — a no-op release leaves them as-is.
 5. **Rebuild the binaries** at the new version:
    `cargo build -p codingest-cli -p codingest-mcp --release` (a version bump
-   stales any prebuilt binaries). Confirm both built clean.
+   stales any prebuilt binaries). Confirm `target/release/codingest` and
+   `target/release/codingest-mcp` exist with fresh timestamps. **The CLI binary
+   is `codingest`, not `codingest-cli`:** `codingest-cli` is the *crate* name
+   and its `Cargo.toml` declares `[[bin]] name = "codingest"`, so there is no
+   `target/release/codingest-cli` to look for; release.yml packages `codingest`
+   + `codingest-mcp`.
 6. **Promote CHANGELOG** `[Unreleased]` → `[x.y.z]` (with the date). Create
    `CHANGELOG.md` from the Keep-a-Changelog skeleton if it doesn't exist yet.
 7. **Commit** as the final phase: `release(x.y.z): ...` — version bump +
@@ -117,6 +122,34 @@ standalone CLI/MCP bundles. Before tagging, verify that the exact minimum
 crates.io and that the matching `kglite` Python package exists on PyPI. A tag is
 the irreversible publication boundary; do not create it until every gate and
 prerequisite passes.
+
+**Don't hand-verify what the workflow now enforces.** The fragile publish-path
+shell no longer lives inline in `release.yml` (which only runs on a `v*` tag, so
+nothing inline there could ever be *seen* to fail). It lives in
+`scripts/release_gates.sh`, driven through both its pass and its fail path by
+`tests/release/test_release_gates.py` in ci.yml's `release-gates` job, on every
+push. Enforced there, not by you: a well-formed extracted version that matches
+the tag being released (the old `grep … | cut` masked pipeline reported `cut`'s
+status, always 0); `if-no-files-found: error` on the wheel/sdist uploads plus a
+real assertion on the artifact set; and `continue-on-error` narrowed to the
+genuinely fragile packaging steps rather than a whole job. If one goes red, read
+that job — don't re-derive it by hand.
+
+Still yours to check: the artifact **set**, not just the version. A version
+check answers "did something publish", never "did everything publish" — compare
+the artifact count and platform tags against the previous release.
+
+Two failure modes worth naming correctly:
+- **A malformed/empty version does NOT publish nothing.** The crates.io probe
+  treats **HTTP 404 as the publish signal**, and an empty version segment
+  returns 404 (live-probed) — so an empty version means *publish everything*.
+  The damage is to re-run idempotency: step 9's retry then hard-errors
+  `crate version already uploaded`.
+- **The real silent non-release is tag/manifest skew.** Tag `v0.1.4` while the
+  manifest still says `0.1.3` → the probe finds 0.1.3 already live → all three
+  crate publishes skip, `skip-existing` swallows the duplicate wheels, and a
+  GitHub Release `v0.1.4` is still cut carrying **0.1.3** artifacts. Entire run
+  green, nothing new shipped. The gate script asserts tag == manifest version.
 
 ## Notes
 - Keep responses under 400 tokens; write long diffs/logs/bench tables to a file

@@ -2,12 +2,21 @@
 #
 # `make gate` mirrors codingest CI (cargo fmt --check, clippy with -D warnings,
 # workspace build, workspace test) and adds codingest-specific checks:
+#   * the release-gate script unit tests (tests/release/test_release_gates.py —
+#     the same suite ci.yml's `release-gates` job runs),
 #   * a codingest_bench parity smoke against this workspace's own source, and
 #   * the Python-wheel gate — build the `codingest` wheel via maturin and run
 #     the tests/python acceptance suite (the .kgl-bytes handoff proof).
 #
 # Run `make gate` before pushing. Individual steps are also runnable
 # (`make clippy`, `make bench-smoke`, …).
+#
+# A SKIPPED STEP IS NEVER REPORTED AS A PASS. Three steps can legitimately not
+# apply on a given machine (they need a venv, or pytest). Each one records
+# itself in $(GATE_SKIPS) instead of exiting 0 in silence, and the summary line
+# prints "N/M PASSED, K SKIPPED" naming them — `ALL … STEPS PASSED` is printed
+# only when every step actually returned a verdict. A step that runs and fails
+# still fails the gate with a non-zero exit, as before.
 #
 # EVERY STEP HERE MUST HAVE A VERDICT THIS REPOSITORY CONTROLS. The gate
 # previously carried a determinism step that ran three builds of a *sibling*
@@ -28,7 +37,7 @@ SHELL := /bin/bash
 # Optional target for `make determinism-soak` (a diagnostic, not a gate).
 SOAK_RUNS ?= 3
 
-# The venv used for the Python-wheel gate steps (steps 6 & 7). It must already
+# The venv used for the Python-wheel gate steps (steps 7 & 8). It must already
 # have `kglite` + `maturin` installed — the wheel's build-then-load handoff
 # returns the installed kglite wheel's KnowledgeGraph. Override on the command
 # line: `make pytest-py VENV=/path/to/.venv`.
@@ -44,20 +53,58 @@ SOAK_RUNS ?= 3
 # the wheel step prints the absolute path it is about to write into either way.
 VENV ?= $(CURDIR)/.venv
 
-.PHONY: gate fmt fmt-check clippy build test bench-smoke wheel pytest-py \
-	determinism-soak clean
+# A DEFAULT venv that isn't there is "not applicable" (fresh checkout) and
+# SKIPs. A venv named explicitly — `make gate VENV=…` or `VENV=… make gate` —
+# is a request to run those steps, so a missing/incomplete one is a FAILURE,
+# not a skip. Nobody passes VENV= in order to be told it was ignored.
+ifneq ($(filter command line environment,$(origin VENV)),)
+VENV_REQUIRED := 1
+else
+VENV_REQUIRED :=
+endif
+
+# Where steps that could not run record themselves, so `gate` can tell
+# "everything passed" apart from "everything that ran passed". `gate` truncates
+# it up front (gate-reset) and reads it in the summary.
+GATE_STEPS  := 8
+GATE_SKIPS  := $(CURDIR)/target/.gate-skips
+
+# $(call record-skip,<reason>) — reason must not contain a comma ($(call)
+# splits on them).
+record-skip = mkdir -p "$(dir $(GATE_SKIPS))" && printf '%s\n' "$(1)" >> "$(GATE_SKIPS)"
+
+# The gate's steps share state through $(GATE_SKIPS) and are ordered on
+# purpose; never run them concurrently.
+.NOTPARALLEL:
+
+.PHONY: gate gate-reset fmt fmt-check clippy build test release-gates \
+	bench-smoke wheel pytest-py determinism-soak clean
 
 ## Full CI-equivalent gate — the single entry point. Runs every step below
 ## in order and stops at the first failure.
-gate: fmt-check clippy build test bench-smoke wheel pytest-py
+gate: gate-reset fmt-check clippy build test release-gates bench-smoke wheel pytest-py
 	@echo ""
 	@echo "=================================================="
-	@echo " gate: ALL STEPS PASSED"
-	@echo "=================================================="
+	@if [ -s "$(GATE_SKIPS)" ]; then \
+		n=$$(wc -l < "$(GATE_SKIPS)" | tr -d ' '); \
+		echo " gate: $$(( $(GATE_STEPS) - n ))/$(GATE_STEPS) STEPS PASSED, $$n SKIPPED"; \
+		echo " NOT A FULL GATE — these steps returned no verdict:"; \
+		sed 's/^/   - /' "$(GATE_SKIPS)"; \
+		echo "=================================================="; \
+	else \
+		echo " gate: ALL $(GATE_STEPS) STEPS PASSED"; \
+		echo "=================================================="; \
+	fi
+
+# Clears the skip ledger so the summary describes THIS run. First prerequisite
+# of `gate`; not meant to be run on its own.
+gate-reset:
+	@mkdir -p "$(dir $(GATE_SKIPS))"
+	@: > "$(GATE_SKIPS)"
 
 ## 1. Formatting must be clean (matches KGLite `cargo fmt -- --check`).
 fmt-check:
-	@echo "== [1/7] cargo fmt --check =="
+	@echo "== [1/8] cargo fmt --check =="
 	cargo fmt --check
 
 ## Auto-format (convenience; not part of the gate).
@@ -67,12 +114,12 @@ fmt:
 ## 2. Clippy with warnings-as-errors (matches KGLite
 ##    `cargo clippy --all-targets -- -D warnings`, widened to --workspace).
 clippy:
-	@echo "== [2/7] cargo clippy --workspace --all-targets -- -D warnings =="
+	@echo "== [2/8] cargo clippy --workspace --all-targets -- -D warnings =="
 	cargo clippy --workspace --all-targets -- -D warnings
 
 ## 3. Build every crate + binary in the workspace.
 build:
-	@echo "== [3/7] cargo build --workspace =="
+	@echo "== [3/8] cargo build --workspace =="
 	cargo build --workspace
 
 ## 4. Test the workspace — includes tests/parity.rs: the golden oracle
@@ -89,10 +136,39 @@ build:
 ##    tests/corpus/dup_minified_assets is the reproducer for the DEFINES-edge
 ##    HashMap-iteration bug.
 test:
-	@echo "== [4/7] cargo test --workspace =="
+	@echo "== [4/8] cargo test --workspace =="
 	cargo test --workspace
 
-## 5. Bench smoke: run codingest_bench against this workspace's own Rust
+## 5. Release-gate script unit tests — the same suite ci.yml's `release-gates`
+##    job runs. `.github/workflows/release.yml` fires only on a `v*` tag push,
+##    so its publish-path logic can never be exercised (or seen to fail) by
+##    branch CI; that logic therefore lives in `scripts/release_gates.sh` and
+##    this suite drives every function through both its pass and its FAIL path.
+##    Pure shell + a stubbed curl, so it is offline and takes <1s.
+##
+##    Interpreter: $(VENV)'s python if it has pytest, else the system python3.
+##    If neither has pytest the step is SKIPPED (and says so in the summary) —
+##    unless VENV was named explicitly, which makes it a failure.
+release-gates:
+	@echo "== [5/8] pytest tests/release (scripts/release_gates.sh) =="
+	@set -e; \
+	py=""; \
+	for cand in "$(VENV)/bin/python" python3; do \
+		if command -v "$$cand" >/dev/null 2>&1 \
+			&& "$$cand" -c 'import pytest' >/dev/null 2>&1; then py="$$cand"; break; fi; \
+	done; \
+	if [ -n "$$py" ]; then \
+		echo "  interpreter: $$py"; \
+		"$$py" -m pytest tests/release -q; \
+	elif [ -n "$(VENV_REQUIRED)" ]; then \
+		echo "  FAIL: no pytest in $(VENV) or python3, and VENV was set explicitly"; \
+		exit 1; \
+	else \
+		echo "  SKIP: no pytest in $(VENV) or python3 (pip install pytest to run)"; \
+		$(call record-skip,[5/8] release-gate script unit tests (no pytest available)); \
+	fi
+
+## 6. Bench smoke: run codingest_bench against this workspace's own Rust
 ##    source (small, ~2s). It builds the tree TWICE with the codingest
 ##    builder and asserts query-result parity across the two independent
 ##    builds (a determinism check); any MISMATCH fails the gate. (Heavy
@@ -107,7 +183,7 @@ test:
 ##    exist. Falling back to `working-tree` silently would restore exactly that
 ##    hazard, so it fails the gate instead.
 bench-smoke:
-	@echo "== [5/7] codingest_bench parity smoke (crates/codingest/src) =="
+	@echo "== [6/8] codingest_bench parity smoke (crates/codingest/src) =="
 	cargo build --release -p codingest --bin codingest_bench
 	@set -e; \
 	out=$$(./target/release/codingest_bench crates/codingest/src); \
@@ -126,29 +202,43 @@ bench-smoke:
 	fi; \
 	echo "  bench parity OK (0 mismatches, tracked-only corpus)"
 
-## 6. Build the `codingest` Python wheel into $(VENV) via `maturin develop`.
+## 7. Build the `codingest` Python wheel into $(VENV) via `maturin develop`.
 ##    This is the extension `import codingest` resolves to. Release build so
-##    the pytest suite's build-then-load handoff runs at native speed. Skips
-##    cleanly if the venv (or its maturin) is not present.
+##    the pytest suite's build-then-load handoff runs at native speed.
+##
+##    A missing DEFAULT venv is SKIPPED — recorded in $(GATE_SKIPS) so the gate
+##    summary reports it instead of counting it as a pass. It used to just
+##    `exit 0`, which is why `make gate` printed "ALL STEPS PASSED" on a machine
+##    where 2 of its steps had never run. An explicitly-named VENV that is
+##    missing is a FAILURE (see VENV_REQUIRED).
 wheel:
-	@echo "== [6/7] maturin develop the codingest wheel into $(VENV) =="
+	@echo "== [7/8] maturin develop the codingest wheel into $(VENV) =="
 	@echo "  writing into: $(abspath $(VENV))"
-	@if [ ! -x "$(VENV)/bin/maturin" ]; then \
+	@if [ -x "$(VENV)/bin/maturin" ]; then \
+		echo "  running: maturin develop --release"; \
+		env -u CONDA_PREFIX VIRTUAL_ENV=$(VENV) $(VENV)/bin/maturin develop --release; \
+	elif [ -n "$(VENV_REQUIRED)" ]; then \
+		echo "  FAIL: $(VENV)/bin/maturin not present, and VENV was set explicitly"; \
+		exit 1; \
+	else \
 		echo "  SKIP: $(VENV)/bin/maturin not present (pass VENV=... to run)"; \
-		exit 0; \
+		$(call record-skip,[7/8] maturin develop the codingest wheel (no venv)); \
 	fi
-	env -u CONDA_PREFIX VIRTUAL_ENV=$(VENV) $(VENV)/bin/maturin develop --release
 
-## 7. Run the codingest-py acceptance suite (tests/python) — the .kgl-bytes
-##    handoff proof + the resurrected build API. Requires step 6's wheel and a
-##    kglite install in $(VENV). Skips cleanly if the venv is not present.
+## 8. Run the codingest-py acceptance suite (tests/python) — the .kgl-bytes
+##    handoff proof + the resurrected build API. Requires step 7's wheel and a
+##    kglite install in $(VENV). Same SKIP-vs-FAIL rule as step 7.
 pytest-py: wheel
-	@echo "== [7/7] pytest tests/python =="
-	@if [ ! -x "$(VENV)/bin/python" ]; then \
+	@echo "== [8/8] pytest tests/python =="
+	@if [ -x "$(VENV)/bin/python" ]; then \
+		$(VENV)/bin/python -m pytest tests/python -q; \
+	elif [ -n "$(VENV_REQUIRED)" ]; then \
+		echo "  FAIL: $(VENV)/bin/python not present, and VENV was set explicitly"; \
+		exit 1; \
+	else \
 		echo "  SKIP: $(VENV)/bin/python not present (pass VENV=... to run)"; \
-		exit 0; \
+		$(call record-skip,[8/8] pytest tests/python (no venv)); \
 	fi
-	$(VENV)/bin/python -m pytest tests/python -q
 
 ## Determinism soak (DIAGNOSTIC — deliberately not part of `make gate`).
 ##
