@@ -1,6 +1,6 @@
 ---
 name: phased-plan
-description: Run a large feature or refactor as a gated, phased project. Starts with an investigation phase (Explore agents on the code-review MCP map scale and impacted paths) — NOT standard plan mode — then builds a custom gated phased plan, works a local feature branch, and executes each phase autonomously (code → build → clippy → test → commit) until done. Keeps the parity + perf net green. Ships only via the release skill.
+description: Run a large feature or refactor as a gated, phased project. Starts with an investigation phase (Explore agents on the code-review MCP map scale and impacted paths) — NOT standard plan mode — then builds a custom gated phased plan, creates a branch + draft PR for CI tracking, and executes each phase autonomously (code → build → clippy → test → commit) with checkpoint pushes until done. Keeps the parity + perf net green. Ships only via the release skill.
 ---
 
 # Phased plan
@@ -85,16 +85,19 @@ they decline, proceed without it.
   read-only.
 - Once approved, **do not pause between phases.**
 
-## Phase 2 — Branch (the tracking handle)
-- **If this repo is a git repo** (`git rev-parse --show-toplevel` succeeds):
-  create a feature branch `feat/<slug>` or `refactor/<slug>` — never work
-  directly on `main`. If a remote + CI exist, push the branch and open a **draft
-  PR against `main`** (CI then runs per push while nothing publishes) and mirror
-  the plan into the PR description as a checklist.
-- **If it is NOT a git repo yet** (the current state): offer to `git init` so
-  the phase loop is bisectable. If the user declines, proceed without commits —
-  the plan doc + a running progress note in `dev-docs/temp/` become the tracking
-  handle. Say clearly that without git there is no per-phase bisection.
+## Phase 2 — Branch + draft PR (the CI tracking handle)
+- Create a feature branch: `feat/<slug>` or `refactor/<slug>` (never work the
+  project directly on `main`).
+- **Exactly one branch + one draft PR per plan. Phases are commits, never
+  sub-branches** — no per-phase or per-workstream branches merged back later
+  (KGLite's 0.14.2 cycle left 8 stale branches that way). When the plan ships,
+  the release skill deletes the branch local + remote.
+- Push the branch and **open a draft PR against `main`**. This is what makes CI
+  run on the branch: `ci.yml` triggers on `pull_request: [main]`, so every push
+  to the branch runs the full suite — while **nothing publishes** (publishing
+  only triggers on a `v*` tag push, at release time).
+- Put the phased plan into the **PR description as a checklist** (one box per
+  phase). The PR tab then shows plan + progress + CI status in one place.
 
 ## Phase 3 — Execute each phase (the autonomous loop)
 For every phase, in order:
@@ -108,11 +111,35 @@ For every phase, in order:
      parity test will miss graph-equivalence regressions.
    Observe AGENTS.md "Tooling discipline": don't read a gate's status through a
    `tail`/`head` pipe; confirm the command actually reported success.
+   **A NEW GATE IS NOT TRUSTED UNTIL YOU HAVE SEEN IT FAIL.** If the phase adds
+   or changes a check — a test, a CI step, an assertion in a script — break the
+   thing it guards, confirm it goes red, then restore. Reading a gate cannot tell
+   you whether it works: every vacuous gate found on 2026-07-28 looked correct,
+   and the only thing that separated the live ones from the dead ones was
+   mutation. Three ways a gate is born dead:
+   - **Substring subsumption.** `assert "cmd" in block` also matches
+     `cmd --self-test`, so deleting the real invocation stays green. Compare
+     whole stripped lines, not `in`.
+   - **Comment subsumption.** The words you assert on usually also appear in the
+     comment explaining them. Strip comment lines before matching.
+   - **`exit` inside `$( )`.** A shell guard that exits inside command
+     substitution kills only the subshell; the caller reads the empty output as 0
+     and passes. Return a sentinel the caller checks.
+   **Verify the probe, not just the result.** A mutation that silently edited the
+   wrong text makes a working gate look broken, and an unchanged file makes a dead
+   gate look alive. Confirm the subject actually changed before believing either
+   verdict.
+   **A pipeline reports its LAST stage's status**, so `cmd … | tail` says 0 for a
+   `cmd` that exited non-zero. Never declare a phase green off piped output.
 3. Update `CHANGELOG.md` `[Unreleased]` for user-visible changes (not the
    version block). Create it if missing.
 4. **Commit** the phase (`feat(...)` / `refactor(...)` / `fix(...)`), one commit
-   per phase (only if git is in play).
-5. If a remote+CI PR exists, push → CI runs; tick the phase's checkbox.
+   per phase.
+5. **Push at checkpoints, not per commit.** Every branch push starts a full CI
+   run; the habit is batching: push every 2–3 quick phases, at a risky
+   milestone worth CI confirmation, or before stepping away — and always once
+   at plan completion. Tick completed phases' checkboxes in the PR description
+   when you push.
 6. **Retire any `todos.md` action this phase completed.** If the phase fully
    closes a backlog thread, do the same soft-delete tidy `dev-docs-cleanup`
    performs — at phase-commit time, not a separate pass:
@@ -123,7 +150,8 @@ For every phase, in order:
      once no live backlink points at it.
    `dev-docs/` is gitignored, so this is local bookkeeping alongside the commit.
    Note each retirement in the report-out.
-7. Continue into the next phase.
+7. Continue into the next phase. If a checkpoint push's CI comes back red, fold
+   the fix into the loop before the plan completes — don't leave the PR red.
 
 Stop mid-plan only for a genuine blocker (unfixable test, architectural surprise
 invalidating a later phase). Surface it; don't push through.
@@ -145,19 +173,22 @@ Either way, record it in the **report-out** — a discovered bug never vanishes.
 
 ## Phase 4 — Parity + perf gate
 Before declaring done:
-- **Parity:** `cargo test -p codingest --test parity` green (`golden_parity` +
-  `rev_self_consistency`). An intended digest change gets its goldens
-  regenerated in the same commit with a recorded reason.
-- **Perf:** run `codingest_bench` (release build, min over median) against a
+- **Parity — always, unconditionally:** `cargo test -p codingest --test parity`
+  green (`golden_parity` + `rev_self_consistency`). An intended digest change
+  gets its goldens regenerated in the same commit with a recorded reason.
+- **Perf — only if the plan touched perf-sensitive paths** (parser hot loops,
+  the builder walk/partition/resolve stages, anything on the per-file path):
+  run `codingest_bench` (release build, min over median) against a
   representative repo (two codingest builds; per-query medians + cross-build
   query parity) per AGENTS.md "Performance protocol". Log rows to
-  `bench/results/results.csv`; heavy artifacts →
-  `bench/out/`. Fix regressions now, not in a follow-up. Refresh `BENCHMARKS.md`
-  only at release time.
+  `bench/results/results.csv`; heavy artifacts → `bench/out/`. Fix regressions
+  now, not in a follow-up. For plans that never touched perf-sensitive code,
+  skip the bench with a note — the release-time `BENCHMARKS.md` refresh covers
+  it. Refresh `BENCHMARKS.md` only at release time either way.
 
 ## Report out (when the plan completes, before Ship)
 Keep it under the 400-token rule; link the plan doc for detail:
-- **Phases** done (one line each) + the commit shas (or "no git — plan doc only").
+- **Phases** done (one line each) + the PR link / final commit shas.
 - **Bugs surfaced** during execution and each one's disposition: *fixed in Phase
   Nb* / *filed to backlog* / *routed upstream to KGLite*. Mandatory even if
   empty ("no bugs surfaced").
@@ -176,5 +207,7 @@ never bumps the version.
 ## Notes
 - Keep responses under 400 tokens; write long diffs/logs/stat dumps to a file
   under `dev-docs/temp/` and report the path.
+- Branch pushes during the loop are routine (CI only, no publish). Publishing
+  only triggers on a `v*` tag push — the `release` skill's approval-gated step.
 - Touched a transformed code_tree source? Re-run the parity test and note in
   `designs/parity-and-upstream-sync.md` whether the transform stayed mechanical.
