@@ -66,7 +66,7 @@ endif
 # Where steps that could not run record themselves, so `gate` can tell
 # "everything passed" apart from "everything that ran passed". `gate` truncates
 # it up front (gate-reset) and reads it in the summary.
-GATE_STEPS  := 8
+GATE_STEPS  := 9
 GATE_SKIPS  := $(CURDIR)/target/.gate-skips
 
 # $(call record-skip,<reason>) — reason must not contain a comma ($(call)
@@ -78,11 +78,11 @@ record-skip = mkdir -p "$(dir $(GATE_SKIPS))" && printf '%s\n' "$(1)" >> "$(GATE
 .NOTPARALLEL:
 
 .PHONY: gate gate-reset fmt fmt-check clippy build test release-gates \
-	bench-smoke wheel pytest-py determinism-soak clean
+	bench-smoke wheel pytest-py determinism-soak clean check-dev-docs
 
 ## Full CI-equivalent gate — the single entry point. Runs every step below
 ## in order and stops at the first failure.
-gate: gate-reset fmt-check clippy build test release-gates bench-smoke wheel pytest-py
+gate: gate-reset check-dev-docs fmt-check clippy build test release-gates bench-smoke wheel pytest-py
 	@echo ""
 	@echo "=================================================="
 	@if [ -s "$(GATE_SKIPS)" ]; then \
@@ -104,7 +104,7 @@ gate-reset:
 
 ## 1. Formatting must be clean (matches KGLite `cargo fmt -- --check`).
 fmt-check:
-	@echo "== [1/8] cargo fmt --check =="
+	@echo "== [2/9] cargo fmt --check =="
 	cargo fmt --check
 
 ## Auto-format (convenience; not part of the gate).
@@ -114,12 +114,12 @@ fmt:
 ## 2. Clippy with warnings-as-errors (matches KGLite
 ##    `cargo clippy --all-targets -- -D warnings`, widened to --workspace).
 clippy:
-	@echo "== [2/8] cargo clippy --workspace --all-targets -- -D warnings =="
+	@echo "== [3/9] cargo clippy --workspace --all-targets -- -D warnings =="
 	cargo clippy --workspace --all-targets -- -D warnings
 
 ## 3. Build every crate + binary in the workspace.
 build:
-	@echo "== [3/8] cargo build --workspace =="
+	@echo "== [4/9] cargo build --workspace =="
 	cargo build --workspace
 
 ## 4. Test the workspace — includes tests/parity.rs: the golden oracle
@@ -136,7 +136,7 @@ build:
 ##    tests/corpus/dup_minified_assets is the reproducer for the DEFINES-edge
 ##    HashMap-iteration bug.
 test:
-	@echo "== [4/8] cargo test --workspace =="
+	@echo "== [5/9] cargo test --workspace =="
 	cargo test --workspace
 
 ## 5. Release-gate script unit tests — the same suite ci.yml's `release-gates`
@@ -150,7 +150,7 @@ test:
 ##    If neither has pytest the step is SKIPPED (and says so in the summary) —
 ##    unless VENV was named explicitly, which makes it a failure.
 release-gates:
-	@echo "== [5/8] pytest tests/release (scripts/release_gates.sh) =="
+	@echo "== [6/9] pytest tests/release (scripts/release_gates.sh) =="
 	@set -e; \
 	py=""; \
 	for cand in "$(VENV)/bin/python" python3; do \
@@ -165,7 +165,7 @@ release-gates:
 		exit 1; \
 	else \
 		echo "  SKIP: no pytest in $(VENV) or python3 (pip install pytest to run)"; \
-		$(call record-skip,[5/8] release-gate script unit tests (no pytest available)); \
+		$(call record-skip,[6/9] release-gate script unit tests (no pytest available)); \
 	fi
 
 ## 6. Bench smoke: run codingest_bench against this workspace's own Rust
@@ -183,7 +183,7 @@ release-gates:
 ##    exist. Falling back to `working-tree` silently would restore exactly that
 ##    hazard, so it fails the gate instead.
 bench-smoke:
-	@echo "== [6/8] codingest_bench parity smoke (crates/codingest/src) =="
+	@echo "== [7/9] codingest_bench parity smoke (crates/codingest/src) =="
 	cargo build --release -p codingest --bin codingest_bench
 	@set -e; \
 	out=$$(./target/release/codingest_bench crates/codingest/src); \
@@ -212,7 +212,7 @@ bench-smoke:
 ##    where 2 of its steps had never run. An explicitly-named VENV that is
 ##    missing is a FAILURE (see VENV_REQUIRED).
 wheel:
-	@echo "== [7/8] maturin develop the codingest wheel into $(VENV) =="
+	@echo "== [8/9] maturin develop the codingest wheel into $(VENV) =="
 	@echo "  writing into: $(abspath $(VENV))"
 	@if [ -x "$(VENV)/bin/maturin" ]; then \
 		echo "  running: maturin develop --release"; \
@@ -222,14 +222,14 @@ wheel:
 		exit 1; \
 	else \
 		echo "  SKIP: $(VENV)/bin/maturin not present (pass VENV=... to run)"; \
-		$(call record-skip,[7/8] maturin develop the codingest wheel (no venv)); \
+		$(call record-skip,[8/9] maturin develop the codingest wheel (no venv)); \
 	fi
 
 ## 8. Run the codingest-py acceptance suite (tests/python) — the .kgl-bytes
 ##    handoff proof + the resurrected build API. Requires step 7's wheel and a
 ##    kglite install in $(VENV). Same SKIP-vs-FAIL rule as step 7.
 pytest-py: wheel
-	@echo "== [8/8] pytest tests/python =="
+	@echo "== [9/9] pytest tests/python =="
 	@if [ -x "$(VENV)/bin/python" ]; then \
 		$(VENV)/bin/python -m pytest tests/python -q; \
 	elif [ -n "$(VENV_REQUIRED)" ]; then \
@@ -237,7 +237,7 @@ pytest-py: wheel
 		exit 1; \
 	else \
 		echo "  SKIP: $(VENV)/bin/python not present (pass VENV=... to run)"; \
-		$(call record-skip,[8/8] pytest tests/python (no venv)); \
+		$(call record-skip,[9/9] pytest tests/python (no venv)); \
 	fi
 
 ## Determinism soak (DIAGNOSTIC — deliberately not part of `make gate`).
@@ -280,3 +280,32 @@ determinism-soak:
 ## Remove build artifacts.
 clean:
 	cargo clean
+
+## Mechanical bound on the gitignored dev-docs/ working folder — the one
+## accumulation with no reviewer, no CI and no remote watching it grow. Unlike
+## prune-target this NEVER deletes: which tier a file belongs in, and whether
+## it is reproducible, is a judgement call, so the gate FAILS and hands the
+## decision back. Stale purge-tier entries are reported as a warning (temp/bin
+## churn is normal working state; failing on it would only teach people to
+## bypass the gate). Tier lifecycles: dev-docs/README.md.
+DEV_DOCS_MAX_MB := 256
+.PHONY: check-dev-docs
+check-dev-docs:
+	@echo "== [1/9] dev-docs/ size bound =="
+	@[ -d dev-docs ] || { echo "no dev-docs/ — nothing to bound"; exit 0; }; \
+	mb=$$(du -sm dev-docs | cut -f1); \
+	stale=$$( { find dev-docs/bench/out -mindepth 1 -maxdepth 1 -mtime +14; \
+	            find dev-docs/temp      -mindepth 1 -maxdepth 1 -mtime +1;  \
+	            find dev-docs/bin       -mindepth 1 -maxdepth 1 -mtime +7;  \
+	          } 2>/dev/null ); \
+	if [ "$${mb:-0}" -ge $(DEV_DOCS_MAX_MB) ]; then \
+		echo "FAIL: dev-docs/ is $${mb} MB (>= $(DEV_DOCS_MAX_MB) MB)"; \
+		echo "  largest tiers:"; \
+		du -sm dev-docs/* dev-docs/bench/* 2>/dev/null | sort -rn | head -8 | sed 's/^/    /'; \
+		[ -z "$$stale" ] || { echo "  past their documented lifetime:"; echo "$$stale" | sed 's/^/    /'; }; \
+		echo "  -> reclaim, or move anything irreproducible to a durable tier (dev-docs/README.md)"; \
+		exit 1; \
+	fi; \
+	echo "dev-docs/ is $${mb} MB (limit $(DEV_DOCS_MAX_MB) MB)"; \
+	[ -z "$$stale" ] || { echo "WARN: past their documented lifetime (dev-docs/README.md):"; \
+	                      echo "$$stale" | sed 's/^/    /'; }

@@ -40,8 +40,23 @@ docs/autoapi/
 # committed — mirrors kglite's .gitignore).
 /.claude/
 
-# Local dev working state — never committed (see dev-docs/README.md, inbox/README.md).
-/dev-docs/
+# Local dev working state — never committed (see dev-docs/README.md, inbox/README.md)
+# — with ONE exception: `bench/scripts/` IS tracked. Harnesses there are
+# hand-authored source that would otherwise exist in exactly one copy, in a
+# tier nothing ever purges; a stray `rm -rf` loses work no backup, review or CI
+# ever saw. The directory is empty today; un-ignoring it now means the first
+# harness written here is tracked by default instead of silently unbacked.
+# Build output and captures produced inside a harness dir stay ignored.
+# (`/dir/*` + `!/dir/sub/` so a subdir can be re-included.)
+/dev-docs/*
+!/dev-docs/bench/
+/dev-docs/bench/*
+!/dev-docs/bench/scripts/
+/dev-docs/bench/scripts/**/target/
+/dev-docs/bench/scripts/**/__pycache__/
+/dev-docs/bench/scripts/**/node_modules/
+/dev-docs/bench/scripts/**/*.kgl
+/dev-docs/bench/scripts/**/*.kgle
 /inbox/
 
 # macOS
