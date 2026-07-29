@@ -11,11 +11,19 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
-- Moved the kglite engine and MCP server pins to 0.15.0, and the Python engine
-  requirement to `>=0.15.0,<0.16`. The upper bound keeps the two halves of the
-  `.kgl` handoff — the Rust kglite compiled into the wheel that writes the
-  bytes, and the separately-installed Python kglite wheel that reads them — on
-  the same minor, mirroring the Cargo semver range exactly.
+- Moved the kglite engine and MCP server pins to 0.15.3, and the Python engine
+  requirement to `>=0.15.3,<0.16` (including the exact `kglite==0.15.3` pin the
+  CI wheel test installs, so that gate validates the engine we actually ship
+  against). The upper bound keeps the two halves of the `.kgl` handoff — the
+  Rust kglite compiled into the wheel that writes the bytes, and the
+  separately-installed Python kglite wheel that reads them — on the same minor,
+  mirroring the Cargo semver range exactly. The 0.15.1-0.15.3 patches change
+  nothing in `kglite::api`, graph output, property encoding, `.kgl`
+  serialization, or the MCP server interface, and the parity goldens are
+  unchanged; they add a declared `rust-version = 1.88.0` on both crates we
+  consume (matching our own floor), fix a `storage="disk"` save that could emit
+  a directory the same build could not load, widen the unknown-label diagnostic
+  to subqueries, and correct understated dependency floors.
 - Defaulted the `Makefile` Python-wheel gate (`make gate` steps 6-7) to a
   codingest-local `.venv` instead of the sibling KGLite checkout's `.venv`, and
   made the wheel step print the absolute path it writes into. The previous default made

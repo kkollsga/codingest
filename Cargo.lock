@@ -1393,9 +1393,9 @@ dependencies = [
 
 [[package]]
 name = "kglite"
-version = "0.15.0"
+version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c8034483bdc10c1a631be2b28978fe2cb5cd9dc79d7f420756a3ed099ffffdd"
+checksum = "4ec07586e3dac4fa5dd1e216ac057f41ffe056f95eefc8ddd866f09fd7e48394"
 dependencies = [
  "bzip2",
  "chrono",
@@ -1428,9 +1428,9 @@ dependencies = [
 
 [[package]]
 name = "kglite-mcp-server"
-version = "0.15.0"
+version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b77c94c9d3f7f961b9e1f430dc9744e31f697fa55cbd76f9565633c22308b012"
+checksum = "f9dae485f96add5453ef56518cd14e57c3f20727c8ab151500cc6f1afb70deef"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1532,9 +1532,9 @@ dependencies = [
 
 [[package]]
 name = "mcp-methods"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ccd3c31a95d7775d6d930a174aeffdc416c2ad6ffce0eee1cad262a007340175"
+checksum = "04c1063113c3a885d5967e45da2ea1cbb235938a9ba02333f15e81149b451b23"
 dependencies = [
  "anyhow",
  "clap",
