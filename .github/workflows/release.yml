@@ -348,17 +348,45 @@ jobs:
   # reverse edge. By the time this job runs, both publishes are already done, so
   # even a hard failure here cannot reach them.
   #
-  # Phase 6 narrows the job-level `continue-on-error` below to the genuinely
-  # fragile packaging steps; the reasoning above is what makes that safe.
+  # THE TOLERANCE IS PER-STEP, NOT PER-JOB, and that is the whole point. This
+  # job used to carry `continue-on-error: true` at JOB level, which does buy the
+  # best-effort property — but buys it a second time (see above: the dependency
+  # graph already grants it) at the price of making EVERY assertion inside the
+  # job unable to fail, including the `Guard the publish ref` step below. A job
+  # that cannot go red is a job whose green means nothing; upstream reported this
+  # exact pattern holding a job green for two days while two false claims were
+  # committed on the strength of it.
+  #
+  # So the flag now sits on the three steps that are genuinely fragile —
+  # `Package binaries (unix)`, `Package binaries (windows)`, `Attach to the
+  # GitHub Release` (archive plumbing, and a network call to the releases API).
+  # Everything else MUST be able to fail: the ref guard, checkout, toolchain,
+  # cache, and `cargo build --release`, which is the same build ci.yml runs on
+  # every push — breaking at tag time is a regression, not a hiccup.
+  #
+  # A hard failure still short-circuits the rest of the job (GitHub skips the
+  # remaining steps), so a broken build never reaches packaging. What step-level
+  # tolerance newly allows is packaging failing and the job CONTINUING to the
+  # attach step — hence the `if: hashFiles('out/*')` guard on it. `success()`
+  # would not do: a `continue-on-error` step's CONCLUSION is success, so
+  # `success()` stays true after a tolerated packaging failure and softprops
+  # would be asked to attach nothing.
   release-binaries:
     name: Release binaries - ${{ matrix.os }}
     needs: [publish-crate, publish-pypi]
-    continue-on-error: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
       contents: write
     strategy:
+      # LOAD-BEARING, and more so now than before. `fail-fast` defaults to TRUE:
+      # one red leg cancels its siblings in flight. Under the old job-level
+      # `continue-on-error` no leg could go red, so this line was belt-and-
+      # braces; with tolerance narrowed to the packaging steps a leg CAN fail
+      # (a broken build, a bad ref), and without this the macOS and Linux legs
+      # would be cancelled mid-package by the Windows one. Deleting it silently
+      # converts one failed platform into three missing archives. A unit test
+      # asserts it is still here.
       fail-fast: false
       matrix:
         include:
@@ -374,9 +402,10 @@ jobs:
       # interpolate GITHUB_REF_NAME straight into an archive filename, and the
       # attach step hands the ref to softprops, which creates a tag+release if
       # one does not exist. Off a tag that produces `codingest-main-…` archives
-      # attached to a release named `main`. This job also carries
-      # `continue-on-error: true`, so it is the one place a bad ref could fail
-      # quietly — hence the guard runs before anything is built.
+      # attached to a release named `main`. This guard carries NO
+      # `continue-on-error` — under the old job-level flag it could only ever
+      # fail quietly, which is the single strongest reason that flag had to be
+      # narrowed. It runs before anything is built.
       - name: Guard the publish ref
         shell: bash
         run: |
@@ -389,20 +418,37 @@ jobs:
           workspaces: ". -> target"
       - name: Build codingest-cli + codingest-mcp (release)
         run: cargo build --release -p codingest-cli -p codingest-mcp
+      # The three steps below — and ONLY these three — are the best-effort part.
+      # Archive plumbing and a call to the GitHub releases API: fragile in ways
+      # that have nothing to do with whether codingest is correct, and already
+      # published-and-done by the time they run.
       - name: Package binaries (unix)
+        continue-on-error: true
         if: matrix.os != 'windows-latest'
         run: |
           set -euo pipefail
           mkdir -p out
           tar -C target/release -czf "out/codingest-${GITHUB_REF_NAME}-${{ matrix.suffix }}.tar.gz" codingest codingest-mcp
       - name: Package binaries (windows)
+        continue-on-error: true
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
           Compress-Archive -Path target/release/codingest.exe, target/release/codingest-mcp.exe `
             -DestinationPath "out/codingest-$env:GITHUB_REF_NAME-${{ matrix.suffix }}.zip"
+      # GUARDED because the Package step above is now allowed to fail. A
+      # `continue-on-error` step reports CONCLUSION success, so the implicit
+      # `success()` on this step stays true after a tolerated packaging failure
+      # and softprops would be handed an empty/absent `out/` — which it treats
+      # as "create/update the release with no files", i.e. a silent no-op that
+      # looks identical to a successful attach. `hashFiles` returns the empty
+      # string when its glob matches nothing (and does not error on a missing
+      # directory), so this asks the only question that matters: is there
+      # anything to attach?
       - name: Attach to the GitHub Release
+        continue-on-error: true
+        if: hashFiles('out/*') != ''
         uses: softprops/action-gh-release@v3
         with:
           files: out/*

@@ -1728,6 +1728,269 @@ def test_no_job_depends_on_release_binaries():
         )
 
 
+# --------------------------------------------------------------------------
+# Phase 6: `continue-on-error` narrowed from JOB scope to three steps
+# --------------------------------------------------------------------------
+#
+# WHAT WAS BROKEN. `release-binaries` carried `continue-on-error: true` at JOB
+# level, under a comment justifying it as "a packaging hiccup must not block the
+# crates.io/PyPI publish". That intent is legitimate — but it is ALREADY
+# satisfied by the dependency graph (`test_no_job_depends_on_release_binaries`:
+# nothing declares `needs: release-binaries`, so this job cannot block anything
+# whatever the flag says). What the job-level flag bought on top of that was
+# purely negative: every assertion in the job — including the
+# `Guard the publish ref` step that stops archives being named after a branch —
+# became unable to fail, from a line sitting above the steps where a reader
+# misses it. Upstream reported this exact pattern holding a job green for two
+# days, with two false claims committed on the strength of that green.
+#
+# THE SUBSTRING-SUBSUMPTION TRAP IS SHARP HERE. `continue-on-error: true` is
+# byte-identical at job scope and step scope; only INDENTATION distinguishes the
+# fixed file from the broken one. A `"continue-on-error: true" in text` check —
+# or anything built on `_code_lines`/`_job_block`, both of which strip
+# indentation — is green either way. Hence `_job_keys` below, and the inverted
+# control that shows the naive form staying green on the broken file.
+
+FRAGILE_STEPS = [
+    "Package binaries (unix)",
+    "Package binaries (windows)",
+    "Attach to the GitHub Release",
+]
+
+# Steps whose failure is a real defect, not a hiccup. `cargo build --release` is
+# the build ci.yml already runs on every push; the ref guard is an assertion,
+# and an assertion that cannot fail is not one.
+MUST_FAIL_STEPS = [
+    "Guard the publish ref",
+    "Build codingest-cli + codingest-mcp (release)",
+]
+
+COE = "continue-on-error"
+
+
+def _coe(lines: list[str]) -> list[str]:
+    """Every `continue-on-error` declaration in `lines`, whatever its value.
+
+    MATCH THE KEY, NOT THE LITERAL. Asserting on the exact text
+    `continue-on-error: true` was a hole, found by mutation: the key takes an
+    EXPRESSION, so `continue-on-error: ${{ github.event_name == 'push' }}` is
+    unfailable on every real run of this workflow while never writing the string
+    being matched on. Both the job-scope and the release-build mutations came
+    back GREEN against the literal form.
+    """
+    return [l for l in lines if l.split(":", 1)[0].strip() == COE]
+
+
+def _job_keys(path: Path, job: str) -> list[str]:
+    """The JOB-LEVEL keys of one job — indent exactly 4, nothing nested.
+
+    This is the only helper in the file that can tell `continue-on-error: true`
+    on the job apart from the same text on a step, because it is the only one
+    that reads indentation instead of stripping it. `_job_block` deliberately
+    strips (it compares whole lines across nesting levels); reusing it here
+    would make every assertion below satisfiable by the step-level copies.
+    """
+    raw = path.read_text().splitlines()
+    start = next((i for i, l in enumerate(raw) if l == f"  {job}:"), None)
+    assert start is not None, f"{path.name}: no job named {job!r}"
+    out = []
+    for line in raw[start + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith("    "):  # back out to indent 2 -> next job
+            break
+        if line.startswith("     "):  # indent > 4 -> nested under a job key
+            continue
+        out.append(stripped)
+    return out
+
+
+def _job_step_block(path: Path, job: str, step_name: str) -> list[str]:
+    """`_step_block`, but scoped to one job.
+
+    `_step_block` searches the whole file and takes the FIRST match, which for
+    `Guard the publish ref` is publish-crate's copy — three jobs carry a step
+    with that name.
+    """
+    lines = _job_block(path, job)
+    start = next((i for i, l in enumerate(lines) if l == f"- name: {step_name}"), None)
+    assert start is not None, f"{path.name}: job {job!r} has no step {step_name!r}"
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        if line.startswith("- "):
+            break
+        block.append(line)
+    return block
+
+
+def test_job_keys_separates_job_scope_from_step_scope(tmp_path: Path):
+    """VERIFY THE PROBE — the one that makes this whole section non-vacuous.
+
+    Two jobs with IDENTICAL text at different indents. The helper must see the
+    job-level flag in `a` and must NOT see the step-level flag in `b`; if it
+    saw both, every assertion below would pass on the broken file.
+    """
+    sample = tmp_path / "s.yml"
+    sample.write_text(
+        "jobs:\n"
+        "  a:\n"
+        "    continue-on-error: true\n"
+        "    permissions:\n"
+        "      contents: write\n"
+        "    steps:\n"
+        "      - name: A\n"
+        "  b:\n"
+        "    steps:\n"
+        "      - name: B\n"
+        "        continue-on-error: true\n"
+    )
+    assert _job_keys(sample, "a") == ["continue-on-error: true", "permissions:", "steps:"]
+    assert _job_keys(sample, "b") == ["steps:"]
+    # And the scope-blind helpers genuinely cannot tell them apart — which is
+    # why `_job_keys` exists rather than being a stylistic preference.
+    assert "continue-on-error: true" in _job_block(sample, "a")
+    assert "continue-on-error: true" in _job_block(sample, "b")
+
+
+def test_job_step_block_is_scoped_to_its_job(tmp_path: Path):
+    """VERIFY THE PROBE: a same-named step in an earlier job must not answer for
+    the one being asserted on."""
+    sample = tmp_path / "s.yml"
+    sample.write_text(
+        "jobs:\n"
+        "  a:\n"
+        "    steps:\n"
+        "      - name: Guard\n"
+        "        continue-on-error: true\n"
+        "  b:\n"
+        "    steps:\n"
+        "      - name: Guard\n"
+        "        run: real\n"
+    )
+    assert _job_step_block(sample, "b", "Guard") == ["- name: Guard", "run: real"]
+    assert "continue-on-error: true" not in _job_step_block(sample, "b", "Guard")
+
+
+def test_release_binaries_has_no_job_level_continue_on_error():
+    """THE PHASE 6 GATE. Job-scope tolerance makes every check inside the job —
+    the ref guard, the release build — unable to fail, and buys nothing the
+    `needs:` graph does not already provide (see
+    `test_no_job_depends_on_release_binaries`).
+    """
+    keys = _coe(_job_keys(RELEASE_WORKFLOW, "release-binaries"))
+    assert keys == [], (
+        "release-binaries carries JOB-LEVEL continue-on-error again — every "
+        f"assertion in the job, including the publish-ref guard, is now "
+        f"unfailable: {keys}"
+    )
+
+
+@pytest.mark.parametrize("step", FRAGILE_STEPS)
+def test_the_fragile_steps_stay_best_effort(step: str):
+    """The documented intent is PRESERVED, not deleted: archive plumbing and the
+    releases API are genuinely fragile and run after both publishes are done."""
+    assert "continue-on-error: true" in _job_step_block(
+        RELEASE_WORKFLOW, "release-binaries", step
+    ), f"step {step!r} lost its best-effort tolerance — a packaging hiccup now fails"
+
+
+@pytest.mark.parametrize("step", MUST_FAIL_STEPS)
+def test_the_real_checks_in_release_binaries_can_fail(step: str):
+    """The other half: tolerance must not creep back onto a step that asserts
+    something. `cargo build --release` breaking at tag time is a regression.
+
+    An explicit `continue-on-error: false` is allowed (it is the default said out
+    loud); anything else — literal or expression — is not.
+    """
+    found = [
+        l
+        for l in _coe(_job_step_block(RELEASE_WORKFLOW, "release-binaries", step))
+        if l != f"{COE}: false"
+    ]
+    assert found == [], f"step {step!r} was made unfailable: {found}"
+
+
+def test_release_binaries_tolerates_exactly_the_three_fragile_steps():
+    """A COUNT, to catch what per-step assertions cannot.
+
+    Three of release-binaries' eight steps are unnamed `- uses:` steps
+    (checkout, toolchain, cache) that `_job_step_block` cannot address by name.
+    Pinning the total to three — with the parametrised test above proving WHICH
+    three — is what stops tolerance appearing on one of those.
+    """
+    declared = _coe(_job_block(RELEASE_WORKFLOW, "release-binaries"))
+    assert declared == [f"{COE}: true"] * len(FRAGILE_STEPS), (
+        "release-binaries tolerates a different set of failures than the "
+        f"{len(FRAGILE_STEPS)} fragile steps: {declared}"
+    )
+
+
+def test_release_binaries_keeps_fail_fast_false():
+    """WITHOUT THE JOB-LEVEL FLAG THIS LINE BECAME LOAD-BEARING.
+
+    `fail-fast` defaults to TRUE. Previously no leg could go red so it never
+    fired; now a leg can (broken build, bad ref), and its removal would let one
+    failing platform CANCEL the other two mid-package — one real failure turned
+    into three missing archives, reported as cancellation rather than failure.
+    Asserted as the exact line, so `fail-fast: true` is caught too.
+    """
+    assert "fail-fast: false" in _job_block(RELEASE_WORKFLOW, "release-binaries"), (
+        "release-binaries lost `fail-fast: false`; one red leg now cancels the "
+        "other platforms mid-package"
+    )
+
+
+def test_the_attach_step_is_guarded_against_an_empty_out():
+    """The one NEW hole step-level tolerance opens, closed.
+
+    A hard failure skips the rest of the job, so a broken build never reaches
+    the attach step. A TOLERATED packaging failure does not: the job carries on
+    with `out/` empty or absent. `success()` is no help — a
+    `continue-on-error` step's conclusion is success — so the guard has to ask
+    about the files themselves. Without it softprops is handed an empty glob and
+    updates the release with nothing, indistinguishably from a real attach.
+    """
+    block = _job_step_block(RELEASE_WORKFLOW, "release-binaries", "Attach to the GitHub Release")
+    assert "if: hashFiles('out/*') != ''" in block, (
+        "the attach step lost its empty-`out/` guard; after a tolerated "
+        f"packaging failure it will attach nothing, quietly: {block}"
+    )
+
+
+def test_inverted_control_a_scope_blind_flag_check_cannot_tell_job_from_step(
+    tmp_path: Path,
+):
+    """INVERTED CONTROL: the naive assertion stays GREEN on the broken file.
+
+    `"continue-on-error: true" in text` — the obvious way to write this — is
+    satisfied by the fixed file AND by the file with the flag moved back to job
+    level, because the two differ only in indentation. So is anything built on
+    `_code_lines`/`_job_block`, which strip it. That is precisely the
+    substring-subsumption trap, and it is why the real assertion reads scope.
+    """
+    real = RELEASE_WORKFLOW.read_text()
+    broken = real.replace(
+        "    needs: [publish-crate, publish-pypi]\n",
+        "    needs: [publish-crate, publish-pypi]\n    continue-on-error: true\n",
+    ).replace("        continue-on-error: true\n", "")
+    assert broken != real, "premise broken: the mutation did not change the file"
+    wf = tmp_path / "release.yml"
+    wf.write_text(broken)
+
+    # NAIVE forms — green on both, therefore worthless.
+    for text in (real, broken):
+        assert "continue-on-error: true" in text
+    assert "continue-on-error: true" in _job_block(wf, "release-binaries")
+    assert "continue-on-error: true" in _job_block(RELEASE_WORKFLOW, "release-binaries")
+
+    # The real assertion separates them.
+    assert _coe(_job_keys(RELEASE_WORKFLOW, "release-binaries")) == []
+    assert _coe(_job_keys(wf, "release-binaries")) == ["continue-on-error: true"], (
+        "premise broken: the job-scope probe no longer sees a job-level flag"
+    )
+
+
 def test_release_gates_script_is_executable():
     """release.yml invokes the script directly, not via `bash <script>`.
 
