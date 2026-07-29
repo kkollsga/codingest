@@ -23,12 +23,18 @@ description: Cut a codingest release — goal-check against the phased-plan, bum
    phase **dropped, deferred, or only partially done** and surface the gaps
    before bumping — each gap is a conscious choice: finish it now, or carry it
    to `dev-docs/todos.md`. Don't let it vanish silently.
-2. **Bump version FIRST — patch by default** (`x.y.Z` → `x.y.Z+1`). Bumping
-   before the gate means the single release build below serves the gate, the
-   record refresh, AND the shipped binaries — no post-bump rebuild. If the
-   changes warrant a **minor/major** bump (new feature, breaking change, scope
-   expansion), STOP and ask one quick clarification before starting; otherwise
-   proceed with the patch bump.
+2. **Bump version FIRST — always patch** (`x.y.Z` → `x.y.Z+1`) **unless the
+   release command itself named a minor or major.** Bumping before the gate
+   means the single release build below serves the gate, the record refresh,
+   AND the shipped binaries — no post-bump rebuild.
+   - **Bump size is not a decision — do not stop and ask** (doctrine
+     [[R6]]). This repo ships documented breaking changes in patch bumps, so a
+     breaking change is *not* grounds to prompt; the prompt only ever
+     re-confirmed a standing default. Semver findings are evidence for what to
+     **write** in the CHANGELOG and the downstream notes, never a gate on what
+     to **number**. Strictness belongs at the irreversible act (step 9), not at
+     this routine one — and spending it here while step 9 self-authorized was
+     exactly backwards.
    - **The version lives in SIX places, not one.** `[workspace.package] version`
      in the root `Cargo.toml` covers each crate's *own* `package.version` via
      `version.workspace = true`. It does **not** cover the internal dependency
@@ -106,15 +112,30 @@ description: Cut a codingest release — goal-check against the phased-plan, bum
    `git push origin HEAD:main` (ff `main`). The working tree never moves.
    Pushing `main` runs CI but **publishes nothing** — publish only triggers on
    a version tag.
-9. **Tag + push the tag — THE publish trigger; invoking `/release` is the
-   authorization.** The tag is the irreversible publication boundary — don't
+9. **Tag + push the tag — THE publish trigger. STOP AND ASK FIRST.** Invoking
+   `/release` authorized everything up to and including the release commit; it
+   does **not** authorize this push (doctrine [[R6]]). Take **one confirmation
+   immediately before pushing the tag**, stating the exact version and anything
+   this run turned up that the user did not know when they typed `/release` —
+   semver findings, the bench verdict, whether every artifact built.
+   - The reason is informational, not ceremonial: `/release` is typed *before*
+     the run learns any of that, so treating it as approval for the last push
+     approves a decision made with strictly less information than exists when it
+     is made. The asymmetry is total — strictness costs one prompt, the other
+     direction costs an immutable publish whose only "undo" permanently breaks
+     every pinned install.
+   - **Accepted consequence: a release cannot complete unattended.** In a
+     background session, stop at the staged release commit and wait.
+
+   The tag is the irreversible publication boundary — don't
    create it until every gate and prerequisite above passes, and **never move or
    replace an already-pushed tag.** `git tag vx.y.z && git push origin vx.y.z`
    fires `release.yml`: crates.io in dependency order (`codingest` →
    `codingest-cli` → `codingest-mcp`), then platform wheels + sdist → PyPI via
    trusted publishing, then the GitHub Release with standalone CLI/MCP bundles
-   attached. Authorization is scoped to this one release run (the tag push + its CI
-   fix loop) and lapses once published or the user pivots. All pre-push
+   attached. The confirmation above is scoped to this one release run (the tag
+   push + its CI fix loop) and lapses once published or the user pivots — a new
+   tag needs a new confirmation. All pre-push
    safeguards apply: gate green, parity zero-discrepancy, surgical staging,
    ff clean. Every publish path is idempotent-safe (404 guard /
    `skip-existing` / release-update), so a re-run after a partial failure is

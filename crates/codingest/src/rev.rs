@@ -278,8 +278,14 @@ fn stamp_rev_provenance(
 // One graph holding N revisions via shared identity + rev-sets: one node per
 // entity, native list props `revs: [str]` / `rev_fp: [int]` on nodes and
 // `revs: [str]` on edges. Unchanged entities are stored once, so the merged
-// graph is ≈ base + deltas. See `dev-docs/plans/rev-aware-code-graphs.md`
-// "B.2 design" for the eight settled decisions.
+// graph is ≈ base + deltas.
+//
+// This comment is deliberately self-contained. It used to defer to a
+// `dev-docs/plans/` design doc for the settled decisions — but `dev-docs/` is
+// gitignored working state, so the citation outlived the file it pointed at and
+// became a dead reference for every reader who cloned this repo. Committed code
+// does not cite `dev-docs/` paths; anything a reader needs belongs here, and
+// anything durable enough to survive belongs in a committed doc.
 
 /// Collapse a requested rev-label list to its order-preserving unique form
 /// (first occurrence wins). A duplicate label resolves to the same tree, so

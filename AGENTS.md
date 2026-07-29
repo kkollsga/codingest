@@ -62,13 +62,23 @@ Log ad-hoc runs to
 `dev-docs/bench/results/results.csv`; heavy artifacts → `dev-docs/bench/out/`.
 `BENCHMARKS.md` is the committed published record, refreshed at release time.
 
-## Build / test / lint (no Makefile, no maturin)
+## Build / test / lint (there IS a Makefile; no maturin)
+- **`make gate` runs the whole local net** — 9 steps (fmt, clippy, build, test,
+  release-gate unit suite, bench-smoke, wheel, pytest). A step that cannot run
+  (no `.venv`) is reported **SKIPPED**, never as a pass, and naming `VENV`
+  explicitly turns a skip into a failure. Prefer it over hand-picked subsets.
 - Build: `cargo build --workspace` (`--release` for perf).
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`.
 - Test: `cargo test --workspace`; parity: `cargo test -p codingest --test parity`.
-- Version: **one line** — `[workspace.package] version` in the root `Cargo.toml`
-  (all three crates inherit via `version.workspace = true`). Only the `release`
-  skill bumps it.
+- Version: **SIX places, not one.** `[workspace.package] version` in the root
+  `Cargo.toml` covers each crate's *own* `package.version` via
+  `version.workspace = true`, but **not** the internal dependency requirements:
+  `codingest-cli`, `codingest-mcp` and `codingest-py` each pin
+  `codingest = { version = "X.Y.Z", path = … }`, and `codingest-py` also pins
+  `codingest-cli` and `codingest-mcp` — `cargo publish` rejects a `path`-only
+  dependency. "One line, no per-manifest bump" is **false**; it is the belief
+  that broke KGLite's 0.15.0 release, and a patch bump only hides it. Only the
+  `release` skill bumps, and it bumps all six together.
 
 ## Inbox hygiene
 `inbox/` (gitignored) is the cross-project channel — operated only by the
