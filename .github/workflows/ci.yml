@@ -54,6 +54,34 @@ jobs:
         # the test is offline and needs no sibling checkout.
         run: cargo test --workspace
 
+  release-gates:
+    name: Release-gate script unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Install pytest
+        # Same pin as the `python` job below. No new dependency: the suite
+        # shells out to bash and stubs curl, so it needs nothing else.
+        run: python -m pip install pytest==9.1.1
+
+      - name: Unit-test scripts/release_gates.sh
+        # release.yml runs ONLY on a `v*` tag push, so its gate logic can never
+        # be exercised — or seen to fail — by branch CI. That logic therefore
+        # lives in scripts/release_gates.sh, and this step drives every function
+        # through both its pass path and its fail path on every push, plus
+        # asserts release.yml still calls the tested code. Offline: the crates.io
+        # probe indirects curl through CODINGEST_RELEASE_CURL, which is stubbed.
+        # pyproject's `testpaths = ["tests/python"]` scopes the default
+        # collection, so tests/release must be named explicitly here.
+        run: python -m pytest tests/release -v
+
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -40,29 +40,18 @@ jobs:
           shared-key: publish-crate
           workspaces: ". -> target"
 
+      # The logic lives in scripts/release_gates.sh, NOT inline here: this
+      # workflow only runs on a `v*` tag push, so nothing written inline can
+      # ever be exercised — or seen to fail — by branch CI. The script is
+      # unit-tested on every push by tests/release/test_release_gates.py
+      # (the `release-gates` job in ci.yml). Emits `version` plus
+      # `publish_codingest`, `publish_codingest_cli`, `publish_codingest_mcp`.
       - name: Check which crates need publishing
         id: check
+        shell: bash
         run: |
-          # Version is single-sourced in [workspace.package] (root Cargo.toml);
-          # codingest, codingest-cli, codingest-mcp all inherit it.
-          VERSION=$(grep -m 1 '^version' Cargo.toml | cut -d '"' -f 2)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          # HTTP 404 is the only "publish" signal — 200 means already there,
-          # anything else (403 rate-limit, 5xx) means "can't tell → skip
-          # safely". A contact-email User-Agent is required by crates.io policy.
-          UA="codingest-ci/0.1.0 (https://github.com/kkollsga/codingest)"
-          for crate in codingest codingest-cli codingest-mcp; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              -A "$UA" "https://crates.io/api/v1/crates/$crate/$VERSION")
-            key=$(echo "$crate" | tr '-' '_')
-            if [ "$STATUS" = "404" ]; then
-              echo "$crate $VERSION not on crates.io (HTTP 404) — will publish"
-              echo "publish_$key=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "$crate $VERSION already on crates.io or unverifiable (HTTP $STATUS) — skipping"
-              echo "publish_$key=false" >> "$GITHUB_OUTPUT"
-            fi
-          done
+          scripts/release_gates.sh check_crates_to_publish \
+            Cargo.toml codingest codingest-cli codingest-mcp
 
       # 1. codingest (the builder library — codingest-cli/mcp depend on it).
       - name: Publish codingest
@@ -207,17 +196,16 @@ jobs:
         with:
           # Idempotent re-runs: a file already on PyPI is skipped, not an error.
           skip-existing: true
+      # Two statements, not one nested `$( )`: an assertion inside a
+      # substitution nested in another command has its status swallowed by the
+      # outer command. See the header of scripts/release_gates.sh.
+      # Emits `has_notes`.
       - name: Extract changelog for this version
         id: changelog
+        shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found" CHANGELOG.md)
-          if [ -z "$NOTES" ]; then
-            echo "has_notes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_notes=true" >> "$GITHUB_OUTPUT"
-            printf '%s\n' "$NOTES" > /tmp/release_notes.md
-          fi
+          version=$(scripts/release_gates.sh version_from_ref "$GITHUB_REF_NAME")
+          scripts/release_gates.sh changelog_notes "$version" CHANGELOG.md /tmp/release_notes.md
       - name: Create GitHub Release (with changelog body)
         if: steps.changelog.outputs.has_notes == 'true'
         uses: softprops/action-gh-release@v3
