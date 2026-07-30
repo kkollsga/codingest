@@ -71,6 +71,38 @@ description: Cut a codingest release — goal-check against the phased-plan, bum
      from the now-deleted in-tree `kglite::code_tree`) is the hard release
      gate; a subset that skips it can ship a graph-equivalence regression.
      This run doubles as step 4's parity evidence — don't re-run it there.
+   - **`cargo publish --dry-run --workspace`** — packages all three crates,
+     normalizes their manifests, and *builds each packaged copy*. Must exit 0.
+     - **Why this is a gate and not a nicety.** `release.yml` publishes
+       **crates.io first**, and every other job hangs off `needs:
+       [publish-crate]`. So a packaging or metadata fault in `codingest-cli` or
+       `codingest-mcp` would otherwise surface only *after* `codingest` is
+       permanently published — a half-published release with no undo. Before
+       0.1.4 this skill verified packaging only by doing it irreversibly.
+     - **`--workspace` is load-bearing; do not reach for `-p <crate>`.** A bare
+       `cargo publish --dry-run -p codingest-cli` **fails** (rc 101, *failed to
+       select a version for the requirement `codingest = "^X.Y.Z"`*): it
+       resolves the internal dependency against crates.io, where the new
+       version does not exist yet. `--workspace` makes cargo resolve
+       inter-member dependencies against the local unpublished crates and
+       verify all three together. Verified on cargo 1.97.0. Without this note
+       the natural conclusion is that dependents cannot be dry-run at all —
+       which is wrong, and which cost this project a release's worth of
+       unnecessary exposure.
+     - `codingest-py` is correctly absent: it is `publish = false` (it ships to
+       PyPI as a wheel, not to crates.io). The dry-run set must match the three
+       `cargo publish -p …` steps in `release.yml` exactly.
+   - **Preflight the Python artifacts too** — both of these otherwise run
+     *only* inside `release.yml`, i.e. only after crates.io has published:
+     - wheel: `maturin build --release -m crates/codingest-py/Cargo.toml --out
+       <dir>` then `python3 scripts/verify_wheel.py <dir>/*.whl`
+     - sdist: `maturin sdist -m crates/codingest-py/Cargo.toml --out <dir>`
+       then `test "$(tar -tzf <dir>/*.tar.gz | grep -Ec '/LICENSE$')" -eq 1`
+       (use that exact pattern — a looser `grep LICENSE` can match a different
+       entry and report 1 while the real gate sees 0).
+     This only covers the host platform; the other wheel legs still build in CI
+     on the tag. That residual is real and worth stating in step 9's
+     confirmation rather than pretending it is covered.
 4. **Refresh the regression record (codingest's "captured constants").** These
    are the committed files that gate the project — refresh them off step 3's
    `--release` build so they reflect the shipped state:

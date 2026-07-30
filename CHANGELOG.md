@@ -10,6 +10,20 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- The release procedure now dry-runs the crates.io publish before tagging.
+  `release.yml` publishes crates.io **first** and hangs every other job off it,
+  so a packaging or metadata fault in `codingest-cli` or `codingest-mcp` used to
+  surface only after `codingest` was already published permanently — a
+  half-published release with no undo. `cargo publish --dry-run --workspace`
+  packages all three crates and builds each packaged copy up front. The
+  `--workspace` flag is required rather than incidental: a bare
+  `--dry-run -p codingest-cli` resolves the internal dependency against
+  crates.io, where the new version does not exist yet, and fails on resolution
+  rather than on any real defect. The wheel and sdist contract checks
+  (`verify_wheel.py`, the sdist LICENSE count) are preflighted locally for the
+  same reason — both otherwise run only after crates.io has published.
+
 ## [0.1.4] - 2026-07-30
 
 ### Changed
