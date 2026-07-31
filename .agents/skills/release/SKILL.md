@@ -1,9 +1,37 @@
 ---
 name: release
-description: Cut a codingest release — goal-check against the phased-plan, bump the version across every manifest site first (workspace table AND the internal path-dependency pins), then ONE release build + test pass (incl. parity) that serves gate, record refresh, and binaries; conditional bench refresh; promote CHANGELOG, commit, ff-push main, then tag vX.Y.Z (the publish trigger — crates.io + PyPI via release.yml) and verify. Then clean up the branch and tidy dev-docs.
+description: Cut a codingest release — goal-check against the phased-plan, bump the version across every manifest site first (workspace table AND the internal path-dependency pins), then ONE release build + test pass (incl. parity) that serves gate, record refresh, and binaries; conditional bench refresh; promote CHANGELOG, commit, ff-push main, then tag vX.Y.Z (the publish trigger — crates.io + PyPI via release.yml) and verify. Then clean up the branch and tidy dev-docs. Runs to completion autonomously — invoking it IS the approval.
 ---
 
 # Release
+
+## This run ends in a published version or a named blocker
+
+Read this before step 1; it governs every step below (doctrine [[R12]]).
+
+**The completion condition.** The run is done when **step 11 has verified
+`x.y.z` on crates.io (all three crates) and on PyPI with the full artifact set,
+and the GitHub Release exists and is not a draft** — or when you have surfaced a
+**specific blocker you cannot fix**. Nothing else is an ending.
+
+**The non-endings.** "CI is running", "the commit is staged", "the tag is
+pushed", "waiting for the wheels", "next I will…" are **not endings**. Each is a
+natural pause point that feels like a reasonable place to hand back control, and
+each is indistinguishable from the inside from genuinely needing input. The
+failure is not a decision to stop — it is failing to notice that continuing is
+an option. Three releases across the estate stalled exactly this way on
+2026-07-30/31, every check green, no version shipped; the user noticed before
+the agent did, twice.
+
+**Waiting is not a checkpoint.** Poll it, background it, or block on it — all
+three continue the run. Handing control back does not. A poll that takes twenty
+minutes is twenty minutes of polling, not a reason to end the turn. The
+crates.io index-propagation wait and the multi-platform wheel builds are the two
+places this run is most likely to stall.
+
+**A red CI is a task, not a verdict.** Diagnose, fix, push, re-poll, repeat —
+within step 10's stated bound (~3 iterations), then surface what remains as a
+named blocker.
 
 ## Preconditions
 - **No double-stage.** Check no release is already staged:
@@ -144,20 +172,29 @@ description: Cut a codingest release — goal-check against the phased-plan, bum
    `git push origin HEAD:main` (ff `main`). The working tree never moves.
    Pushing `main` runs CI but **publishes nothing** — publish only triggers on
    a version tag.
-9. **Tag + push the tag — THE publish trigger. STOP AND ASK FIRST.** Invoking
-   `/release` authorized everything up to and including the release commit; it
-   does **not** authorize this push (doctrine [[R6]]). Take **one confirmation
-   immediately before pushing the tag**, stating the exact version and anything
-   this run turned up that the user did not know when they typed `/release` —
-   semver findings, the bench verdict, whether every artifact built.
-   - The reason is informational, not ceremonial: `/release` is typed *before*
-     the run learns any of that, so treating it as approval for the last push
-     approves a decision made with strictly less information than exists when it
-     is made. The asymmetry is total — strictness costs one prompt, the other
-     direction costs an immutable publish whose only "undo" permanently breaks
-     every pinned install.
-   - **Accepted consequence: a release cannot complete unattended.** In a
-     background session, stop at the staged release commit and wait.
+9. **Tag + push the tag — THE publish trigger. Report, then push; do not stop.**
+   Invoking `/release` authorizes the **entire run, including this push**
+   (doctrine [[R6]]). Immediately before pushing, *report* — the exact version,
+   the semver findings, the bench verdict, whether every artifact built, and
+   anything else learned since invocation — then push in the same turn.
+   - **A report is not a gate, and substituting one for the other degrades
+     both.** This step blocked on a confirmation between 2026-07-30 and
+     2026-07-31; the rule was reversed on evidence. It fired *after* the
+     decision it claimed to guard — by the time the release commit exists the
+     bump, the constants and the CHANGELOG are settled, so the prompt could not
+     change the outcome, only delay it. And it broke unattended runs: a kglite
+     release stalled at a staged commit while the user was away, and the failure
+     mode was not "published something wrong" but **"published nothing,
+     silently"** — the direction the strict rule was not considering.
+   - The safety on this irreversible push lives in **checks that can fail** and
+     that all sit upstream of it: green branch CI, the resolving `cargo
+     metadata`, the `--dry-run --workspace` preflight, parity, the artifact-set
+     verification in step 11. **A prompt cannot fail; it can only wait** — see
+     [[R1]]. Adding one where a check belongs feels like rigour and buys none.
+   - What still needs case-by-case approval is unchanged: outward-facing
+     publication that is *not* a release — issues, comments, emails, anything
+     attributed to the maintainer. `/release` authorizes a release. It
+     authorizes nothing else.
 
    The tag is the irreversible publication boundary — don't
    create it until every gate and prerequisite above passes, and **never move or
@@ -165,9 +202,7 @@ description: Cut a codingest release — goal-check against the phased-plan, bum
    fires `release.yml`: crates.io in dependency order (`codingest` →
    `codingest-cli` → `codingest-mcp`), then platform wheels + sdist → PyPI via
    trusted publishing, then the GitHub Release with standalone CLI/MCP bundles
-   attached. The confirmation above is scoped to this one release run (the tag
-   push + its CI fix loop) and lapses once published or the user pivots — a new
-   tag needs a new confirmation. All pre-push
+   attached. All pre-push
    safeguards apply: gate green, parity zero-discrepancy, surgical staging,
    ff clean. Every publish path is idempotent-safe (404 guard /
    `skip-existing` / release-update), so a re-run after a partial failure is

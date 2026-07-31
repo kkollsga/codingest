@@ -11,6 +11,18 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- A release runs to completion again. Between 2026-07-30 and 2026-07-31 the
+  publish push took a separate blocking confirmation; that is reverted.
+  Invoking `/release` authorizes the whole run including the tag push, which is
+  now preceded by a *report* rather than a gate. The blocking prompt fired after
+  the decision it claimed to guard — by the time the release commit exists the
+  bump, constants and CHANGELOG are settled — and it broke unattended runs,
+  where the failure mode is publishing nothing silently rather than publishing
+  something wrong. The safety on that push lives in checks that can fail (green
+  CI, the resolving `cargo metadata`, the `--dry-run --workspace` preflight,
+  parity, artifact-set verification), all upstream of it. The release and
+  phased-plan runbooks now also state their completion condition and name the
+  pause points that are not endings.
 - The release procedure now dry-runs the crates.io publish before tagging.
   `release.yml` publishes crates.io **first** and hangs every other job off it,
   so a packaging or metadata fault in `codingest-cli` or `codingest-mcp` used to

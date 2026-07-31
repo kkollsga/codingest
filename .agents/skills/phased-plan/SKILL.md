@@ -156,6 +156,22 @@ For every phase, in order:
 Stop mid-plan only for a genuine blocker (unfixable test, architectural surprise
 invalidating a later phase). Surface it; don't push through.
 
+**The run ends in a finished plan or a named blocker — not a status report**
+(doctrine [[R12]]). The approval in Phase 1 authorizes the *whole* build loop,
+not permission to begin it.
+- **Completion condition:** every phase committed, Phase 4's parity (+ perf, if
+  it applied) green, the checkpoint push landed, and the report-out written.
+- **Non-endings:** "CI is running", "the phase is committed", "the agent is
+  working", "next I will…". Each is a natural pause point that reads, from the
+  inside, like a reasonable place to check in — that is the whole difficulty.
+  The failure is not choosing to stop; it is not noticing that continuing is an
+  option.
+- **Waiting is not a checkpoint.** A checkpoint push's CI, or a subagent still
+  running, is something to poll or background — not a reason to hand control
+  back. A red checkpoint CI is a task: diagnose, fix, fold it in, re-poll.
+- **Do not pause between phases** (Phase 1 already says this). This is the same
+  rule, stated where the loop can actually stall.
+
 **Bugs that surface mid-plan — fix them as they surface, don't step over them**
 (AGENTS.md "no bugs left behind"):
 - **In scope** (same file/subsystem): reproduce + confirm root cause, then fix
