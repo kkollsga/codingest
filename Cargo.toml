@@ -17,19 +17,21 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.15.3
-# floor brings tri-state `durable` levels with an on-demand `sync()` barrier,
-# typed constraint/conflict exceptions carrying a stable `.code`, and the
-# columnar-REMOVE correctness fix, on top of the generic workspace-graph hooks
-# and deterministic Postcard persistence stack inherited from 0.14.5. The
-# 0.15.1-0.15.3 patches add a declared `rust-version = 1.88.0` on both crates we
-# consume (matching our own floor), fix a `storage="disk"` save that could emit
-# a directory the same build could not load, widen the unknown-label diagnostic
-# to subqueries, and correct understated dependency floors — with no change to
-# `kglite::api`, graph output, property encoding, or `.kgl` serialization.
+# kglite engine + MCP server — imported as crates.io libraries. The 0.15.5
+# floor adds the two workspace controls codingest asked upstream for:
+# `workspace.sandbox_root`, a real containment boundary that confines
+# `set_root_dir` to a subtree instead of trusting the caller's path, and
+# `workspace.adopt_client_roots`. Both land on top of the generic
+# workspace-graph hooks, tri-state `durable` levels, typed
+# constraint/conflict exceptions carrying a stable `.code`, and the
+# deterministic Postcard persistence stack inherited from 0.14.5/0.15.0-0.15.3.
+# 0.15.4 is deliberately skipped: it was WAL/durability and mapped-graph work
+# we consume none of — codingest uses no `durable=` level, no `MappedGraph`,
+# and no disk storage. Neither patch changes `kglite::api`, graph output,
+# property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.15.3", default-features = false }
-kglite-mcp-server = { version = "0.15.3", default-features = false }
+kglite = { version = "0.15.5", default-features = false }
+kglite-mcp-server = { version = "0.15.5", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

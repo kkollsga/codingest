@@ -36,14 +36,31 @@ For an agent that switches among several local repositories, create
 ```yaml
 workspace:
   kind: local
-  root: /absolute/path/to/repository-sandbox
+  root: /absolute/path/to/starting-repository
+  sandbox_root: /absolute/path/to/repository-parent   # the actual boundary
   watch: true
 ```
 
 Then configure the client command as `codingest-mcp --mcp-config
 /absolute/path/to/workspace_mcp.yaml`. This local-workspace mode registers
-`set_root_dir`; every activated repository must stay within the declared
-sandbox.
+`set_root_dir`, which lets an agent swap the active repository at runtime.
+
+**`root` is the starting root, not a boundary.** It sets where the server
+points initially; on its own it does **not** constrain where `set_root_dir` can
+subsequently point. Containment is `sandbox_root`, it is **opt-in**, and it
+requires the kglite 0.15.5 engine floor: with it, a swap outside the boundary is
+refused and the active root does not move; without it, a root swap is
+unbounded.
+
+> **Correction (2026-07-31).** Earlier revisions of this page stated that "every
+> activated repository must stay within the declared sandbox." That was **false
+> for every version of codingest that has shipped**. No containment existed: the
+> read window was *derived from* the active root, so the source tools bounded
+> reads relative to wherever the server already pointed, and never constrained
+> where it could be pointed. The boundary those revisions described is real only
+> from kglite 0.15.5 onward, and only when you set `sandbox_root`. If you relied
+> on that sentence to confine an agent to a directory tree, **set `sandbox_root`
+> explicitly** — the guarantee you were promised was not being enforced.
 
 ## codingest-mcp is the builder; `kglite-mcp-server` alone is not
 
@@ -80,8 +97,11 @@ See [MCP parity](mcp-parity.md) for the coupling detail.
 
 With `--watch`, a change to a code file under the fixed root tags the graph
 dirty and the rebuild fires lazily on the next graph tool call. In local-
-workspace mode, the watcher monitors the wider sandbox but rebuilds only for
-changes under the active `set_root_dir` target. The graph is built in memory
+workspace mode, the watcher monitors the wider configured tree but rebuilds only
+for changes under the active `set_root_dir` target. (Watch scope is a
+performance concern, not a security one — it decides what can *trigger a
+rebuild*, never what can be read or activated. Confinement is `sandbox_root`,
+above.) The graph is built in memory
 and discarded on shutdown — nothing is written to disk unless you ask for it.
 
 ## Migrating an MCP config from kglite-mcp-server

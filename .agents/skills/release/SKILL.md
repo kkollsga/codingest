@@ -129,8 +129,8 @@ named blocker.
        (use that exact pattern — a looser `grep LICENSE` can match a different
        entry and report 1 while the real gate sees 0).
      This only covers the host platform; the other wheel legs still build in CI
-     on the tag. That residual is real and worth stating in step 9's
-     confirmation rather than pretending it is covered.
+     on the tag. That residual is real and worth stating in step 9's report
+     rather than pretending it is covered.
 4. **Refresh the regression record (codingest's "captured constants").** These
    are the committed files that gate the project — refresh them off step 3's
    `--release` build so they reflect the shipped state:

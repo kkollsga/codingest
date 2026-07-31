@@ -10,7 +10,40 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Security
+- **`docs/mcp.md` documented a containment boundary that was never enforced.**
+  The local-workspace section stated that "every activated repository must stay
+  within the declared sandbox". That was false for every version of codingest
+  that has shipped: `workspace.root` set where the server *started*, and nothing
+  constrained where `set_root_dir` could subsequently point. The read window was
+  derived *from* the active root, so the source tools bounded reads relative to
+  wherever the server already pointed rather than confining where it could be
+  pointed. Anyone who read that sentence as confining an agent to a directory
+  tree did not have the guarantee they were promised.
+
+  The page now describes `root` as the starting root and **not** a boundary, and
+  documents `workspace.sandbox_root` — opt-in, requires the kglite 0.15.5 floor
+  raised below — as the real containment: with it a swap outside the boundary is
+  refused and the active root does not move. The correction is stated in place
+  rather than silently edited away, because a reader who already configured
+  against the old sentence needs to know to add the key. The watch-scope
+  paragraph no longer calls the watched tree "the sandbox" either — watch scope
+  decides what can *trigger a rebuild*, never what can be read or activated.
+
 ### Changed
+- **Engine floor moved to kglite 0.15.5**, skipping 0.15.4. 0.15.4 was WAL,
+  durability and mapped-graph work that codingest consumes none of — we use no
+  `durable=` graph, no `MappedGraph`, and no disk storage — so bumping to it
+  would have been cost without benefit. 0.15.5 is the release we wanted: it adds
+  `workspace.sandbox_root` and `workspace.adopt_client_roots`, the containment
+  boundary and MCP-client root adoption codingest requested upstream. The exact
+  `kglite==0.15.5` pin the CI wheel test installs moves with it, so that gate
+  validates the engine we ship against. Parity goldens did not move.
+
+  Note for anyone building on `adopt_client_roots`: MCP `roots` was deprecated
+  upstream in protocol revision `2026-07-28` (SEP-2577). The key works and is
+  inert when unset, but passing the directory as a tool parameter or server
+  configuration is the spec's own migration path.
 - A release runs to completion again. Between 2026-07-30 and 2026-07-31 the
   publish push took a separate blocking confirmation; that is reverted.
   Invoking `/release` authorizes the whole run including the tag push, which is
