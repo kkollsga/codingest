@@ -24,6 +24,13 @@ ship time — it's the only place the version bumps.
   same pair disagree, the edge keeps the best-precision tier and the smallest
   candidate count, by a fixed documented ranking. AGC control-transfer edges,
   which do not go through the tiers, leave all three null.
+  `import_backed` is a **one-hop** check: a caller that reaches the callee
+  through a barrel that re-exports it reads as `false` even though the call is
+  real, so treat `false` as *unconfirmed* rather than *refuted*. It is a filter,
+  not a deletion criterion — measured against a hand-labeled truth set on a
+  3,293-file monorepo, filtering on `import_backed AND candidates = 1` removes
+  96.9% of the false edges, and the edges it would wrongly remove are exactly
+  the barrel-re-export ones. No edges are dropped from the graph.
 
 ### Fixed
 - **TypeScript/JavaScript imports now resolve.** Relative specifiers were

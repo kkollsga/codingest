@@ -32,10 +32,21 @@ pub struct CallEdge {
     /// resolution was unambiguous; `> 1` means the site fanned out and this
     /// edge is one of several guesses for the same call.
     pub candidates: Option<i64>,
-    /// True when the caller's file is the callee's file, or imports it. The
-    /// structural check a name-resolved edge otherwise lacks: on a large
-    /// corpus, `fetch()` resolving to a project function named `fetch` in a
-    /// file the caller never imports is what makes "who calls X" unusable.
+    /// True when the caller's file is the callee's file, or **directly**
+    /// imports it. The structural check a name-resolved edge otherwise lacks:
+    /// on a large corpus, `fetch()` resolving to a project function named
+    /// `fetch` in a file the caller never imports is what makes "who calls X"
+    /// unusable.
+    ///
+    /// **One hop, by construction.** A caller that imports a barrel which
+    /// re-exports the callee — `import { Auth } from "@scope/llm/route"`
+    /// reaching `route/auth.ts` through `route/index.ts` — is `false` here even
+    /// though the call is real. Measured on a 3,293-file monorepo against a
+    /// hand-labeled truth set, this accounts for every true edge the property
+    /// mis-marks. Treat `import_backed = false` as *unconfirmed*, not as
+    /// *refuted*: it is a strong filter for exploration and NOT safe as a
+    /// deletion criterion. See `dev-docs/plans/graph-resolution-precision.md`
+    /// Phase 5 for the numbers.
     pub import_backed: Option<bool>,
 }
 
@@ -838,6 +849,32 @@ mod stats_tests {
             v
         };
         assert_eq!(backed, vec![("b.caller", true), ("c.caller", false)]);
+    }
+
+    #[test]
+    fn import_backed_is_one_hop_and_does_not_follow_re_exports() {
+        // `c.ts` imports the barrel `b.ts`, which imports `a.ts` where the
+        // callee lives. The call is real; `import_backed` is still false.
+        // Pinned deliberately: this is the documented limit of the property,
+        // and it is exactly why Track C's Phase 5 drop rule was NOT adopted —
+        // a one-hop check would have deleted true edges. Do not "fix" this
+        // test by making the check transitive without re-measuring the false
+        // positives that would come back with it.
+        let functions = vec![
+            func("a.helper", "a.ts", &[]),
+            func("c.caller", "c.ts", &[("helper", 1)]),
+        ];
+        let imports: HashSet<(&str, &str)> = HashSet::from([("c.ts", "b.ts"), ("b.ts", "a.ts")]);
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &imports,
+        );
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].import_backed, Some(false));
     }
 
     #[test]

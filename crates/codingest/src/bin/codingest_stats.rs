@@ -183,6 +183,12 @@ struct CallRow {
     caller_file: String,
     callee_file: String,
     call_lines: String,
+    /// Resolution metadata, empty/absent on edges that predate it or that the
+    /// semantic pass produced. Carried here so the labeled truth set can be
+    /// re-scored against a candidate suppression policy without rebuilding.
+    resolution: String,
+    candidates: i64,
+    import_backed: bool,
 }
 
 /// Every CALLS edge whose callee short-name is in `names`, sorted by
@@ -206,12 +212,19 @@ fn dump_calls(graph: &DirGraph, names: &BTreeSet<String>) -> Vec<CallRow> {
         if !names.contains(short_name(&callee)) {
             continue;
         }
+        let props = edge.properties_cloned(&graph.interner);
         rows.push(CallRow {
             caller: id_string(sn.id()),
             callee,
             caller_file: str_prop(&sn.properties_cloned(&graph.interner), "file_path"),
             callee_file: str_prop(&tn.properties_cloned(&graph.interner), "file_path"),
-            call_lines: str_prop(&edge.properties_cloned(&graph.interner), "call_lines"),
+            call_lines: str_prop(&props, "call_lines"),
+            resolution: str_prop(&props, "resolution"),
+            candidates: match props.get("candidates") {
+                Some(Value::Int64(v)) => *v,
+                _ => 0,
+            },
+            import_backed: matches!(props.get("import_backed"), Some(Value::Boolean(true))),
         });
     }
     rows.sort_by(|a, b| (&a.callee, &a.caller).cmp(&(&b.callee, &b.caller)));
@@ -393,6 +406,12 @@ mod tests {
                 caller_file: "pkg/app.py".into(),
                 callee_file: "pkg/util.py".into(),
                 call_lines: "5".into(),
+                resolution: "unique_name".into(),
+                candidates: 1,
+                // No IMPORTS edge exists between these two files — Python
+                // absolute imports do not resolve (filed separately), which is
+                // exactly why this property must be read, not assumed.
+                import_backed: false,
             }],
             "expected the single helper CALLS edge"
         );
