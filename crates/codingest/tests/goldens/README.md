@@ -20,6 +20,15 @@ captured with the new AGC parser on 2026-07-21, then deliberately refreshed on
 2026-07-22 for its architecture-aware control/data relationship model. It
 supplements the six historical authority digests without rewriting them.
 
+The additive `ts_monorepo` digest was captured on 2026-08-01 together with the
+corpus itself, for the same reason: no pre-existing corpus contained a single
+TypeScript `import` statement, so TS/JS import resolution had no golden
+coverage at all and could be changed — or broken — with zero golden movement.
+Its capture was verified additive the strict way: `capture_goldens` rewrites
+all eight files, and afterwards `git status` reported only
+`ts_monorepo.sha256` as new, so the seven pre-existing digests came back
+byte-identical.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

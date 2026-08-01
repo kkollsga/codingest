@@ -261,6 +261,21 @@ pub fn uses_path_imports(language: &str) -> bool {
     matches!(language, "c" | "cpp" | "html" | "css")
 }
 
+/// Languages whose import specifiers name a *path* but whose modules are
+/// identified by an extension-stripped, `index`-collapsed module path rather
+/// than a file path.
+///
+/// Distinct from [`uses_path_imports`]: C/HTML/CSS specifiers resolve against
+/// the file set verbatim (`"../include/header.h"` **is** a file), whereas
+/// `import "./util"` names no file that exists — `util.ts`, `util.tsx` and
+/// `util/index.ts` all satisfy it, and all three collapse to the same module
+/// path. So TS/JS resolve against the *module* set instead, which is also what
+/// makes the resolution incapable of inventing a target: a candidate becomes
+/// an edge only if it names a module the project actually defines.
+pub fn uses_module_path_imports(language: &str) -> bool {
+    matches!(language, "typescript" | "javascript")
+}
+
 pub fn has_implicit_module_hierarchy(language: &str) -> bool {
     matches!(language, "c" | "cpp" | "swift" | "php")
 }

@@ -186,6 +186,63 @@ fn path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
     candidates
 }
 
+/// Module-path suffixes a TS/JS specifier may carry. Stripped before matching,
+/// mirroring `JstsParser::file_to_module_path`. `.js`/`.mjs`/`.cjs` are in the
+/// list because TS's NodeNext resolution has source files import each other by
+/// their *emitted* name (`import "./util.js"` resolving to `util.ts`).
+const MODULE_PATH_EXTENSIONS: &[&str] = &[
+    ".tsx", ".ts", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".js",
+];
+
+/// Candidate module paths for one TS/JS import specifier, in fixed priority
+/// order — first match wins, and the order IS the documented tie-break.
+///
+/// Relative specifiers only in this pass: `./x` and `../x` are normalized
+/// against the importing file's directory, extension-stripped, and offered as
+/// (1) the normalized path and (2) the same path with a trailing `/index`
+/// segment removed, because `file_to_module_path` collapses `a/b/index.ts` to
+/// module `a/b`. Bare and aliased specifiers fall through to the caller's
+/// existing longest-prefix walk.
+///
+/// No filesystem probing and no extension guessing: the candidates are pure
+/// string derivations, checked against the project's real module set by the
+/// caller. That is what makes it impossible to manufacture an edge to a target
+/// that does not exist.
+fn module_path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
+    if !registry::uses_module_path_imports(&file.language) {
+        return Vec::new();
+    }
+    let trimmed = raw.trim();
+    if !(trimmed.starts_with("./") || trimmed.starts_with("../") || trimmed == "." || trimmed == "..")
+    {
+        return Vec::new();
+    }
+
+    let parent = file.path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let Some(normalized) = normalize_import_path(parent, trimmed) else {
+        return Vec::new();
+    };
+
+    let stripped = MODULE_PATH_EXTENSIONS
+        .iter()
+        .find_map(|ext| normalized.strip_suffix(ext))
+        .unwrap_or(normalized.as_str())
+        .to_string();
+
+    let mut candidates = Vec::new();
+    if !stripped.is_empty() {
+        candidates.push(stripped.clone());
+    }
+    // A bare root-level `index` collapses to nothing resolvable, so the
+    // emptiness guard is deliberate: no candidate, rather than an empty one.
+    if let Some(without_index) = stripped.strip_suffix("/index") {
+        if !without_index.is_empty() {
+            candidates.push(without_index.to_string());
+        }
+    }
+    candidates
+}
+
 fn resolve_path_import(
     file: &FileInfo,
     raw: &str,
@@ -217,6 +274,16 @@ pub fn build_import_edges(files: &[FileInfo], known_modules: &HashSet<String>) -
         let sep = get_separator(&f.language);
         for use_path in &f.imports {
             if let Some((_, module)) = resolve_path_import(f, use_path, &file_to_module) {
+                out.push(ImportEdge {
+                    file_path: f.path.clone(),
+                    module,
+                });
+                continue;
+            }
+            if let Some(module) = module_path_import_candidates(f, use_path)
+                .into_iter()
+                .find(|candidate| known_modules.contains(candidate))
+            {
                 out.push(ImportEdge {
                     file_path: f.path.clone(),
                     module,
@@ -272,6 +339,17 @@ pub fn build_file_import_edges(
             if let Some((target_file, _)) = resolve_path_import(f, use_path, &file_to_module) {
                 if target_file != f.path {
                     *counts.entry((f.path.clone(), target_file)).or_insert(0) += 1;
+                }
+                continue;
+            }
+            if let Some(target_file) = module_path_import_candidates(f, use_path)
+                .into_iter()
+                .find_map(|candidate| module_to_file.get(&candidate))
+            {
+                if target_file != &f.path {
+                    *counts
+                        .entry((f.path.clone(), target_file.clone()))
+                        .or_insert(0) += 1;
                 }
                 continue;
             }
@@ -961,6 +1039,158 @@ mod determinism_tests {
                 ("styles/site.css", "styles/theme.css"),
             ]
         );
+    }
+
+    /// The TS/JS module-path branch, asserted as exact edge sets. Mirrors the
+    /// `ts_monorepo` corpus in miniature so a break shows up here with a
+    /// readable diff before it shows up as a moved golden digest.
+    #[test]
+    fn ts_relative_imports_resolve_against_the_module_set() {
+        let files = vec![
+            source_file(
+                "packages/core/src/util.ts",
+                "packages/core/src/util",
+                "typescript",
+                &[],
+            ),
+            source_file(
+                "packages/core/src/nested/deep.ts",
+                "packages/core/src/nested/deep",
+                "typescript",
+                &[],
+            ),
+            // A barrel: `index.ts` collapses to the directory's module path.
+            source_file(
+                "packages/core/src/index.ts",
+                "packages/core/src",
+                "typescript",
+                &["./util", "./nested/deep"],
+            ),
+            source_file(
+                "packages/core/src/consumer.ts",
+                "packages/core/src/consumer",
+                "typescript",
+                // `./util.js` is TS NodeNext spelling for `util.ts`.
+                &["./util.js"],
+            ),
+            // `/index`-strip case: the specifier names the barrel file, whose
+            // module path has the `index` segment collapsed away.
+            source_file(
+                "packages/app/src/main.ts",
+                "packages/app/src/main",
+                "typescript",
+                &["../../core/src/index"],
+            ),
+            // Directory specifier: matches the barrel's module path directly.
+            source_file(
+                "packages/app/src/widget.tsx",
+                "packages/app/src/widget",
+                "typescript",
+                &["../../core/src"],
+            ),
+            // A specifier naming no real module must produce NO edge — the
+            // resolver may not invent a target.
+            source_file(
+                "packages/app/src/dangling.ts",
+                "packages/app/src/dangling",
+                "typescript",
+                &["./does-not-exist", "../../core/src/nope"],
+            ),
+            // Bare/scoped specifiers are not the relative branch's business.
+            source_file(
+                "packages/app/src/bare.ts",
+                "packages/app/src/bare",
+                "typescript",
+                &["zod", "@scope/core"],
+            ),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
+        let module_pairs: Vec<_> = build_import_edges(&files, &known_modules)
+            .into_iter()
+            .map(|edge| (edge.file_path, edge.module))
+            .collect();
+        assert_eq!(
+            module_pairs,
+            vec![
+                (
+                    "packages/core/src/index.ts".to_string(),
+                    "packages/core/src/util".to_string()
+                ),
+                (
+                    "packages/core/src/index.ts".to_string(),
+                    "packages/core/src/nested/deep".to_string()
+                ),
+                (
+                    "packages/core/src/consumer.ts".to_string(),
+                    "packages/core/src/util".to_string()
+                ),
+                (
+                    "packages/app/src/main.ts".to_string(),
+                    "packages/core/src".to_string()
+                ),
+                (
+                    "packages/app/src/widget.tsx".to_string(),
+                    "packages/core/src".to_string()
+                ),
+            ]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_pairs: Vec<_> = build_file_import_edges(&files, &module_to_file)
+            .into_iter()
+            .map(|edge| (edge.source, edge.target))
+            .collect();
+        assert_eq!(
+            file_pairs,
+            vec![
+                (
+                    "packages/app/src/main.ts".to_string(),
+                    "packages/core/src/index.ts".to_string()
+                ),
+                (
+                    "packages/app/src/widget.tsx".to_string(),
+                    "packages/core/src/index.ts".to_string()
+                ),
+                (
+                    "packages/core/src/consumer.ts".to_string(),
+                    "packages/core/src/util.ts".to_string()
+                ),
+                (
+                    "packages/core/src/index.ts".to_string(),
+                    "packages/core/src/nested/deep.ts".to_string()
+                ),
+                (
+                    "packages/core/src/index.ts".to_string(),
+                    "packages/core/src/util.ts".to_string()
+                ),
+            ]
+        );
+    }
+
+    /// The branch is language-gated: a relative specifier in a language that
+    /// does not use module-path imports must not pick up the new behaviour.
+    #[test]
+    fn module_path_candidates_are_language_gated() {
+        let ts = source_file("a/b.ts", "a/b", "typescript", &["./c"]);
+        assert_eq!(module_path_import_candidates(&ts, "./c"), vec!["a/c"]);
+
+        let py = source_file("a/b.py", "a.b", "python", &["./c"]);
+        assert!(module_path_import_candidates(&py, "./c").is_empty());
+
+        let js = source_file("a/b.js", "a/b", "javascript", &["../d/index.js"]);
+        assert_eq!(
+            module_path_import_candidates(&js, "../d/index.js"),
+            vec!["d/index", "d"]
+        );
+
+        // Non-relative specifiers are left to the caller's prefix walk.
+        assert!(module_path_import_candidates(&ts, "zod").is_empty());
+        assert!(module_path_import_candidates(&ts, "@scope/core").is_empty());
+        // Escaping the project root yields nothing rather than a bogus path.
+        assert!(module_path_import_candidates(&ts, "../../../outside").is_empty());
     }
 
     #[test]

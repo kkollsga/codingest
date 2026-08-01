@@ -10,6 +10,23 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Fixed
+- **TypeScript/JavaScript imports now resolve.** Relative specifiers were
+  discarded at parse time (`import { x } from "./util"` was dropped before the
+  builder ever saw it), and TS was not wired into any path-aware resolution, so
+  a TS codebase produced essentially no `IMPORTS` edges — on a 3,293-file
+  monorepo, 4 of ~13,000 specifiers. Relative specifiers are now recorded
+  verbatim and resolved against the project's module set: the specifier is
+  normalized against the importing file's directory, its `.ts`/`.tsx`/`.js`/
+  `.jsx`/`.mjs`/`.cjs`/`.mts`/`.cts` suffix stripped, and matched first as-is
+  and then with a trailing `/index` segment removed (because `a/b/index.ts`
+  *is* module `a/b`). `export … from "…"` is captured too, so barrel files —
+  which in a TS monorepo are the main dependency conduit and contain nothing
+  but re-exports — finally contribute edges. Resolution never guesses: a
+  candidate becomes an edge only when it names a module the project actually
+  defines, so no edge can point at a file that does not exist. `require()` and
+  dynamic `import()` remain out of scope.
+
 ### Added
 - **`codingest_stats --edge-breakdown` and `--dump-calls`** — two read-only
   reporting flags on the accuracy harness. `--edge-breakdown` appends a

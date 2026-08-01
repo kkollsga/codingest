@@ -367,6 +367,34 @@ impl JstsParser {
         calls
     }
 
+    /// The module specifier of an `import … from '…'` / `export … from '…'`
+    /// statement, unquoted. `None` when the statement has no `from` clause
+    /// (`export const x = 1`, `export { a }`).
+    ///
+    /// Scope: static `import`/`export` statements only. `require()` and
+    /// dynamic `import()` are call expressions, not statements, and stay out
+    /// of scope — resolving them means evaluating an arbitrary expression,
+    /// and in the corpora this targets they are a rounding error next to the
+    /// static forms.
+    fn module_source(node: Node, source: &[u8]) -> Option<String> {
+        let string_node = node.child_by_field_name("source").or_else(|| {
+            // Older grammar revisions do not set the field on plain
+            // side-effect imports (`import './setup'`); there the specifier is
+            // the statement's only direct string child. Deliberately NOT
+            // applied to `export_statement`, whose direct children can include
+            // an unrelated string literal.
+            if node.kind() != "import_statement" {
+                return None;
+            }
+            let mut cursor = node.walk();
+            let found = node.children(&mut cursor).find(|c| c.kind() == "string");
+            found
+        })?;
+        let text = node_text(string_node, source);
+        let path = text.trim_matches(|c| c == '\'' || c == '"' || c == '`');
+        (!path.is_empty()).then(|| path.to_string())
+    }
+
     fn file_to_module_path(filepath: &Path, src_root: &Path) -> String {
         let rel = filepath.strip_prefix(src_root).unwrap_or(filepath);
         let mut parts: Vec<String> = rel
@@ -850,6 +878,16 @@ impl JstsParser {
             }
             "enum_declaration" => self.parse_enum(node, source, module_path, rel_path, result),
             "export_statement" => {
+                // `export … from '…'` / `export * from '…'` is an import in
+                // every sense that matters to a dependency graph: the file
+                // reads the module. Barrel files (`index.ts` re-exports) are
+                // the main dependency conduit in a TS monorepo and consist of
+                // nothing else, so without this they contribute no edges at
+                // all. Recorded into `imports` rather than a parallel list so
+                // one resolution path covers both spellings.
+                if let Some(path) = Self::module_source(node, source) {
+                    file_info.imports.push(path);
+                }
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     match child.kind() {
@@ -912,16 +950,15 @@ impl JstsParser {
                 }
             }
             "import_statement" => {
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if child.kind() == "string" {
-                        let text = node_text(child, source);
-                        let path = text.trim_matches(|c| c == '\'' || c == '"');
-                        if !path.starts_with('.') {
-                            file_info.imports.push(path.to_string());
-                        }
-                        break;
-                    }
+                // Record the specifier verbatim — relative ones included.
+                // `./x` and `../x` used to be dropped here, which made TS
+                // import resolution structurally impossible: the builder never
+                // saw the specifiers that carry ~all intra-project dependency
+                // in a TS codebase. Normalization against the importing file's
+                // directory happens in `builder::other_edges`, which is the
+                // only place that knows the project's module set.
+                if let Some(path) = Self::module_source(node, source) {
+                    file_info.imports.push(path);
                 }
             }
             "type_alias_declaration" => {
@@ -1126,5 +1163,119 @@ impl LanguageParser for JstsParser {
         file_info.annotations = extract_comment_annotations(root, &source, DEFAULT_COMMENT_TYPES);
         result.files.push(file_info);
         result
+    }
+}
+
+#[cfg(test)]
+mod import_capture_tests {
+    use super::*;
+    use crate::parsers::LanguageParser;
+
+    /// Parse one `.ts` (or `.tsx`) source through the real parser and return
+    /// the resulting `FileInfo.imports`, in encounter order.
+    fn imports_of(name: &str, src: &str) -> Vec<String> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(name);
+        std::fs::write(&path, src).expect("write fixture");
+        let result = JstsParser::typescript().parse_file(&path, dir.path());
+        assert_eq!(result.files.len(), 1, "expected exactly one parsed file");
+        result.files[0].imports.clone()
+    }
+
+    /// The regression this phase exists for: relative specifiers used to be
+    /// dropped at parse time (`if !path.starts_with('.')`), so the builder
+    /// never saw the specifiers that carry essentially all intra-project
+    /// dependency in a TS codebase.
+    #[test]
+    fn relative_import_specifiers_are_captured_verbatim() {
+        let imports = imports_of(
+            "a.ts",
+            r#"
+import { helper } from "./util"
+import type { Deep } from "../nested/deep"
+import defaultThing from './default-thing'
+import "./side-effect"
+import * as ns from "../../other/mod"
+"#,
+        );
+        assert_eq!(
+            imports,
+            vec![
+                "./util",
+                "../nested/deep",
+                "./default-thing",
+                "./side-effect",
+                "../../other/mod",
+            ]
+        );
+    }
+
+    /// Non-relative specifiers kept working — they were the only ones the old
+    /// filter let through, and the alias/workspace phase resolves them.
+    #[test]
+    fn bare_and_scoped_specifiers_are_still_captured() {
+        let imports = imports_of(
+            "a.ts",
+            r#"
+import { z } from "zod"
+import { Core } from "@scope/core"
+import { Sub } from "@scope/core/sub/path"
+"#,
+        );
+        assert_eq!(imports, vec!["zod", "@scope/core", "@scope/core/sub/path"]);
+    }
+
+    /// Barrel files consist of nothing but `export … from`, so before this
+    /// they contributed zero edges — in a TS monorepo that is the main
+    /// dependency conduit. Pins the grammar's node shape too: if a future
+    /// tree-sitter-typescript stops exposing the `source` field on
+    /// `export_statement`, this test says so immediately.
+    #[test]
+    fn export_from_specifiers_are_captured() {
+        let imports = imports_of(
+            "index.ts",
+            r#"
+export { helper } from "./util"
+export * from "./nested/deep"
+export * as ns from "../sibling"
+export type { Cfg } from "./config"
+"#,
+        );
+        assert_eq!(
+            imports,
+            vec!["./util", "./nested/deep", "../sibling", "./config"]
+        );
+    }
+
+    /// An `export` with no `from` clause is not an import, and neither is a
+    /// string literal that merely happens to sit inside one.
+    #[test]
+    fn exports_without_a_from_clause_capture_nothing() {
+        let imports = imports_of(
+            "a.ts",
+            r#"
+export const NAME = "not-a-module"
+export function go(): string { return "also-not-a-module" }
+const local = "plain"
+export { local }
+export default go
+"#,
+        );
+        assert!(imports.is_empty(), "captured {imports:?}");
+    }
+
+    /// Out-of-scope spellings stay out of scope — documented, not accidental.
+    #[test]
+    fn require_and_dynamic_import_are_not_captured() {
+        let imports = imports_of(
+            "a.ts",
+            r#"
+const fs = require("./legacy")
+export async function load() {
+  return await import("./lazy")
+}
+"#,
+        );
+        assert!(imports.is_empty(), "captured {imports:?}");
     }
 }

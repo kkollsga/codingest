@@ -52,6 +52,11 @@ const CORPORA: &[&str] = &[
     "cross_ts_py",
     "dup_minified_assets",
     "agc_basic",
+    // Added 2026-08-01. Every other corpus is blind to TS/JS import
+    // resolution — none contains a single TS `import` statement, so a change
+    // to it could land with zero golden movement. Its golden is therefore
+    // captured additively (see `tests/goldens/README.md`).
+    "ts_monorepo",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.
