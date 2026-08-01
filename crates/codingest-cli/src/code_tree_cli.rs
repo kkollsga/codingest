@@ -15,7 +15,7 @@ use kglite::api::DirGraph;
 use serde_json::{json, Value};
 
 const METADATA_FORMAT: u64 = 2;
-const DEFAULT_GRAPH: &str = ".kglite/code-review.kgl";
+pub(crate) const DEFAULT_GRAPH: &str = ".kglite/code-review.kgl";
 
 #[derive(Subcommand, Debug)]
 pub enum CodeTreeCommand {
@@ -23,6 +23,9 @@ pub enum CodeTreeCommand {
     Build(BuildArgs),
     /// Check whether a built graph still matches its recorded source state.
     Status(StatusArgs),
+    /// Run a read-only Cypher query against a saved graph artifact.
+    #[command(visible_alias = "cypher")]
+    Query(crate::query::QueryArgs),
     /// Install or remove the bundled code-review skill for an agent host.
     Skill {
         #[command(subcommand)]
@@ -90,6 +93,7 @@ pub fn run(command: &CodeTreeCommand) -> Result<()> {
             let status = status(&args.output)?;
             print_status(&status, args.format);
         }
+        CodeTreeCommand::Query(args) => crate::query::run(args)?,
         CodeTreeCommand::Skill { command } => crate::skill::run(command)?,
     }
     Ok(())
@@ -104,7 +108,7 @@ struct BuildPlan {
     revisions: Vec<String>,
 }
 
-fn build(args: &BuildArgs) -> Result<Value> {
+pub(crate) fn build(args: &BuildArgs) -> Result<Value> {
     let plan = prepare_build(args)?;
     let graph = construct_graph(args, &plan)?;
     persist_build(args, &plan, graph)

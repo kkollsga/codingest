@@ -10,6 +10,7 @@
 //! cannot drift between the cargo binary and the console script.
 
 mod code_tree_cli;
+mod query;
 mod skill;
 mod skill_assets;
 

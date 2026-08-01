@@ -11,6 +11,19 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **`codingest query "<cypher>"` (visible alias `cypher`)** — a one-shot,
+  read-only Cypher query against a saved `.kgl`, the second interface alongside
+  the MCP server for CI, cross-session artifact reuse, and non-MCP hosts. It
+  queries an artifact and never builds one: `codingest build <dir> && codingest
+  query '<cypher>'` composes the two. `-g/--graph` selects the artifact
+  (default `.kglite/code-review.kgl`; `--graph`, not `--output`, because here
+  the artifact is an input), `-` as the query reads it from stdin, and
+  `--timeout <secs>` bounds execution. Output is **never truncated** — unlike
+  the MCP server's 15-row inline preview, which is a host-context budget; use
+  Cypher `LIMIT` to bound rows. The default rendering is TSV (a header line of
+  column names, then every row) on stdout with an `N row(s)` summary on stderr,
+  so stdout stays pure data. Mutation Cypher is rejected by the engine's
+  read path.
 - **`docs/mcp.md` now has an opencode section**, verified against the shipping
   `opencode` binary at `v1.2.25-1505` (not the `lildax` v2 rewrite, which does
   not wire MCP tools up yet). It documents the zero-absolute-path global config
