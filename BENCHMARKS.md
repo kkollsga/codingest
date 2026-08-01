@@ -68,6 +68,42 @@ Consequences for this document:
   baseline is captured in release mode on a quiet machine at release time. The
   next release capture starts the new comparable series.
 
+## Release 0.1.5 — 2026-08-01 (Track C: TS/JS import resolution + CALLS metadata)
+
+**The first release since the goldens were frozen that changes builder output**,
+so unlike 0.1.4 the bench was mandatory rather than skipped.
+
+All numbers below share one corpus — the **opencode** monorepo pinned at
+`1e17856b`, tracked-only, **6,346 files / 127,343,975 bytes**,
+`corpus_sha256 04a90c5d45cf620a3d85473ae8f660d5ef3e4af1c6d55666b333f53108c7dd31`.
+Quote that digest with any figure taken from here; a number without it is not
+comparable to anything.
+
+| | before | after |
+|---|---|---|
+| build (release, **min over 16**) | 0.468 s | **0.476 s** (+1.7 %) |
+| graph | 43,038 edges | **59,522 edges** (28,179 nodes) |
+| `IMPORTS` File→File | 73 | **8,039** |
+| `IMPORTS` File→Module | 77 | **8,595** |
+| labeled CALLS precision (`import_backed AND candidates = 1`) | 5.0 % | **87.5 %** |
+
++1.7 % build time for a graph 38 % larger, with dependency edges going from
+"effectively absent" to complete, is the trade this release makes. It sits
+inside the +5 % budget the plan set before the work started, rather than a
+budget chosen afterwards to fit the result.
+
+A first cut of the alias work measured **+8 %**. The cause was found rather than
+absorbed — `package_targets` allocated a probe string per package per specifier
+(~650 k allocations per build) — and the boundary check is now allocation-free.
+
+**Release-time verification** (`codingest_bench`, same corpus, two independent
+codingest builds, 3 warmup + 20 timed iterations alternating A/B): both builds
+produced **identical** graphs at 28,179 nodes / 59,522 edges, and query parity
+was **11 queries, 11 OK, 0 MISMATCH**. Per-query medians agreed within 0.5 %
+across builds. `make determinism-soak` was stable at 58,992 edges during the
+work itself (a different corpus scope — do not compare it with the figures
+above).
+
 ## kglite 0.15.0 engine migration — 2026-07-27
 
 > **Corpus caveat (2026-07-27):** measured on the working tree, which then

@@ -7,7 +7,41 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
-## Track C — graph resolution precision — 2026-08-01 (branch `feat/graph-resolution-precision`, unreleased)
+## Release 0.1.5 verification — 2026-08-01
+
+The release-mode gate is green: `golden_parity`, `rev_self_consistency` and the
+new `kgl_bytes_are_stable_across_builds` all pass in the
+`cargo test --workspace --release` run, across **8** corpora.
+
+**The goldens did not move during this release, and that is the point.** The
+Track C section below records the one deliberate regeneration, which happened on
+the feature branch with its evidence captured at the time. By release time that
+decision is closed: a red `golden_parity` here would have been a regression to
+diagnose, never a regen. It stayed green.
+
+The regeneration was additionally re-verified independently before tagging, by a
+reviewer that did not trust this file: v0.1.4 was extracted via `git archive`
+and built with its own locked dependencies, canonical renderings were dumped
+from both versions, **both ends were anchored** (the v0.1.4 dumps hash to the
+old goldens 7/7; HEAD's hash to the committed goldens 8/8), and the two were
+section-diffed with an independent parser. Result: sections 1–4 byte-identical,
+edge key sets identical in every corpus, **0 removals and 0 mutations** — the
+only change is the three added properties on touched CALLS edges.
+
+Cross-build query parity at release: **11 queries, 11 OK, 0 MISMATCH**, with
+both builds producing identical 28,179-node / 59,522-edge graphs
+(`corpus_sha256 04a90c5d…`, opencode pinned at `1e17856b`).
+
+**Known and deliberately shipped:** Python absolute imports never produce
+`IMPORTS` edges, so `py_basic` pins that behaviour — a golden that currently
+freezes a defect. It predates every release and 0.1.5 does not worsen it; the
+fix will move that golden *with* a recorded reason, which is exactly what the
+protocol is for. The consequence for users is documented in the CHANGELOG and
+`docs/cli.md`: the `import_backed AND candidates = 1` filter removes
+essentially all true cross-file Python call edges. Tracked in
+`dev-docs/plans/python-imports-never-resolve.md`.
+
+## Track C — graph resolution precision — 2026-08-01 (branch `feat/graph-resolution-precision`, shipped in 0.1.5)
 
 The first builder-behaviour work since the goldens were frozen, so it is the
 first entry that records **deliberate** digest movement rather than the absence

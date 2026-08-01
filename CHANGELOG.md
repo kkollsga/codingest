@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-01
+
 ### Added
 - **`CALLS` edges carry how they were resolved.** Three new properties:
   `resolution` names the tier that pinned the edge (`exact_qualified`,
