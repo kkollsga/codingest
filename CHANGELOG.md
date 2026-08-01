@@ -100,6 +100,13 @@ ship time — it's the only place the version bumps.
   on a Capitalized identifier (`Effect.fn`) qualifies, `arr.map`,
   `results.filter` and `tp.split(',').map` do not. Bindings inside a function
   or closure body are still not node-ified; that is a separate change.
+- **`codingest_stats --include-docs`.** The accuracy harness built with the
+  docs pass hard-coded off, so `:Doc`, `:MENTIONS` and `:DOCUMENTS` could never
+  appear in a recorded measurement and no docs-pass regression could fail a
+  gate. The flag opts the pass in and is off by default, since docs-off is the
+  configuration the existing result history was taken at; the emitted JSON now
+  states both `include_tests` and `include_docs`, and an unrecognised argument
+  is a usage error instead of being silently ignored.
 
 ### Fixed
 - **`function*` and `const x = function () {}` were invisible to the TS/JS
