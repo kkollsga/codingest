@@ -39,6 +39,18 @@ workspace:
   root: /absolute/path/to/starting-repository
   sandbox_root: /absolute/path/to/repository-parent   # the actual boundary
   watch: true
+
+# Served in the MCP `initialize` result. Some hosts (opencode) inject this
+# verbatim into the system prompt every session, so keep it short — you pay
+# for it on every request.
+instructions: |
+  This server answers structural questions from a code graph.
+  Route: graph_overview first (schema), then cypher_query for anything
+  structural — where something is defined, what calls what, which types
+  exist, counts, multi-hop paths. Use grep and read_source only for literal
+  text (error strings, comments, config keys), never to rediscover
+  structure the graph already encodes.
+  Project and LIMIT your queries. Some hosts truncate large tool results.
 ```
 
 Then configure the client command as `codingest-mcp --mcp-config
@@ -110,3 +122,196 @@ Point your MCP client at the `codingest-mcp` binary instead of
 `kglite-mcp-server`. Every graph tool behaves identically — the difference is
 that `codingest-mcp` can build a workspace from source, which is what the code
 graph needs. See [Migrating from kglite.code_tree](migrating-from-kglite-code-tree.md).
+
+## Using codingest-mcp with opencode
+
+Everything below was verified against opencode `v1.2.25-1505` — the shipping
+`opencode` binary. The repository also contains a v2 rewrite that ships as a
+*different* binary (`lildax`) and does not wire MCP tools up at all yet. Config
+key names and behaviour differ between the two, so if you find guidance
+elsewhere that does not match this page, check which binary it describes.
+
+### The zero-absolute-path config
+
+opencode spawns a local MCP server with its working directory set to the
+instance directory, and `--watch` canonicalises a relative path. So a single
+block in your **global** config (`~/.config/opencode/opencode.json`) gives every
+project its own code graph, with no per-repo setup and no absolute paths:
+
+```json
+{
+  "mcp": {
+    "codingest": {
+      "type": "local",
+      "command": ["codingest-mcp", "--watch", "."]
+    }
+  }
+}
+```
+
+The `.` resolves against wherever opencode was started, not against the git
+worktree. If you launch opencode from a subdirectory you get a graph of that
+subdirectory; if you launch it somewhere like `$HOME`, it will try to build a
+graph of your home directory, which you do not want. Two ways to handle it: the
+model can call `set_root_dir` (it is told both the working directory and the
+workspace root in its environment block), or you can scope the config to the
+project.
+
+Project-scoped config lives at `<repo>/.opencode/opencode.json` (or
+`opencode.jsonc`) — **not** at the repository root. opencode walks up from the
+working directory to the worktree root looking for `.opencode` directories. One
+side effect to accept before you create one: for every config directory it
+finds, opencode writes a `.gitignore` inside it and forks a background
+`npm install @opencode-ai/plugin` into it. If that is unwelcome in your repo,
+stay on global config and let the model call `set_root_dir`.
+
+For the multi-repo case, use the manifest as documented above:
+`["codingest-mcp", "--mcp-config", "/absolute/path/to/workspace_mcp.yaml"]`.
+
+`--watch` with no manifest sends no `initialize` instructions at all, so the
+routing doctrine never reaches opencode's system prompt. You do not have to give
+up the zero-path config to get it back: `--watch DIR` also picks up a
+`workspace_mcp.yaml` sitting in `DIR`. Commit one at the repository root carrying
+just an `instructions:` block and the global config block above serves it
+per-repo, with no per-repo client setup.
+
+### Config shape: use these keys
+
+opencode's shipping binary reads `type: "local"`, an argv array `command`,
+optional `cwd` and `environment`, `enabled` (not `disabled`), a **flat numeric**
+`timeout`, and camelCase OAuth keys (`clientId`, `callbackPort`, …).
+
+The v2 rewrite uses different names for the same things — `mcp.servers` nesting,
+`disabled`, an object `timeout: {startup, request}`, snake_case OAuth. Do not mix
+them in: config is validated against the V1 schema, and a shape mismatch is a
+**hard startup failure**, not a skipped server. The same is true of an unknown
+**top-level** key, so a typo one level up stops opencode from starting at all.
+(The narrow exception is an entry that is only `{"enabled": true}` with no
+`type`: that one is logged and skipped.)
+
+Copy the block above by hand. codingest does not generate or edit opencode
+config, deliberately: a tool that writes another tool's config file is one typo
+away from making it unbootable.
+
+### Budget your query results
+
+opencode truncates every tool result at **2000 lines or 50 KiB**, whichever
+comes first, keeping the *head* and spilling the remainder to a file whose path
+it appends to the preview.
+
+`cypher_query`'s default rendering will not trip this on row count alone: the
+server already prints a **15-row preview** with the true row count in the header
+(`38 row(s) (showing first 15):`). What can trip it:
+
+- **`FORMAT CSV`** renders the *entire* result inline. That is the right tool for
+  bulk export and the one that will hit the 50 KiB cap — use it deliberately,
+  with `LIMIT`, not as a default.
+- Wide projections. `RETURN n` on a node type carrying source text can blow the
+  byte budget inside 15 rows. Project the columns you actually need.
+- `read_source` / `grep` over large files.
+
+If you routinely need more headroom, raise it in opencode's config:
+`"tool_output": {"max_lines": 5000, "max_bytes": 200000}`. When output *is*
+truncated, opencode's message points at the spill file — and, if the agent has
+the task tool, tells the model to delegate reading it to a sub-agent rather than
+pull it back into context.
+
+### Timeouts
+
+The real default is **30 seconds**, applied to both the initial connection and
+every subsequent request. (opencode's own documentation says 5 s; the shipping
+code uses 30 s.) In `--watch` mode the graph is built before the server begins
+answering, so a repository that takes longer than 30 s to build will fail to
+connect. Raise `timeout` on that server entry if so.
+
+Long-running calls can survive past the timeout if the server reports progress.
+`codingest-mcp` does not currently emit progress notifications, so a slow query
+is bounded by `timeout` regardless.
+
+### Skills: already installed
+
+If you have run `codingest skill install --host claude` (globally or with
+`--project`), **opencode already discovers it** — it reads `.claude/skills`
+alongside its own locations. There is nothing extra to install.
+
+Two things worth knowing:
+
+- **Do not also copy the skill into a `skill/` or `skills/` directory under
+  `.opencode/` or `~/.config/opencode/`.** opencode scans those too, and two
+  discovered copies of the same skill name resolve nondeterministically — you
+  will get one of them and cannot predict which.
+- If you turn on opencode's tool-output pruning (`"compaction": {"prune": true}`,
+  off by default), skill output is exempt from pruning and MCP tool output is
+  not. So durable methodology belongs in the skill, and volatile evidence
+  belongs in tool calls.
+
+If you have set `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` (or the broader
+`OPENCODE_DISABLE_CLAUDE_CODE`), point opencode at the skill explicitly instead:
+
+```json
+{ "skills": { "paths": ["~/.claude/skills/codingest-code-review"] } }
+```
+
+### The `skills:` manifest key is a real tradeoff
+
+Leaving it unset (the default) gives lean tool descriptions. Setting
+
+```yaml
+skills:
+  - true
+```
+
+in the manifest attaches the bundled methodology to the tool descriptions, which
+are sent verbatim and uncapped on **every** request. Measured against this
+project's own graph: total tool-description size goes from **3.3 KB to 40.5 KB**
+across nine tools. In exchange, seven skills are served as MCP `prompts`, which
+opencode turns into slash commands named `/<server>:<skill>` — for an `mcp` entry
+keyed `codingest`, that is `/codingest:cypher_query`, `/codingest:graph_overview`,
+`/codingest:grep`, `/codingest:read_source`, `/codingest:list_source`,
+`/codingest:github_issues`, `/codingest:repo_management`. Other bundled skills are
+gated on what the active graph contains and may not surface as commands at all,
+so treat that list as the shape rather than a guarantee.
+
+Worth it if you use those commands; expensive if you do not. Two ways to opt in
+more cheaply:
+
+- The manifest's `<basename>.skills/` override directory (auto-detected next to
+  the YAML) replaces individual skill bodies by name, so you can swap a long
+  methodology file for a short pointer.
+- opencode's experimental code mode (`OPENCODE_EXPERIMENTAL_CODE_MODE`) collapses
+  all MCP tools into a single `execute` tool with a budgeted catalog instead of
+  passing every description through.
+
+### Which root mechanism to use
+
+| You want | Use |
+|---|---|
+| watch one repository | `--watch /path` (or `--watch .`, above) |
+| switch between repositories at runtime | manifest + `set_root_dir` |
+| serve a prebuilt graph artifact | `--graph /path/to/graph.kgl` |
+| build once in CI, no server | `codingest build` |
+
+One precedence surprise: a manifest declaring `workspace: {kind: local}` wins
+over the mode flags — supply one and the server runs in local-workspace mode
+with that manifest's `root`, whatever `--watch` or `--graph` said.
+
+### When it does not work
+
+Start with **`opencode mcp list`**. It connects the configured servers and prints
+each one's state, and for a failed server it prints the connection error inline.
+That is the fastest signal, and usually enough: the most common cause is a build
+that exceeds the 30 s timeout.
+
+If you need more than the connection error, be aware of where the output does
+*not* go. opencode spawns the server with its stderr on a pipe that nothing
+reads, so anything `codingest-mcp` writes to stderr is discarded — it reaches
+neither your terminal nor opencode's log. Run opencode with `--print-logs` to see
+opencode's own log on stderr, which is where MCP protocol-level server log
+notifications land.
+
+`opencode mcp debug <name>` exists but will not help here: it debugs OAuth for
+**remote** servers and refuses a local one.
+
+To rule out the codingest side independently of opencode, run
+`codingest-mcp --selftest` with the same flags. It re-spawns the binary, drives a
+real handshake, and exits non-zero if anything fails.

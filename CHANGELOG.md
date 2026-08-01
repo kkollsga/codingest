@@ -10,6 +10,26 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- **`docs/mcp.md` now has an opencode section**, verified against the shipping
+  `opencode` binary at `v1.2.25-1505` (not the `lildax` v2 rewrite, which does
+  not wire MCP tools up yet). It documents the zero-absolute-path global config
+  block — `["codingest-mcp", "--watch", "."]`, which works because opencode
+  spawns local servers with their working directory set to the instance
+  directory — plus the V1 config key names, the real 30 s connect/request
+  timeout (opencode's own docs say 5 s), the 2000-line / 50 KiB tool-output cap
+  and what actually trips it, the fact that a `--host claude` skill install is
+  already discovered as-is, the measured cost of opting into the manifest's
+  `skills:` key (tool descriptions go from 3.3 KB to 40.5 KB), the root-mechanism
+  decision table, and how to triage a server that will not start.
+- **The sample `workspace_mcp.yaml` in `docs/mcp.md` now carries an
+  `instructions:` block** with the graph-first routing doctrine (`graph_overview`
+  → `cypher_query`; `grep`/`read_source` for literal text only) and one line of
+  result-budget discipline. Hosts that inject MCP `initialize` instructions into
+  the system prompt — opencode does, verbatim, every session — now get the
+  routing rule without the operator writing it themselves. The server preserves
+  a manifest's `instructions:` and appends its own tool-discovery steer on top.
+
 ### Security
 - **`docs/mcp.md` documented a containment boundary that was never enforced.**
   The local-workspace section stated that "every activated repository must stay
