@@ -7,6 +7,65 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Track C — graph resolution precision — 2026-08-01 (branch `feat/graph-resolution-precision`, unreleased)
+
+The first builder-behaviour work since the goldens were frozen, so it is the
+first entry that records **deliberate** digest movement rather than the absence
+of it. `golden_parity` and `rev_self_consistency` are green, and a new sibling
+gate `kgl_bytes_are_stable_across_builds` joins them.
+
+**Corpus added.** `ts_monorepo` (13 files: two packages, a barrel, a
+`.tsx` importer, a JSONC per-package `tsconfig.json` with a `paths` alias, two
+named `package.json`s, and a deliberately dangling specifier). It exists
+because the seven-corpus net was **blind to TS/JS import resolution** — not one
+of them contained a single TypeScript `import`, so the whole subsystem could be
+changed, or silently broken, with zero golden movement. Its digest is additive
+and does not touch the historical authority digests.
+
+**Two conscious regenerations, both verified rather than asserted.**
+
+1. *TS import resolution* (Phases 2–3) — `ts_monorepo` only. Verified the
+   strict way: `capture_goldens` rewrites every golden file, and `git status`
+   afterwards reported only `ts_monorepo.sha256` as changed, so the seven
+   pre-existing digests came back byte-identical.
+2. *CALLS resolution metadata* (Phase 4) — `resolution` / `candidates` /
+   `import_backed` on every tier-resolved CALLS edge. **6 of 8** goldens moved:
+   `py_basic`, `py_inheritance`, `rust_xfile`, `ts_callback`,
+   `dup_minified_assets`, `ts_monorepo`. `agc_basic` and `cross_ts_py` did not,
+   and the mechanism was checked, not assumed — `agc_basic`'s four CALLS edges
+   all come from the AGC semantic pass (they never touch the tiers, so the
+   three properties stay null and the conditional columns are absent), and
+   `cross_ts_py` has no CALLS edges at all.
+
+   Because a change to the *edge set* hiding inside a properties-only
+   regeneration would be blessed permanently, the canonical rendering was
+   dumped before and after and diffed section by section (new `dump_canonical`
+   diagnostic in `tests/parity.rs`). For every one of the eight corpora,
+   `node_type_counts`, `edge_type_counts`, `node_identities` and `node_props`
+   are **identical**; only `edge_props` differs, by exactly +3 lines per
+   tier-resolved CALLS edge (`ts_monorepo`: +21 = 3 × 7).
+
+**New gate: `.kgl` byte determinism.** `golden_parity` renders the graph from
+sorted maps, so property *insertion* order is invisible to it — the bug class
+that once produced identical in-memory digests from `.kgl` files differing
+byte-for-byte. Three more properties per CALLS edge widens that exposure, so
+`kgl_bytes_are_stable_across_builds` now builds `ts_monorepo` and `agc_basic`
+three times each with `save_to` and compares the files. It was proven live:
+removing the resolver's deterministic row sort leaves `golden_parity` **green**
+and turns the byte test **red**.
+
+`make determinism-soak REPO=<opencode> SOAK_RUNS=5` stable at 58,992 edges;
+`make bench-smoke` green, 0 query mismatches in 11 queries × 2 builds.
+
+**Performance.** Release build, min over 16 samples, opencode pinned at
+`1e17856b`, `corpus_sha256`
+`04a90c5d45cf620a3d85473ae8f660d5ef3e4af1c6d55666b333f53108c7dd31`:
+0.468 s before → **0.476 s after (+1.7 %)**, inside the plan's +5 % budget,
+while the graph grew from 43,038 to 59,522 edges. The tsconfig/package.json
+discovery walk itself is 0.014 s. A first cut measured +8 %; the cause was
+`package_targets` allocating a probe string per package per specifier
+(~650k allocations/build) and the boundary check is now allocation-free.
+
 ## Release 0.1.4 verification — 2026-07-30
 
 The frozen-record gate passes: `golden_parity` and `rev_self_consistency` both
