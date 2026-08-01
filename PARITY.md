@@ -7,6 +7,63 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.1.6 verification — 2026-08-01
+
+The release-mode gate is green: `golden_parity`, `rev_self_consistency` and
+`kgl_bytes_are_stable_across_builds` all pass inside the
+`cargo test --workspace --release` run, now across **12** corpora.
+
+**Four corpora were added and no existing golden moved** — the two facts belong
+together, because the second is what makes the first necessary. The closure-walk
+work changes TS/JS and Python parser output substantially, and the eight-corpus
+net did not notice: verified before the work started, **not one committed corpus
+contained a single `const` fn-literal binding, a `function*`, a factory-wrapped
+binding, a nested `def`, or an `.mdx` file.** The whole class could have been
+changed, or silently broken, with every digest staying green. That is a hole in
+the net, not evidence of safety, and each phase closed its own part of it in the
+same commit as the change:
+
+- `ts_hof_binding` — factory-wrapped bindings and the three grammar-vocabulary
+  defects (`const x = function(){}`, `const x = function*(){}`, and a top-level
+  `function* g(){}` that produced **no node at all**).
+- `ts_closure_scope` — the Effect-style `Layer.effect(S, Effect.gen(…))` shape,
+  an IIFE module factory, a React-hook factory, a nested named arrow whose calls
+  must attach to it, **a binding under an anonymous callback that must not
+  become a node**, `const x = arr.map(f)` at depth > 0 staying a `Constant`, and
+  two same-named nested fns in sibling blocks (the `#{line}` tie-break).
+- `py_nested_defs` — decorator factory, closure factory, nested helper, and the
+  conditional-definition duplicate that makes the tie-break routine in Python.
+- `docs_mdx` — an `.mdx` with frontmatter and a code-symbol mention, plus
+  `README.MD` and a markdown-shaped `NOTES.txt` that pins the `.txt` rejection.
+
+**Every new gate was mutation-tested, not merely read.** For each corpus the
+thing it guards was broken, `golden_parity` was confirmed **red**, the change was
+restored, and green was confirmed — and each probe was diffed against a saved
+copy first to prove the edit had actually landed, because a probe that silently
+edits the wrong text makes a working gate look broken and an unchanged file makes
+a dead gate look alive. Twenty-one probes across the release. Two are recorded as
+deliberate **null results** rather than dressed up as passes: dropping `.MDX`
+from `strip_doc_ext` moves only a unit test (no corpus uses the uppercase form),
+and removing Python's anonymous-scope prune changes nothing at all — which is the
+evidence that D1's clause 5 is *structurally* vacuous in Python rather than merely
+untested.
+
+All eleven pre-existing digests came back byte-identical at every phase;
+`capture_goldens` was run additively each time and `git status` confirmed only
+the new `.sha256` appeared.
+
+Cross-build query parity at release: **0 mismatches in 330 comparisons**
+(11 queries × 3 repeats × 5 corpora × 2 independent builds), across opencode,
+TanStack/query, fastify, flask and this repo. The Rust control corpus produced
+an **exactly zero** delta on every counter — no Rust parser changed, and nothing
+moved.
+
+**Known and deliberately shipped, unchanged from 0.1.5:** Python absolute
+imports still never produce `IMPORTS` edges, and `py_basic` still pins that
+defect. This release did not touch import resolution — the Python phase was
+explicitly fenced off from it — so the golden that freezes it is untouched.
+Tracked in `dev-docs/plans/python-imports-never-resolve.md`.
+
 ## Release 0.1.5 verification — 2026-08-01
 
 The release-mode gate is green: `golden_parity`, `rev_self_consistency` and the

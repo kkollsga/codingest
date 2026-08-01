@@ -68,6 +68,63 @@ Consequences for this document:
   baseline is captured in release mode on a quiet machine at release time. The
   next release capture starts the new comparable series.
 
+## Release 0.1.6 — 2026-08-01 (closure-scoped definitions + `.mdx` docs)
+
+**Not comparable to the 0.1.5 section below.** That capture used opencode at
+`1e17856b`, `corpus_sha256 04a90c5d…`; this one uses opencode at `32f278b4`,
+`corpus_sha256 312f41cf7b3e8facf41245a86779528d97cbe07fdd606f736d1e36c362703ad5`
+(6,351 files / 127,414,487 bytes). Different digest, different corpus, no delta
+may be read across the two.
+
+Five corpora were measured rather than one, because the change is a parser-walk
+change and the risk was that it fitted the Effect-TS idiom that motivated it.
+Each row is `main` (`ed8f3ae`) vs the release commit, release build, identical
+staged tree on both sides, **min over 7**. Both configurations are published:
+docs-off is the historically comparable series, docs-on is what the builder
+actually does for a user who passes `--include-docs`.
+
+| corpus (`corpus_sha256`) | nodes before → after | build before → after (docs off) |
+|---|---|---|
+| opencode `312f41cf…` | 28,097 → **31,145** (+10.85 %) | 0.464 s → **0.524 s** (+12.93 %) |
+| TanStack/query `3fe142b7…` | 5,069 → **5,200** (+2.58 %) | 0.120 s → 0.122 s (+1.67 %) |
+| fastify `ec82f718…` | 864 → **936** (+8.33 %) | 0.046 s → 0.045 s (−2.17 %) |
+| flask `467098f4…` | 641 → **676** (+5.46 %) | 0.017 s → 0.018 s (+5.88 %) |
+| **codingest (Rust control) `0364afb9…`** | **1,210 → 1,210 (0)** | **0.045 s → 0.045 s (0 %)** |
+
+The Rust control is the load-bearing row: no Rust parser changed, and the delta
+is **exactly zero on every counter** — nodes, edges, 901 Function nodes, and all
+11 queries. A non-zero number there would have meant the walk was reaching
+further than intended.
+
+**Two ceilings are exceeded in the docs-on configuration and are published as
+exceeded**: opencode nodes +13.03 % against a ≤12 % budget, and build time
++20.16 % against ≤15 %. Both budgets were set against the docs-off denominator
+before the `.mdx` work was quantified. The excess decomposes exactly: docs-on
+`+3,675` nodes = `+3,048` code nodes (the same growth that passes at 10.85 %
+docs-off) `+ 627` Doc nodes, and 627 is precisely the `.mdx` file count. The
+docs pass goes 0.027 s → 0.066 s for those 627 files — **per-doc cost falls from
+231 µs to 89 µs**. The budgets are being restated per configuration rather than
+the result being reinterpreted to fit them.
+
+**Per-query medians.** Raw, opencode is 6 of 11 queries over a +10 % ceiling
+(worst +69.5 %). That ceiling is unachievable by construction here: the call
+graph got denser on purpose — Function nodes 7,813 → 11,184 (+43.1 %), CALLS
+edges 14,136 → 23,319 (+65.0 %), the latter because the D4 repair recovered call
+sites that were previously **dropped entirely**. Normalized per row returned the
+engine is flat (−0.1 % on `calls_edge_scan`, a pure edge scan and the cleanest
+available signal). **One genuine regression survives normalization:**
+`eq_filter_pub`, a full-Function-frame equality filter, at **+18.4 % per row**,
+with a clean dose-response across corpora (Rust control 0 %, TanStack ~8 %,
+opencode 18 %) pointing at the widened Function frame — the scan pays for sparse
+columns it does not read. Linear rather than compounding, ~0.1 ms absolute. It
+is engine-side and has been routed to KGLite rather than absorbed silently here.
+
+Cross-build query-result parity: **0 mismatches in 330 comparisons** (11 queries
+× 3 repeats × 5 corpora × 2 independent builds).
+
+Full report, including the precision gate and every per-query row:
+`dev-docs/bench/out/phase6-validation.md` (gitignored working state).
+
 ## Release 0.1.5 — 2026-08-01 (Track C: TS/JS import resolution + CALLS metadata)
 
 **The first release since the goldens were frozen that changes builder output**,

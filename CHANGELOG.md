@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-01
+
 ### Added
 - **Closure-scoped TS/JS definitions are now graph nodes.** The parse walk
   only ever looked at the direct children of a file's program root, so
