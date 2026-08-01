@@ -65,6 +65,24 @@ ship time — it's the only place the version bumps.
   inside a function contributes a name segment
   (`outer.Inner.method`) without becoming a node of its own. Node growth is
   +5.5 % on flask and +1.8 % on django.
+- **`.mdx` documentation is ingested by the docs pass.** `--include-docs`
+  accepted `.md` and `.rst` only, so an Astro / Starlight / Docusaurus site —
+  where the entire documentation set is `.mdx` — produced nothing. On one
+  repository that was 627 files and 0 `:Doc` nodes; it is now 627 nodes, taking
+  the repository from 117 to 744. `.mdx` is Markdown with embedded JSX/ESM and
+  goes through the Markdown path unchanged, so frontmatter, heading outlines,
+  backtick symbol `MENTIONS` and `[](…)` links all work exactly as they do for
+  `.md`, and an `.mdx` is now a valid link *target* as well: a `.md` linking to
+  `[x](./guide.mdx)` gets a `DOCUMENTS` edge. Embedded JSX and ESM are inert to
+  every extractor — measured across those 627 files, 54 of 21 786 mention
+  candidates (0.25 %) sat on an `import` / `export` / JSX line and **none**
+  resolved to a symbol, so no edge in the graph comes from one.
+  `.txt` is deliberately **not** ingested: it carries no frontmatter, heading
+  or link syntax for any extractor to read, and the extension is
+  indiscriminate — `requirements.txt`, `CMakeLists.txt`, licence files and test
+  fixtures would all become `:Doc` nodes. Genuine `.txt` prose (agent prompt
+  files, say) needs a manifest-driven opt-in rather than a widened extension
+  list; that is recorded as deferred, not forgotten.
 - **Top-level factory-wrapped TS/JS bindings are `Function` nodes.**
   `export const readFile = Effect.fn("Bom.readFile")(function* (…) { … })`
   bound a function but had a `call_expression` value, so it became a
@@ -114,6 +132,13 @@ ship time — it's the only place the version bumps.
   apply the same same-file-only rule `CALLS` already did, and a nested name no
   longer shadows or disambiguates an identically named top-level export for
   callers elsewhere.
+- **An upper-cased `README.MD` kept its extension in its `:Doc` id.** The docs
+  walk has always accepted markup extensions case-insensitively, but the id was
+  derived by stripping a literal lowercase `.md`, so such a file became the
+  node `README.MD` while every sibling became `README`-shaped. Because doc→doc
+  links are matched against extension-stripped ids, that node could never be
+  linked to. Ids are now derived uniformly for every accepted markup
+  extension.
 
 ## [0.1.5] - 2026-08-01
 

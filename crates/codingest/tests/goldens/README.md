@@ -77,6 +77,24 @@ and afterwards `git status` reported only `py_nested_defs.sha256` as new, so
 the ten pre-existing digests came back byte-identical. The gate was then
 mutation-tested five ways — see the Phase 4 commit message.
 
+The additive `docs_mdx` digest was captured on 2026-08-01 with the corpus
+itself. This one guards the docs pass rather than a parser: not one of the
+eleven pre-existing corpora contains an `.mdx`, an upper-cased `.MD`, or a
+`.txt` that must stay out, so `discover_docs`'s accepted-extension match could
+be widened — `.txt` is the tempting "helpful" widening — or narrowed back with
+every digest staying green. It pins the `.mdx` arm end to end (frontmatter
+properties, heading outline, backtick MENTIONS, a doc→doc DOCUMENTS edge whose
+target is an `.mdx` and whose source is a `.md`, and a doc→File edge), the
+extension-stripped `:Doc` id (`README.MD` → `README`), and the inertness of
+embedded JSX/ESM. `NOTES.txt` is markdown-shaped in every respect — heading,
+backtick symbol, markdown link — and must contribute nothing; if `.txt` were
+ever admitted it would add a Doc node, a MENTIONS edge and a DOCUMENTS edge,
+and this digest would move. Verified additive the strict way: `capture_goldens`
+rewrote all twelve files, and afterwards `git status` reported only
+`docs_mdx.sha256` as new, so the eleven pre-existing digests came back
+byte-identical. The gate was then mutation-tested — see the Phase 5 commit
+message.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

@@ -87,6 +87,18 @@ const CORPORA: &[&str] = &[
     // and DECORATES edges that must resolve. Its golden is captured additively
     // (see `tests/goldens/README.md`).
     "py_nested_defs",
+    // Added 2026-08-01. Not one of the ten pre-existing corpora contains an
+    // `.mdx`, an upper-cased `.MD`, or a `.txt` that must stay out — so the
+    // docs pass's accepted-extension match could be widened (to `.txt`, the
+    // tempting "helpful" change) or narrowed (dropping `.mdx`) with zero
+    // golden movement. It pins the `.mdx` arm end to end — frontmatter
+    // properties, headings, backtick MENTIONS, a doc→doc DOCUMENTS edge whose
+    // target is an `.mdx` and whose source is a `.md`, and a doc→File edge —
+    // plus the extension-stripped `:Doc` id (`README.MD` → `README`) and the
+    // inertness of embedded JSX/ESM. `NOTES.txt` is markdown-shaped and must
+    // contribute nothing. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "docs_mdx",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

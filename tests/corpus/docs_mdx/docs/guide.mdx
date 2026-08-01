@@ -1,0 +1,36 @@
+---
+title: Retry Guide
+sidebar_order: 2
+audience: operators
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components"
+import Diagram from "../src/toolkit.ts"
+
+export const supportEmail = `mailto:ops@example.invalid`
+
+The pipeline retries with a policy built by `makeRetryPolicy`, and reports
+through `TelemetrySink`.
+
+<Tabs>
+  <TabItem label="Node">
+    Call `drainTelemetry` once per batch.
+  </TabItem>
+  <TabItem label="Deno">
+    Same, but the `RetryPolicy` shape is imported from the URL build.
+  </TabItem>
+</Tabs>
+
+## Tuning attempts
+
+Raise the attempt count when the sink is remote.
+
+```ts
+// Fenced: nothing in here may become a mention candidate.
+import { makeRetryPolicy } from "../src/toolkit.ts";
+const p = makeRetryPolicy(5);
+```
+
+## Related
+
+See the [reference](./reference.mdx) and the [source](../src/toolkit.ts).
