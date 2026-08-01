@@ -33,6 +33,10 @@ a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 
 - **Agent-ready MCP:** give an MCP client `graph_overview`, `cypher_query`,
   `read_code_source`, repository switching, and automatic graph refresh.
+  [opencode is set up and verified end to end](https://codingest.readthedocs.io/en/latest/mcp.html#using-codingest-mcp-with-opencode)
+  — including a config that needs no absolute paths — and `codingest skill
+  install` packages the review skill for Claude Code and Codex, which opencode
+  also discovers with no extra step.
 - **Fast local review:** map definitions, callers, dependencies, routes,
   inheritance, and affected tests without uploading or executing the project.
 - **Open-source intelligence:** clone and analyse a GitHub repository with one

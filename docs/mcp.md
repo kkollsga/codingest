@@ -130,11 +130,18 @@ graph needs. See [Migrating from kglite.code_tree](migrating-from-kglite-code-tr
 
 ## Using codingest-mcp with opencode
 
-Everything below was verified against opencode `v1.2.25-1505` — the shipping
-`opencode` binary. The repository also contains a v2 rewrite that ships as a
-*different* binary (`lildax`) and does not wire MCP tools up at all yet. Config
-key names and behaviour differ between the two, so if you find guidance
-elsewhere that does not match this page, check which binary it describes.
+Everything below was verified against the shipping `opencode` binary —
+`opencode-ai@1.18.11` from npm, which is the git revision tagged
+`github-v1.2.25-1505`. Those two numbering schemes both appear in the wild:
+`opencode --version` prints the npm one (`1.18.11`), while the repository's own
+tags use the `github-v1.2.x` family, so a version that looks far newer than
+this page claims is usually the same build. Re-verified 2026-08-02 against
+`1.18.11`: handshake, config shape, and the diagnostics below all still hold.
+
+The repository also contains a v2 rewrite that ships as a *different* binary
+(`lildax`) and does not wire MCP tools up at all yet. Config key names and
+behaviour differ between the two, so if you find guidance elsewhere that does
+not match this page, check which binary it describes.
 
 ### The zero-absolute-path config
 
