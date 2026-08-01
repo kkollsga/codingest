@@ -1055,29 +1055,27 @@ mod tests {
             .iter()
             .map(|file| file.module_path.clone())
             .collect();
-        let module_pairs: HashSet<_> =
-            other_edges::build_import_edges(
-                &result.files,
-                &known_modules,
-                &js_workspace::JsWorkspace::default(),
-            )
-                .into_iter()
-                .map(|edge| (edge.file_path, edge.module))
-                .collect();
+        let module_pairs: HashSet<_> = other_edges::build_import_edges(
+            &result.files,
+            &known_modules,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.file_path, edge.module))
+        .collect();
         let module_to_file = result
             .files
             .iter()
             .map(|file| (file.module_path.clone(), file.path.clone()))
             .collect();
-        let file_pairs: HashSet<_> =
-            other_edges::build_file_import_edges(
-                &result.files,
-                &module_to_file,
-                &js_workspace::JsWorkspace::default(),
-            )
-                .into_iter()
-                .map(|edge| (edge.source, edge.target))
-                .collect();
+        let file_pairs: HashSet<_> = other_edges::build_file_import_edges(
+            &result.files,
+            &module_to_file,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.source, edge.target))
+        .collect();
 
         for dir in ["a", "b"] {
             for source in [format!("{dir}/index.html"), format!("{dir}/index.css")] {

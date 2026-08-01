@@ -61,10 +61,7 @@ impl JsWorkspace {
     /// without materialising a directory tree. Production tables come only
     /// from [`JsWorkspace::discover`].
     #[cfg(test)]
-    pub(crate) fn from_raw(
-        configs: &[(&str, TsPathsConfig)],
-        packages: &[(&str, &str)],
-    ) -> Self {
+    pub(crate) fn from_raw(configs: &[(&str, TsPathsConfig)], packages: &[(&str, &str)]) -> Self {
         Self {
             configs: configs
                 .iter()
@@ -209,7 +206,13 @@ impl JsWorkspace {
 /// then lexicographically) — the tie-break that keeps duplicate package names
 /// from making the table depend on directory-walk order.
 fn shallower(a: &str, b: &str) -> bool {
-    let depth = |s: &str| if s.is_empty() { 0 } else { s.matches('/').count() + 1 };
+    let depth = |s: &str| {
+        if s.is_empty() {
+            0
+        } else {
+            s.matches('/').count() + 1
+        }
+    };
     (depth(a), a) < (depth(b), b)
 }
 
@@ -282,7 +285,10 @@ fn best_pattern<'a>(
 fn parse_tsconfig(text: &str, dir: &str) -> Option<TsPathsConfig> {
     let value: serde_json::Value = serde_json::from_str(&strip_jsonc(text)).ok()?;
     let options = value.get("compilerOptions")?;
-    let base_url = options.get("baseUrl").and_then(|v| v.as_str()).unwrap_or(".");
+    let base_url = options
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".");
     let paths_obj = options.get("paths")?.as_object()?;
     let mut paths = BTreeMap::new();
     for (pattern, targets) in paths_obj {
@@ -511,7 +517,11 @@ mod tests {
         );
         assert_eq!(
             ws.package_targets("@scope/core"),
-            vec!["packages/core", "packages/core/src", "packages/core/src/index"]
+            vec![
+                "packages/core",
+                "packages/core/src",
+                "packages/core/src/index"
+            ]
         );
         assert_eq!(
             ws.package_targets("@scope/core/sub/path"),

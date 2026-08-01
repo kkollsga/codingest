@@ -191,9 +191,8 @@ fn path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
 /// mirroring `JstsParser::file_to_module_path`. `.js`/`.mjs`/`.cjs` are in the
 /// list because TS's NodeNext resolution has source files import each other by
 /// their *emitted* name (`import "./util.js"` resolving to `util.ts`).
-const MODULE_PATH_EXTENSIONS: &[&str] = &[
-    ".tsx", ".ts", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".js",
-];
+const MODULE_PATH_EXTENSIONS: &[&str] =
+    &[".tsx", ".ts", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".js"];
 
 /// Candidate module paths for one TS/JS import specifier, in fixed priority
 /// order — first match wins, and the order IS the documented tie-break.
@@ -1126,10 +1125,11 @@ mod determinism_tests {
             ),
         ];
         let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
-        let module_pairs: Vec<_> = build_import_edges(&files, &known_modules, &JsWorkspace::default())
-            .into_iter()
-            .map(|edge| (edge.file_path, edge.module))
-            .collect();
+        let module_pairs: Vec<_> =
+            build_import_edges(&files, &known_modules, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.file_path, edge.module))
+                .collect();
         assert_eq!(
             module_pairs,
             vec![
@@ -1160,10 +1160,11 @@ mod determinism_tests {
             .iter()
             .map(|file| (file.module_path.clone(), file.path.clone()))
             .collect();
-        let file_pairs: Vec<_> = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
-            .into_iter()
-            .map(|edge| (edge.source, edge.target))
-            .collect();
+        let file_pairs: Vec<_> =
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.source, edge.target))
+                .collect();
         assert_eq!(
             file_pairs,
             vec![
@@ -1337,7 +1338,10 @@ mod determinism_tests {
     #[test]
     fn module_path_candidates_are_language_gated() {
         let ts = source_file("a/b.ts", "a/b", "typescript", &["./c"]);
-        assert_eq!(module_path_import_candidates(&ts, "./c", &JsWorkspace::default()), vec!["a/c"]);
+        assert_eq!(
+            module_path_import_candidates(&ts, "./c", &JsWorkspace::default()),
+            vec!["a/c"]
+        );
 
         let py = source_file("a/b.py", "a.b", "python", &["./c"]);
         assert!(module_path_import_candidates(&py, "./c", &JsWorkspace::default()).is_empty());
@@ -1350,9 +1354,14 @@ mod determinism_tests {
 
         // Non-relative specifiers are left to the caller's prefix walk.
         assert!(module_path_import_candidates(&ts, "zod", &JsWorkspace::default()).is_empty());
-        assert!(module_path_import_candidates(&ts, "@scope/core", &JsWorkspace::default()).is_empty());
+        assert!(
+            module_path_import_candidates(&ts, "@scope/core", &JsWorkspace::default()).is_empty()
+        );
         // Escaping the project root yields nothing rather than a bogus path.
-        assert!(module_path_import_candidates(&ts, "../../../outside", &JsWorkspace::default()).is_empty());
+        assert!(
+            module_path_import_candidates(&ts, "../../../outside", &JsWorkspace::default())
+                .is_empty()
+        );
     }
 
     #[test]

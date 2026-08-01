@@ -833,7 +833,8 @@ mod tests {
             &parsed,
             None,
             &crate::builder::js_workspace::JsWorkspace::default(),
-        ).unwrap();
+        )
+        .unwrap();
         let mut relationships = graph
             .graph
             .edge_indices()
@@ -963,7 +964,8 @@ mod tests {
             &parsed,
             None,
             &crate::builder::js_workspace::JsWorkspace::default(),
-        ).unwrap();
+        )
+        .unwrap();
         let space = graph
             .graph
             .node_indices()
