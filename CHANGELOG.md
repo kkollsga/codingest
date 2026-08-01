@@ -11,6 +11,16 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **`codingest_stats --edge-breakdown` and `--dump-calls`** — two read-only
+  reporting flags on the accuracy harness. `--edge-breakdown` appends a
+  per-connection-type edge histogram to the JSON, splitting `IMPORTS` by
+  endpoint node type (`IMPORTS(File->File)` vs `IMPORTS(File->Module)`) because
+  the two answer different questions and only the File→File half is the
+  dependency conduit. `--dump-calls name1,name2,…` emits every `CALLS` edge
+  whose callee short-name is in the list as
+  `{caller, callee, caller_file, callee_file, call_lines}`, sorted by
+  (callee, caller) — the substrate for auditing call-resolution precision
+  against source. Neither flag touches the builder or the graph.
 - **`codingest query "<cypher>"` (visible alias `cypher`)** — a one-shot,
   read-only Cypher query against a saved `.kgl`, the second interface alongside
   the MCP server for CI, cross-session artifact reuse, and non-MCP hosts. It
