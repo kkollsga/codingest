@@ -226,7 +226,7 @@ fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -
     }))
 }
 
-fn status(output: &Path) -> Result<Value> {
+pub(crate) fn status(output: &Path) -> Result<Value> {
     let output = output
         .canonicalize()
         .unwrap_or_else(|_| output.to_path_buf());

@@ -28,6 +28,22 @@ ship time — it's the only place the version bumps.
   query. An in-query `FORMAT CSV` overrides `--format`, so a query renders the
   same on the CLI as it does through MCP. `EXPLAIN` renders its plan rows like
   any other result. Mutation Cypher is rejected by the engine's read path.
+
+  **Freshness is always checked, and warns rather than refuses.** Before
+  executing, `query` runs the same sidecar check `codingest status` does and
+  prints `warning: …` to stderr when the graph is stale, has no sidecar, or
+  cannot be verified at all — the last being what a `.kgl` copied to another
+  machine hits, where the recorded source tree is unreadable. Rows are still
+  returned; refusing by default would break the copied-artifact and CI-cache
+  cases the CLI exists for. `--require-fresh` upgrades any non-fresh or
+  unverifiable outcome to a hard refusal.
+
+  **Exit codes are a CI contract:** `0` success, `2` usage errors, `3` a
+  `--require-fresh` refusal, `1` every other operational failure (missing
+  artifact, bad Cypher, timeout, I/O). Caveat: the `pip install codingest`
+  console script maps every error to `PyRuntimeError`, so a stale refusal
+  surfaces there as exit `1`; use the cargo binary where the distinction
+  matters.
 - **`docs/mcp.md` now has an opencode section**, verified against the shipping
   `opencode` binary at `v1.2.25-1505` (not the `lildax` v2 rewrite, which does
   not wire MCP tools up yet). It documents the zero-absolute-path global config
