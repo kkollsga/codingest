@@ -22,8 +22,12 @@ ship time — it's the only place the version bumps.
   the MCP server's 15-row inline preview, which is a host-context budget; use
   Cypher `LIMIT` to bound rows. The default rendering is TSV (a header line of
   column names, then every row) on stdout with an `N row(s)` summary on stderr,
-  so stdout stays pure data. Mutation Cypher is rejected by the engine's
-  read path.
+  so stdout stays pure data. `--format csv` emits `CypherResult::to_csv()`
+  verbatim — byte-identical to the MCP server's `FORMAT CSV` export — and
+  `--format json` emits one compact `{"columns": […], "rows": [[…]]}` object per
+  query. An in-query `FORMAT CSV` overrides `--format`, so a query renders the
+  same on the CLI as it does through MCP. `EXPLAIN` renders its plan rows like
+  any other result. Mutation Cypher is rejected by the engine's read path.
 - **`docs/mcp.md` now has an opencode section**, verified against the shipping
   `opencode` binary at `v1.2.25-1505` (not the `lildax` v2 rewrite, which does
   not wire MCP tools up yet). It documents the zero-absolute-path global config

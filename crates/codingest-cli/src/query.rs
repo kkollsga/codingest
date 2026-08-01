@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, ValueEnum};
+use kglite::api::cypher::OutputFormat;
 use kglite::api::io::load_file;
 use kglite::api::param::kglite_value_to_json;
 use kglite::api::session::{execute_read, CsvImportPolicy, ExecuteOptions};
@@ -35,6 +36,22 @@ pub struct QueryArgs {
     /// Abort the query after this many seconds.
     #[arg(long)]
     pub timeout: Option<f64>,
+    /// Result rendering. An in-query `FORMAT CSV` overrides this.
+    #[arg(long, value_enum, default_value_t = QueryFormat::Human)]
+    pub format: QueryFormat,
+}
+
+/// Result rendering. A separate enum from `StatusFormat` because the variants
+/// differ — a query result has a CSV projection, a freshness verdict does not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum QueryFormat {
+    /// Header line of column names, then one TSV row per result row.
+    #[default]
+    Human,
+    /// `CypherResult::to_csv()` — byte-identical to the MCP `FORMAT CSV` export.
+    Csv,
+    /// One compact `{"columns": [...], "rows": [[...]]}` object.
+    Json,
 }
 
 /// A rendered query result: the bytes destined for stdout plus the row count
@@ -47,7 +64,7 @@ pub(crate) struct QueryOutput {
 
 pub(crate) fn run(args: &QueryArgs) -> Result<()> {
     let query = read_query(&args.query, std::io::stdin().lock())?;
-    let output = run_query(&args.graph, &query, args.timeout)?;
+    let output = run_query(&args.graph, &query, args.timeout, args.format)?;
     print!("{}", output.stdout);
     eprintln!("{} row(s)", output.rows);
     Ok(())
@@ -70,6 +87,7 @@ pub(crate) fn run_query(
     graph_path: &Path,
     query: &str,
     timeout: Option<f64>,
+    format: QueryFormat,
 ) -> Result<QueryOutput> {
     if !graph_path.exists() {
         anyhow::bail!(
@@ -90,11 +108,37 @@ pub(crate) fn run_query(
     }
     let outcome = execute_read(&graph, query, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
 
+    // An in-query `FORMAT CSV` is a parser-level output switch that the MCP
+    // server honors over its own default rendering; honoring it here too keeps
+    // one query behaving the same on both interfaces.
+    let effective = if outcome.output_format == OutputFormat::Csv {
+        QueryFormat::Csv
+    } else {
+        format
+    };
     let result = &outcome.result;
+    let stdout = match effective {
+        QueryFormat::Human => render_human(&result.columns, &result.rows),
+        QueryFormat::Csv => result.to_csv(),
+        QueryFormat::Json => render_json(&result.columns, &result.rows),
+    };
     Ok(QueryOutput {
-        stdout: render_human(&result.columns, &result.rows),
+        stdout,
         rows: result.rows.len(),
     })
+}
+
+/// One compact JSON object per query — the single-line convention
+/// `status --format json` already set.
+fn render_json(columns: &[String], rows: &[Vec<Value>]) -> String {
+    let payload = serde_json::json!({
+        "columns": columns,
+        "rows": rows
+            .iter()
+            .map(|row| row.iter().map(kglite_value_to_json).collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+    });
+    format!("{}\n", serde_json::to_string(&payload).expect("JSON value"))
 }
 
 /// Header line of column names, then one TSV row per result row — all rows.
@@ -171,6 +215,7 @@ mod tests {
             &fx.graph,
             "MATCH (f:Function) RETURN f.name, f.qualified_name ORDER BY f.name ASC",
             None,
+            QueryFormat::Human,
         )
         .unwrap();
         assert_eq!(
@@ -185,11 +230,23 @@ mod tests {
     #[test]
     fn query_renders_non_string_cells_as_json() {
         let fx = fixture();
-        let counted = run_query(&fx.graph, "MATCH (f:Function) RETURN count(f)", None).unwrap();
+        let counted = run_query(
+            &fx.graph,
+            "MATCH (f:Function) RETURN count(f)",
+            None,
+            QueryFormat::Human,
+        )
+        .unwrap();
         assert_eq!(counted.stdout, "count(f)\n2\n");
         assert_eq!(counted.rows, 1);
 
-        let listed = run_query(&fx.graph, "MATCH (f:File) RETURN f.path, labels(f)", None).unwrap();
+        let listed = run_query(
+            &fx.graph,
+            "MATCH (f:File) RETURN f.path, labels(f)",
+            None,
+            QueryFormat::Human,
+        )
+        .unwrap();
         assert_eq!(listed.stdout, "f.path\tlabels(f)\nsrc/lib.rs\t[\"File\"]\n");
         assert_eq!(listed.rows, 1);
     }
@@ -207,9 +264,14 @@ mod tests {
     #[test]
     fn query_rejects_mutation_cypher() {
         let fx = fixture();
-        let error = run_query(&fx.graph, "CREATE (n:X {name: 'nope'})", None)
-            .unwrap_err()
-            .to_string();
+        let error = run_query(
+            &fx.graph,
+            "CREATE (n:X {name: 'nope'})",
+            None,
+            QueryFormat::Human,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             error.contains("execute_read called with a mutation query"),
             "unexpected error: {error}"
@@ -220,9 +282,14 @@ mod tests {
     fn query_missing_graph_names_path_and_hint() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("absent.kgl");
-        let error = run_query(&missing, "MATCH (f:File) RETURN f.path", None)
-            .unwrap_err()
-            .to_string();
+        let error = run_query(
+            &missing,
+            "MATCH (f:File) RETURN f.path",
+            None,
+            QueryFormat::Human,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             error.contains(&missing.display().to_string()),
             "error omits the path: {error}"
@@ -230,6 +297,108 @@ mod tests {
         assert!(
             error.contains("codingest build"),
             "error omits the build hint: {error}"
+        );
+    }
+
+    /// Independently execute `query` and hand back the raw engine result, so a
+    /// format test can compare the CLI's rendering against the engine's own
+    /// projection rather than against a hand-copied string.
+    fn engine_result(graph_path: &Path, query: &str) -> kglite::api::cypher::CypherResult {
+        let graph = load_file(&graph_path.to_string_lossy()).unwrap();
+        let params: HashMap<String, Value> = HashMap::new();
+        let opts = ExecuteOptions::eager(&params);
+        execute_read(&graph, query, &opts).unwrap().result
+    }
+
+    #[test]
+    fn query_format_json_parses_and_matches() {
+        let fx = fixture();
+        let out = run_query(
+            &fx.graph,
+            "MATCH (f:Function) RETURN f.name, f.qualified_name ORDER BY f.name ASC",
+            None,
+            QueryFormat::Json,
+        )
+        .unwrap();
+        assert!(out.stdout.ends_with('\n'));
+        assert_eq!(out.stdout.lines().count(), 1, "JSON must be one line");
+        let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "columns": ["f.name", "f.qualified_name"],
+                "rows": [
+                    ["alpha", "crate::src::alpha"],
+                    ["beta", "crate::src::beta"],
+                ],
+            })
+        );
+        assert_eq!(out.rows, 2);
+    }
+
+    #[test]
+    fn query_format_json_projects_non_string_cells_naturally() {
+        let fx = fixture();
+        let out = run_query(
+            &fx.graph,
+            "MATCH (f:File) RETURN f.path, labels(f)",
+            None,
+            QueryFormat::Json,
+        )
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(
+            parsed["rows"],
+            serde_json::json!([["src/lib.rs", ["File"]]]),
+        );
+    }
+
+    #[test]
+    fn query_format_csv_equals_result_to_csv() {
+        let fx = fixture();
+        let query = "MATCH (f:Function) RETURN f.name, f.qualified_name ORDER BY f.name ASC";
+        let out = run_query(&fx.graph, query, None, QueryFormat::Csv).unwrap();
+        let expected = engine_result(&fx.graph, query).to_csv();
+        assert_eq!(out.stdout, expected);
+        assert_eq!(
+            out.stdout,
+            "f.name,f.qualified_name\nalpha,crate::src::alpha\nbeta,crate::src::beta\n"
+        );
+        assert_eq!(out.rows, 2);
+    }
+
+    #[test]
+    fn query_inline_format_csv_overrides_flag() {
+        let fx = fixture();
+        // Two columns deliberately: a one-column CSV is byte-identical to the
+        // TSV rendering, so the assertion would also pass on a Human fallback.
+        let query = "MATCH (f:Function) RETURN f.name, f.qualified_name \
+                     ORDER BY f.name ASC FORMAT CSV";
+        for flag in [QueryFormat::Json, QueryFormat::Human] {
+            let out = run_query(&fx.graph, query, None, flag).unwrap();
+            assert_eq!(
+                out.stdout,
+                "f.name,f.qualified_name\nalpha,crate::src::alpha\nbeta,crate::src::beta\n",
+                "--format {flag:?} survived an in-query FORMAT CSV"
+            );
+        }
+    }
+
+    #[test]
+    fn query_explain_renders_rows() {
+        let fx = fixture();
+        let out = run_query(
+            &fx.graph,
+            "EXPLAIN MATCH (f:Function) RETURN f.name",
+            None,
+            QueryFormat::Human,
+        )
+        .unwrap();
+        assert!(out.rows > 0, "EXPLAIN produced no plan rows");
+        assert!(
+            out.stdout.lines().count() > 1,
+            "no rendered plan: {:?}",
+            out
         );
     }
 
