@@ -176,6 +176,41 @@ becomes a hard refusal with **exit code 3**, and no rows are printed.
 `PyRuntimeError`, so a stale refusal exits `1` there. Use the cargo binary
 (`cargo install codingest-cli`) where the distinction matters.
 
+## Interpreting CALLS edges
+
+Every `CALLS` edge the resolver produces carries three properties describing
+*how* it was pinned, so a query can separate a confident edge from a guess:
+
+| Property | Meaning |
+|---|---|
+| `resolution` | the tier that pinned the edge, listed here best-evidence first — `exact_qualified`, `receiver`, `inherited`, `same_owner`, `namespace_import`, `same_file`, `unique_name`, `lang_group`, `global_fallback`. That order is the resolver's own fixed precision ranking; `unique_name` and below mean nothing narrowed the target but the name itself |
+| `candidates` | how many targets survived the tiers; `> 1` means the edge is one of several guesses for the same call site |
+| `import_backed` | whether the caller's file *is* the callee's file, or imports it |
+
+When several call sites between the same pair disagree, the edge keeps the
+best-precision tier and the smallest candidate count. AGC control-transfer
+edges do not go through the tiers and leave all three null.
+
+```bash
+# high-confidence callers of `helper`
+codingest query "MATCH (a)-[r:CALLS]->(b:Function {name: 'helper'})
+                 WHERE r.import_backed AND r.candidates = 1
+                 RETURN a.qualified_name"
+```
+
+Two limits on that idiom, both on `import_backed`:
+
+- It is a **one-hop** check. A caller that reaches the callee through a barrel
+  that re-exports it reads as `false` even though the call is real, so treat
+  `false` as *unconfirmed*, not *refuted* — it is a filter, not a deletion
+  criterion.
+- **It is useless on Python.** Absolute Python imports resolve only in the rare
+  layout where the top-level package name equals the repository's own directory
+  name, so a Python project yields no `IMPORTS` edges and `import_backed` is
+  `false` for every cross-file Python call. Filter Python graphs on
+  `candidates`/`resolution` instead. (Same-file Python calls are unaffected —
+  they are `import_backed = true` on the same-file rule.)
+
 ## Querying the result elsewhere
 
 The output is an ordinary kglite `.kgl`, so any kglite surface reads it too:

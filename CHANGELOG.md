@@ -31,6 +31,12 @@ ship time — it's the only place the version bumps.
   3,293-file monorepo, filtering on `import_backed AND candidates = 1` removes
   96.9% of the false edges, and the edges it would wrongly remove are exactly
   the barrel-re-export ones. No edges are dropped from the graph.
+  **Python is the exception: do not filter Python graphs on `import_backed`.**
+  Absolute Python imports only resolve in the rare layout where the top-level
+  package name happens to equal the repository's own directory name, so a
+  Python project produces no `IMPORTS` edges at all and `import_backed` is
+  `false` for *every* cross-file Python call (same-file calls are unaffected).
+  See [the CALLS-property reference](docs/cli.md#interpreting-calls-edges).
 
 ### Fixed
 - **TypeScript/JavaScript imports now resolve.** Relative specifiers were

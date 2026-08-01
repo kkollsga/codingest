@@ -105,6 +105,11 @@ See [MCP parity](mcp-parity.md) for the coupling detail.
 - **`read_code_source(qualified_name=…)` / `read_source(...)`** — read the
   underlying source for a graph entity or a file slice.
 
+`CALLS` edges carry `resolution`, `candidates` and `import_backed`, which say
+how confidently each edge was resolved — including when *not* to trust
+`import_backed`. Same graph, same properties, whichever interface you query
+from: see [Interpreting CALLS edges](cli.md#interpreting-calls-edges).
+
 ## Watch semantics
 
 With `--watch`, a change to a code file under the fixed root tags the graph
