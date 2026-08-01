@@ -99,7 +99,7 @@ named blocker.
      from the now-deleted in-tree `kglite::code_tree`) is the hard release
      gate; a subset that skips it can ship a graph-equivalence regression.
      This run doubles as step 4's parity evidence — don't re-run it there.
-   - **`cargo publish --dry-run --workspace`** — packages all three crates,
+   - **`cargo publish --dry-run --workspace --allow-dirty`** — packages all three crates,
      normalizes their manifests, and *builds each packaged copy*. Must exit 0.
      - **Why this is a gate and not a nicety.** `release.yml` publishes
        **crates.io first**, and every other job hangs off `needs:
@@ -117,6 +117,15 @@ named blocker.
        the natural conclusion is that dependents cannot be dry-run at all —
        which is wrong, and which cost this project a release's worth of
        unnecessary exposure.
+     - **`--allow-dirty` is required here, not optional.** This step runs
+       *after* step 2's bump, so the tree always has uncommitted manifest
+       changes; without the flag cargo refuses with *"files in the working
+       directory contain changes that were not yet committed into git"* and
+       exits 101 having verified **nothing about packaging**. Discovered the
+       hard way on the 0.1.5 run: the instruction was written and tested on a
+       clean tree, so it had never met the sequence it actually lives in. The
+       flag is also correct on the merits — the uncommitted bump is precisely
+       what you want packaged and verified.
      - `codingest-py` is correctly absent: it is `publish = false` (it ships to
        PyPI as a wheel, not to crates.io). The dry-run set must match the three
        `cargo publish -p …` steps in `release.yml` exactly.
