@@ -2570,7 +2570,8 @@ export function outer(users: string[]) {
     /// call-valued arguments only. Pinned so the +3 062-node ceiling — which
     /// counts this shape among the 10 654 opencode "no literal in the chain"
     /// exclusions — is not silently widened.
-    /// Follow-up: `dev-docs/plans/iife-module-factory-scope.md`.
+    /// Follow-up: `dev-docs/plans/consider-for-future.md`, "IIFE module
+    /// factories are neither a Function nor a named scope".
     #[test]
     fn a_plain_iife_binding_is_neither_a_function_nor_a_scope() {
         let src = "\

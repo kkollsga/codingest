@@ -139,6 +139,17 @@ ship time — it's the only place the version bumps.
   apply the same same-file-only rule `CALLS` already did, and a nested name no
   longer shadows or disambiguates an identically named top-level export for
   callers elsewhere.
+- **Django routes could lose their `HANDLES` edge — or gain a wrong one — to a
+  closure-scoped definition.** The `urlpatterns` view resolver is the fourth
+  bare-name index over the function population, and it was the one left
+  ungated. A nested `def` sharing a short name with a real view anywhere in the
+  repository made that view look ambiguous, and the resolver skips rather than
+  guesses, so `path('p/', views.detail)` silently emitted **no** edge whenever
+  any `detail` existed inside another function. In the other direction a
+  globally unique nested name — `wrapper` being the archetype — became the
+  handler of a route declared in a `urls.py` that cannot name it. Both are
+  gone: closure-scoped definitions are offered only to a `urlpatterns` in their
+  own file, the same rule `CALLS`, `REFERENCES_FN` and `DECORATES` follow.
 - **An upper-cased `README.MD` kept its extension in its `:Doc` id.** The docs
   walk has always accepted markup extensions case-insensitively, but the id was
   derived by stripping a literal lowercase `.md`, so such a file became the
