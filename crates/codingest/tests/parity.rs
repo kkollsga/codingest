@@ -74,6 +74,19 @@ const CORPORA: &[&str] = &[
     // participation via a cross-file caller that must resolve nothing. Its
     // golden is captured additively (see `tests/goldens/README.md`).
     "ts_closure_scope",
+    // Added 2026-08-01. The four committed Python corpora contain nothing but
+    // top-level `def`s and plain classes — not one nested definition between
+    // them — so the Python scope walk (D1/D2/D3/D4) could be changed, or
+    // deleted, with zero golden movement. It pins the shapes that must become
+    // nodes (a decorator factory two levels deep, a closure factory, a nested
+    // helper, a method-local, a function-local class's methods), the block
+    // transparency and lambda rules that are Python's answer to D1 clause 5,
+    // the `#{line}` tie-break on both the `if`/`else` and `try`/`except`
+    // conditional-definition idioms, and D3 from both sides — a cross-file
+    // caller that must resolve nothing against same-file CALLS, REFERENCES_FN
+    // and DECORATES edges that must resolve. Its golden is captured additively
+    // (see `tests/goldens/README.md`).
+    "py_nested_defs",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

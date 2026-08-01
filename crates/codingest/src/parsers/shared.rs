@@ -1,12 +1,99 @@
 //! Shared parser helpers (ported from parsers/base.py).
 
-use crate::models::Annotation;
+use crate::models::{Annotation, FunctionInfo};
 use aho_corasick::AhoCorasick;
 use regex::Regex;
+use serde_json::json;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 use tree_sitter::Node;
+
+// ── Closure-scoped definitions: naming (D2) ───────────────────────────
+//
+// Language-agnostic half of the nested-scope walk. The walk itself is
+// per-grammar and lives in each parser, but what a nested definition is
+// *called* — and how a duplicate is broken — has to be one implementation, or
+// `parent_scope` would mean something subtly different per language and a
+// cross-language query could not rely on it. Used by `typescript.rs`
+// (Phase 3) and `python.rs` (Phase 4).
+
+/// D2 qualified name: module path, then the chain of named enclosing scopes,
+/// then the own name. An empty chain reproduces the pre-nesting top-level
+/// shape `module.name` byte for byte.
+pub fn scope_qualify(module_path: &str, chain: &[String], name: &str) -> String {
+    let mut out = String::from(module_path);
+    for segment in chain {
+        out.push('.');
+        out.push_str(segment);
+    }
+    out.push('.');
+    out.push_str(name);
+    out
+}
+
+/// Push `name` onto a named chain. A `None` chain stays `None`: D1's clause 5
+/// refuses a node to anything below a scope the grammar cannot name.
+pub fn extend_scope_chain(chain: Option<&[String]>, name: &str) -> Option<Vec<String>> {
+    chain.map(|c| {
+        let mut next = Vec::with_capacity(c.len() + 1);
+        next.extend_from_slice(c);
+        next.push(name.to_string());
+        next
+    })
+}
+
+/// Attach D2's two `Function` properties. Both are *absent* at top level
+/// rather than written as empty/zero, so a build with no nested definitions
+/// keeps its exact column set in `builder/load/entity_frames.rs`.
+pub fn tag_scope(info: &mut FunctionInfo, module_path: &str, chain: &[String], depth: u32) {
+    if let Some((own, head)) = chain.split_last() {
+        info.metadata.insert(
+            "parent_scope".into(),
+            json!(scope_qualify(module_path, head, own)),
+        );
+    }
+    if depth > 0 {
+        info.metadata
+            .insert("nesting_depth".into(), json!(u64::from(depth)));
+    }
+}
+
+/// D2's duplicate-qualified-name tie-break.
+///
+/// A fully-named scope chain still collides when sibling blocks of one scope
+/// declare the same name (4 sites in 10 374 opencode captures, e.g. two
+/// `const scrub` in two branches of one function; in Python the `if`/`else`
+/// and `try`/`except` conditional-definition idiom makes it routine). The
+/// second and subsequent occurrences in a file, in source order, take a
+/// `#{line}` suffix; the first keeps the bare name.
+///
+/// Deliberately *not* unconditional. Suffixing every qualified name would put
+/// a line number into every CALLS target and every golden digest, so an edit
+/// anywhere above a function would move its identity — the exact fragility
+/// D2's amendment removed by dropping the `<anonL{line}>` marker. Only nested
+/// definitions are ever rewritten: top-level and method qualified names are
+/// the addressable public surface and a collision there predates the walk.
+///
+/// `functions` must be in source order, which is what every parser's walk
+/// produces (a definition is emitted before the definitions inside it).
+pub fn break_qualified_name_ties(functions: &mut [FunctionInfo]) {
+    let mut seen: HashSet<String> = HashSet::with_capacity(functions.len());
+    for function in functions.iter_mut() {
+        if !seen.insert(function.qualified_name.clone()) {
+            let nested = function
+                .metadata
+                .get("nesting_depth")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|d| d > 0);
+            if nested {
+                function.qualified_name =
+                    format!("{}#{}", function.qualified_name, function.line_number);
+                seen.insert(function.qualified_name.clone());
+            }
+        }
+    }
+}
 
 /// Build a module path from a file's location, joining the source-root
 /// directory name, relative directory components, and file stem with

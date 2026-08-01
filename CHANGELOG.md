@@ -41,6 +41,30 @@ ship time — it's the only place the version bumps.
   multi-candidate call names from 664 to 1 562 and turned 293 previously
   unambiguous names ambiguous. Top-level bindings, including `namespace`
   members, participate globally exactly as before.
+- **Nested Python `def`s are now graph nodes.** The Python walk only ever
+  looked at the direct children of a module, so a `def` inside a function body
+  was invisible — decorator factories, closure factories, the
+  `def wrapper(...)` at the heart of every `functools.wraps` decorator, and
+  every view function of a Flask **application factory**. On `pallets/flask`
+  the routes the app actually serves were among the missing; on `django/django`
+  it is 391 definitions. A nested `def` becomes a `Function` node carrying the
+  same **`parent_scope`** and **`nesting_depth`** properties as the TS/JS
+  closure walk, with a scope-chained qualified name
+  (`pkg.mod.retrying.decorate.wrapper`), and it resolves `CALLS` — and now also
+  `REFERENCES_FN` and `DECORATES` — **within its own file only**, so a
+  `wrapper` in one module can never be mistaken for a `wrapper` in another.
+  Python's scoping rules are followed exactly rather than the TS model being
+  copied: `if` / `for` / `while` / `with` / `try` / `match` blocks are **not**
+  scopes in Python, so they add no name segment and no nesting level — a `def`
+  inside an `if` inside `outer` is `outer.<name>` at depth 1 — while a `lambda`
+  and the comprehension forms name no scope at all and keep their calls with
+  the enclosing `def`. Because blocks are transparent, the
+  `if`/`else` and `try`/`except` conditional-definition idiom routinely
+  produces two identical qualified names in one scope; the second and
+  subsequent get a `#{line}` suffix, the first is left alone. A class defined
+  inside a function contributes a name segment
+  (`outer.Inner.method`) without becoming a node of its own. Node growth is
+  +5.5 % on flask and +1.8 % on django.
 - **Top-level factory-wrapped TS/JS bindings are `Function` nodes.**
   `export const readFile = Effect.fn("Bom.readFile")(function* (…) { … })`
   bound a function but had a `call_expression` value, so it became a
@@ -76,6 +100,11 @@ ship time — it's the only place the version bumps.
   graph at all. Those calls now attach to the binding that contains them, and
   every call site is attributed to exactly one `Function` — the nearest
   enclosing node-ified scope — so nothing is counted twice either.
+- **The same dropped-calls defect in Python.** Call extraction skipped nested
+  `def`s and `@decorated` definitions with the same false justification, and
+  nothing node-ified them either, so the body of every decorator's `wrapper`
+  and every closure factory's inner function contributed nothing to the graph.
+  Those calls now attach to the definition that contains them.
 - **`REFERENCES_FN` and `DECORATES` could point across files into a
   closure-scoped definition.** Both resolve a bare identifier to a function
   that is *globally unique* by short name, and a nested definition entered

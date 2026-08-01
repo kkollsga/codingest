@@ -59,6 +59,24 @@ only `ts_closure_scope.sha256` as new, so the nine pre-existing digests came
 back byte-identical. The gate was then mutation-tested five ways — see the
 Phase 3 commit message.
 
+The additive `py_nested_defs` digest was captured on 2026-08-01 with the
+corpus itself, for the same reason once more, on the other side of the
+language split: the four committed Python corpora contain nothing but
+top-level `def`s and plain classes — not one nested definition between them —
+so the Python scope walk could be changed or deleted with every digest staying
+green. It pins the shapes that must become nodes (a decorator factory two
+levels deep, a closure factory, a nested helper, a method-local, a
+function-local class's methods) alongside Python's answer to D1 clause 5: `if`
+/ `try` / `with` blocks are transparent, and a `lambda` names no scope and
+keeps its calls with the enclosing `def`. It also pins the `#{line}` tie-break
+on both conditional-definition idioms, and D3 from both sides — a cross-file
+caller whose five nested-name calls must resolve to nothing, against same-file
+CALLS, REFERENCES_FN and DECORATES edges into nested definitions that must.
+Verified additive the strict way: `capture_goldens` rewrote all eleven files,
+and afterwards `git status` reported only `py_nested_defs.sha256` as new, so
+the ten pre-existing digests came back byte-identical. The gate was then
+mutation-tested five ways — see the Phase 4 commit message.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

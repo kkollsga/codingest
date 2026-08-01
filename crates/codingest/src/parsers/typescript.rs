@@ -5,8 +5,9 @@ use std::path::Path;
 use tree_sitter::{Node, Parser, Tree};
 
 use super::shared::{
-    compute_complexity, count_lines, extract_comment_annotations, extract_procedure_annotations,
-    get_type_parameters, is_generated_or_minified, node_text, BRANCH_KINDS_TS,
+    break_qualified_name_ties, compute_complexity, count_lines, extend_scope_chain,
+    extract_comment_annotations, extract_procedure_annotations, get_type_parameters,
+    is_generated_or_minified, node_text, scope_qualify, tag_scope, BRANCH_KINDS_TS,
     DEFAULT_COMMENT_TYPES,
 };
 use super::LanguageParser;
@@ -476,47 +477,6 @@ impl JstsParser {
     // and it is why no qualified name ever needs a positional `<anonL{line}>`
     // segment — see D2 in the plan.
 
-    /// D2 qualified name: module path, then the chain of named enclosing
-    /// scopes, then the own name. An empty chain reproduces the pre-Phase-3
-    /// top-level shape `module.name` byte for byte.
-    fn scope_qualify(module_path: &str, chain: &[String], name: &str) -> String {
-        let mut out = String::from(module_path);
-        for segment in chain {
-            out.push('.');
-            out.push_str(segment);
-        }
-        out.push('.');
-        out.push_str(name);
-        out
-    }
-
-    /// Push `name` onto a named chain. A `None` chain stays `None`: D1's
-    /// clause 5 refuses a node to anything below an anonymous scope.
-    fn extend_chain(chain: Option<&[String]>, name: &str) -> Option<Vec<String>> {
-        chain.map(|c| {
-            let mut next = Vec::with_capacity(c.len() + 1);
-            next.extend_from_slice(c);
-            next.push(name.to_string());
-            next
-        })
-    }
-
-    /// Attach D2's two Function properties. Both are *absent* at top level
-    /// rather than written as empty/zero, so a build with no nested
-    /// definitions keeps its exact column set in `entity_frames`.
-    fn tag_scope(info: &mut FunctionInfo, module_path: &str, chain: &[String], depth: u32) {
-        if let Some((own, head)) = chain.split_last() {
-            info.metadata.insert(
-                "parent_scope".into(),
-                json!(Self::scope_qualify(module_path, head, own)),
-            );
-        }
-        if depth > 0 {
-            info.metadata
-                .insert("nesting_depth".into(), json!(u64::from(depth)));
-        }
-    }
-
     /// Build the `FunctionInfo` for a nested definition: `parse_function`
     /// plus the D2 identity (chain-qualified name) and properties.
     #[allow(clippy::too_many_arguments)]
@@ -534,8 +494,8 @@ impl JstsParser {
         let mut info =
             self.parse_function(node, source, module_path, rel_path, false, None, node_ified);
         info.name = name.to_string();
-        info.qualified_name = Self::scope_qualify(module_path, chain, name);
-        Self::tag_scope(&mut info, module_path, chain, depth);
+        info.qualified_name = scope_qualify(module_path, chain, name);
+        tag_scope(&mut info, module_path, chain, depth);
         info
     }
 
@@ -558,7 +518,7 @@ impl JstsParser {
         out: &mut Vec<FunctionInfo>,
     ) -> Vec<usize> {
         let mut node_ified = Vec::new();
-        // A `None` chain is *absorbing*: `extend_chain` maps `None` to `None`
+        // A `None` chain is *absorbing*: `extend_scope_chain` maps `None` to `None`
         // and no arm below ever rebuilds a `Some`, so nothing inside an
         // anonymous scope can be node-ified and nothing can be skipped
         // either. Not descending is therefore observably identical to
@@ -612,7 +572,7 @@ impl JstsParser {
             // D1-1: grammar-named declarations.
             "function_declaration" | "generator_function_declaration" => {
                 let name = Self::get_name(node, source).to_string();
-                let inner_chain = Self::extend_chain(chain, &name);
+                let inner_chain = extend_scope_chain(chain, &name);
                 let mut kids = Vec::new();
                 let inner = self.descend_scope(
                     node,
@@ -688,7 +648,7 @@ impl JstsParser {
                     return;
                 }
                 let name = node_text(name_node, source).to_string();
-                let inner_chain = Self::extend_chain(chain, &name);
+                let inner_chain = extend_scope_chain(chain, &name);
                 if let Some(body) = node.child_by_field_name("body") {
                     let inner = self.descend_scope(
                         body,
@@ -708,7 +668,7 @@ impl JstsParser {
             // `Module.Class.method.binding`.
             "class_declaration" | "class" | "abstract_class_declaration" => {
                 let name = Self::get_name(node, source).to_string();
-                let inner_chain = Self::extend_chain(chain, &name);
+                let inner_chain = extend_scope_chain(chain, &name);
                 let Some(body) = Self::get_block(node) else {
                     return;
                 };
@@ -716,7 +676,7 @@ impl JstsParser {
                 for member in body.named_children(&mut cursor) {
                     if member.kind() == "method_definition" {
                         let method = Self::get_name(member, source).to_string();
-                        let method_chain = Self::extend_chain(inner_chain.as_deref(), &method);
+                        let method_chain = extend_scope_chain(inner_chain.as_deref(), &method);
                         let inner = self.descend_scope(
                             member,
                             source,
@@ -856,7 +816,7 @@ impl JstsParser {
 
         // D1-2 — a bare function literal.
         if FN_LITERALS.contains(&unwrapped.kind()) {
-            let inner_chain = Self::extend_chain(chain, &name);
+            let inner_chain = extend_scope_chain(chain, &name);
             let mut kids = Vec::new();
             let inner = self.descend_scope(
                 unwrapped,
@@ -895,7 +855,7 @@ impl JstsParser {
             Self::chain_fn_literals(unwrapped, &mut literals);
             if literals.len() == 1 {
                 let literal = literals[0];
-                let inner_chain = Self::extend_chain(chain, &name);
+                let inner_chain = extend_scope_chain(chain, &name);
                 let mut kids = Vec::new();
                 let inner = self.descend_scope(
                     literal,
@@ -1005,40 +965,6 @@ impl JstsParser {
                     out,
                     node_ified,
                 );
-            }
-        }
-    }
-
-    /// D2's duplicate-qualified-name tie-break.
-    ///
-    /// A fully-named scope chain still collides when sibling blocks of one
-    /// scope declare the same name (4 sites in 10 374 opencode captures, e.g.
-    /// two `const scrub` in two branches of one function). The second and
-    /// subsequent occurrences in a file, in source order, take a `#{line}`
-    /// suffix; the first keeps the bare name.
-    ///
-    /// Deliberately *not* unconditional. Suffixing every qualified name would
-    /// put a line number into every CALLS target and every golden digest, so
-    /// an edit anywhere above a function would move its identity — the exact
-    /// fragility D2's amendment removed by dropping the `<anonL{line}>`
-    /// marker. Only nested definitions are ever rewritten: top-level and
-    /// method qualified names are the addressable public surface and a
-    /// collision there predates this walk.
-    fn break_qualified_name_ties(functions: &mut [FunctionInfo]) {
-        let mut seen: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(functions.len());
-        for function in functions.iter_mut() {
-            if !seen.insert(function.qualified_name.clone()) {
-                let nested = function
-                    .metadata
-                    .get("nesting_depth")
-                    .and_then(|v| v.as_u64())
-                    .is_some_and(|d| d > 0);
-                if nested {
-                    function.qualified_name =
-                        format!("{}#{}", function.qualified_name, function.line_number);
-                    seen.insert(function.qualified_name.clone());
-                }
             }
         }
     }
@@ -2000,7 +1926,7 @@ impl LanguageParser for JstsParser {
         // D2 tie-break, after every definition in the file is known and in
         // source order (the walk emits parent-before-child, so the vector is
         // already ordered by start position).
-        Self::break_qualified_name_ties(&mut result.functions);
+        break_qualified_name_ties(&mut result.functions);
         file_info.annotations = extract_comment_annotations(root, &source, DEFAULT_COMMENT_TYPES);
         result.files.push(file_info);
         result
