@@ -82,6 +82,7 @@ fn pick_sep(language: &str) -> &'static str {
 pub fn load_into_graph(
     result: &ParseResult,
     project_info: Option<&ProjectInfo>,
+    js_workspace: &super::js_workspace::JsWorkspace,
 ) -> Result<
     (
         std::sync::Arc<DirGraph>,
@@ -99,7 +100,7 @@ pub fn load_into_graph(
             );
         }
     };
-    let mut pipeline = LoadPipeline::new(result, project_info);
+    let mut pipeline = LoadPipeline::new(result, project_info, js_workspace);
 
     macro_rules! run_stage {
         ($method:ident, $label:literal) => {{
@@ -139,13 +140,21 @@ struct LoadPipeline<'a> {
     attrs_by_owner: HashMap<String, Vec<&'a AttributeInfo>>,
     type_edges: Option<super::type_edges::TypeEdgeOutput>,
     call_stats: super::call_edges::CallResolutionStats,
+    /// tsconfig `paths` + workspace package table, discovered once per build.
+    /// Empty when the project has no TS/JS sources.
+    js_workspace: &'a super::js_workspace::JsWorkspace,
 }
 
 impl<'a> LoadPipeline<'a> {
-    fn new(result: &'a ParseResult, project_info: Option<&'a ProjectInfo>) -> Self {
+    fn new(
+        result: &'a ParseResult,
+        project_info: Option<&'a ProjectInfo>,
+        js_workspace: &'a super::js_workspace::JsWorkspace,
+    ) -> Self {
         Self {
             result,
             project_info,
+            js_workspace,
             graph: DirGraph::new(),
             modules: Vec::new(),
             known_modules: std::collections::HashSet::new(),
@@ -711,7 +720,8 @@ impl<'a> LoadPipeline<'a> {
         }
 
         // File IMPORTS Module (only edges to known modules).
-        let imports = super::other_edges::build_import_edges(&result.files, known_modules);
+        let imports =
+            super::other_edges::build_import_edges(&result.files, known_modules, self.js_workspace);
         if !imports.is_empty() {
             maintain::add_connections(
                 graph,
@@ -737,8 +747,11 @@ impl<'a> LoadPipeline<'a> {
             .filter(|f| !f.module_path.is_empty())
             .map(|f| (f.module_path.clone(), f.path.clone()))
             .collect();
-        let file_imports =
-            super::other_edges::build_file_import_edges(&result.files, &module_to_file);
+        let file_imports = super::other_edges::build_file_import_edges(
+            &result.files,
+            &module_to_file,
+            self.js_workspace,
+        );
         if !file_imports.is_empty() {
             maintain::add_connections(
                 graph,

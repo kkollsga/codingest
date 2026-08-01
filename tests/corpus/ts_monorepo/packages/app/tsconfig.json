@@ -1,0 +1,10 @@
+{
+  /* Nearest-ancestor config for everything under packages/app.
+     Written as JSONC (comments + a trailing comma) on purpose. */
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+    },
+  },
+}

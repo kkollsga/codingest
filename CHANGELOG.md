@@ -26,6 +26,25 @@ ship time — it's the only place the version bumps.
   candidate becomes an edge only when it names a module the project actually
   defines, so no edge can point at a file that does not exist. `require()` and
   dynamic `import()` remain out of scope.
+- **TypeScript `paths` aliases and workspace-package specifiers resolve too.**
+  `import "@/mcp/catalog"` and `import "@opencode-ai/core/foo"` are the other
+  two shapes a monorepo uses, and neither is resolvable from the importing
+  file's path alone. The builder now reads every `tsconfig.json`'s
+  `compilerOptions.baseUrl`/`paths` and every `package.json`'s `name` once per
+  build. Alias lookup is **nearest-ancestor**, not root-only, because real
+  repos put `paths` in per-package configs (a root config that merely
+  `extends` a base has no `paths` at all, so a root-only reader resolves
+  nothing). Pattern selection is exact-match first, then longest literal
+  prefix, ties broken lexicographically; every listed target is tried in
+  config order. Workspace specifiers take the longest package-name prefix
+  (respecting the `/` boundary, so `@scope/corely` never matches
+  `@scope/core`) and probe `<pkgdir>/<rest>` then `<pkgdir>/src/<rest>`.
+  `tsconfig.json` is read as JSONC — comments and trailing commas are
+  stripped with a string-literal-aware scanner, so a `//` inside a string
+  stays data. Deliberate limitations: `extends` chains are not followed, and
+  `exports`/`imports` maps are not interpreted (the `src/` probe covers the
+  `"./*": "./src/*.ts"` convention). On a 3,293-file monorepo this takes
+  File→File `IMPORTS` from 73 to 8,039, for +0.014 s of discovery.
 
 ### Added
 - **`codingest_stats --edge-breakdown` and `--dump-calls`** — two read-only

@@ -1,5 +1,6 @@
 //! USES_TYPE, CONTAINS, IMPORTS, FFI_EXPOSES edges.
 
+use super::js_workspace::JsWorkspace;
 use crate::models::{ClassInfo, ConstantInfo, EnumInfo, FileInfo, FunctionInfo, InterfaceInfo};
 use crate::parsers::registry;
 use aho_corasick::{AhoCorasick, MatchKind};
@@ -208,36 +209,51 @@ const MODULE_PATH_EXTENSIONS: &[&str] = &[
 /// string derivations, checked against the project's real module set by the
 /// caller. That is what makes it impossible to manufacture an edge to a target
 /// that does not exist.
-fn module_path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
+fn module_path_import_candidates(
+    file: &FileInfo,
+    raw: &str,
+    workspace: &JsWorkspace,
+) -> Vec<String> {
     if !registry::uses_module_path_imports(&file.language) {
         return Vec::new();
     }
     let trimmed = raw.trim();
-    if !(trimmed.starts_with("./") || trimmed.starts_with("../") || trimmed == "." || trimmed == "..")
-    {
-        return Vec::new();
-    }
-
     let parent = file.path.rsplit_once('/').map_or("", |(parent, _)| parent);
-    let Some(normalized) = normalize_import_path(parent, trimmed) else {
-        return Vec::new();
+
+    // Raw (still extension-carrying) paths, in priority order.
+    let raw_paths: Vec<String> = if trimmed.starts_with("./")
+        || trimmed.starts_with("../")
+        || trimmed == "."
+        || trimmed == ".."
+    {
+        normalize_import_path(parent, trimmed).into_iter().collect()
+    } else {
+        // Alias before workspace package: a tsconfig `paths` entry is an
+        // explicit, file-scoped instruction, while package-name matching is a
+        // convention-based probe.
+        let mut paths = workspace.alias_targets(parent, trimmed);
+        paths.extend(workspace.package_targets(trimmed));
+        paths
     };
 
-    let stripped = MODULE_PATH_EXTENSIONS
-        .iter()
-        .find_map(|ext| normalized.strip_suffix(ext))
-        .unwrap_or(normalized.as_str())
-        .to_string();
-
-    let mut candidates = Vec::new();
-    if !stripped.is_empty() {
-        candidates.push(stripped.clone());
-    }
-    // A bare root-level `index` collapses to nothing resolvable, so the
-    // emptiness guard is deliberate: no candidate, rather than an empty one.
-    if let Some(without_index) = stripped.strip_suffix("/index") {
-        if !without_index.is_empty() {
-            candidates.push(without_index.to_string());
+    let mut candidates: Vec<String> = Vec::new();
+    let mut push = |candidate: String| {
+        if !candidate.is_empty() && !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    };
+    for path in raw_paths {
+        let stripped = MODULE_PATH_EXTENSIONS
+            .iter()
+            .find_map(|ext| path.strip_suffix(ext))
+            .unwrap_or(path.as_str())
+            .to_string();
+        // A bare root-level `index` collapses to nothing resolvable, so the
+        // emptiness guard in `push` is load-bearing, not defensive.
+        let without_index = stripped.strip_suffix("/index").map(str::to_string);
+        push(stripped);
+        if let Some(without_index) = without_index {
+            push(without_index);
         }
     }
     candidates
@@ -257,7 +273,11 @@ fn resolve_path_import(
 }
 
 /// File IMPORTS Module edges — resolve each import string against known modules.
-pub fn build_import_edges(files: &[FileInfo], known_modules: &HashSet<String>) -> Vec<ImportEdge> {
+pub fn build_import_edges(
+    files: &[FileInfo],
+    known_modules: &HashSet<String>,
+    workspace: &JsWorkspace,
+) -> Vec<ImportEdge> {
     let mut out = Vec::new();
     let file_to_module: HashMap<&str, &str> = if files
         .iter()
@@ -280,7 +300,7 @@ pub fn build_import_edges(files: &[FileInfo], known_modules: &HashSet<String>) -
                 });
                 continue;
             }
-            if let Some(module) = module_path_import_candidates(f, use_path)
+            if let Some(module) = module_path_import_candidates(f, use_path, workspace)
                 .into_iter()
                 .find(|candidate| known_modules.contains(candidate))
             {
@@ -317,6 +337,7 @@ pub fn build_import_edges(files: &[FileInfo], known_modules: &HashSet<String>) -
 pub fn build_file_import_edges(
     files: &[FileInfo],
     module_to_file: &HashMap<String, String>,
+    workspace: &JsWorkspace,
 ) -> Vec<FileImportEdge> {
     // The rows are fed directly to `add_connections`, so their order becomes
     // part of the persisted graph topology. Keep aggregation key-sorted to
@@ -342,7 +363,7 @@ pub fn build_file_import_edges(
                 }
                 continue;
             }
-            if let Some(target_file) = module_path_import_candidates(f, use_path)
+            if let Some(target_file) = module_path_import_candidates(f, use_path, workspace)
                 .into_iter()
                 .find_map(|candidate| module_to_file.get(&candidate))
             {
@@ -1008,7 +1029,7 @@ mod determinism_tests {
             source_file("styles/theme.css", "site.theme", "css", &[]),
         ];
         let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
-        let module_edges = build_import_edges(&files, &known_modules);
+        let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
         let module_pairs: Vec<_> = module_edges
             .iter()
             .map(|edge| (edge.file_path.as_str(), edge.module.as_str()))
@@ -1026,7 +1047,7 @@ mod determinism_tests {
             .iter()
             .map(|file| (file.module_path.clone(), file.path.clone()))
             .collect();
-        let file_edges = build_file_import_edges(&files, &module_to_file);
+        let file_edges = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default());
         let file_pairs: Vec<_> = file_edges
             .iter()
             .map(|edge| (edge.source.as_str(), edge.target.as_str()))
@@ -1105,7 +1126,7 @@ mod determinism_tests {
             ),
         ];
         let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
-        let module_pairs: Vec<_> = build_import_edges(&files, &known_modules)
+        let module_pairs: Vec<_> = build_import_edges(&files, &known_modules, &JsWorkspace::default())
             .into_iter()
             .map(|edge| (edge.file_path, edge.module))
             .collect();
@@ -1139,7 +1160,7 @@ mod determinism_tests {
             .iter()
             .map(|file| (file.module_path.clone(), file.path.clone()))
             .collect();
-        let file_pairs: Vec<_> = build_file_import_edges(&files, &module_to_file)
+        let file_pairs: Vec<_> = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
             .into_iter()
             .map(|edge| (edge.source, edge.target))
             .collect();
@@ -1170,27 +1191,168 @@ mod determinism_tests {
         );
     }
 
+    /// Alias + workspace-package resolution, asserted as exact edge sets.
+    /// Mirrors the `ts_monorepo` corpus's config layer.
+    #[test]
+    fn ts_alias_and_workspace_specifiers_resolve() {
+        use super::super::js_workspace::TsPathsConfig;
+
+        let files = vec![
+            source_file(
+                "packages/core/src/util.ts",
+                "packages/core/src/util",
+                "typescript",
+                &[],
+            ),
+            // The core package's barrel: module path is the directory.
+            source_file(
+                "packages/core/src/index.ts",
+                "packages/core/src",
+                "typescript",
+                &[],
+            ),
+            source_file(
+                "packages/app/src/main.ts",
+                "packages/app/src/main",
+                "typescript",
+                &[],
+            ),
+            source_file(
+                "packages/app/src/consumer.ts",
+                "packages/app/src/consumer",
+                "typescript",
+                &[
+                    // tsconfig alias, governed by packages/app's own config
+                    "@/main",
+                    // bare workspace package -> the package's barrel
+                    "@scope/core",
+                    // workspace package subpath -> <pkgdir>/src/<rest>
+                    "@scope/core/util",
+                    // a package that does not exist
+                    "@scope/nope/thing",
+                    // an alias that resolves to no real module
+                    "@/ghost",
+                ],
+            ),
+        ];
+        let workspace = JsWorkspace::from_raw(
+            &[(
+                "packages/app",
+                TsPathsConfig {
+                    base: "packages/app".into(),
+                    paths: [("@/*".to_string(), vec!["./src/*".to_string()])]
+                        .into_iter()
+                        .collect(),
+                },
+            )],
+            &[("@scope/core", "packages/core")],
+        );
+
+        let known_modules: HashSet<_> = files
+            .iter()
+            .map(|file| file.module_path.clone())
+            // The prefix modules `build_modules` synthesizes for every path
+            // segment — `<pkgdir>` is one of them, and it is what a bare
+            // package specifier lands on at File→Module granularity.
+            .chain(["packages/core".to_string(), "packages/app".to_string()])
+            .collect();
+        let module_pairs: Vec<_> = build_import_edges(&files, &known_modules, &workspace)
+            .into_iter()
+            .map(|edge| (edge.file_path, edge.module))
+            .collect();
+        assert_eq!(
+            module_pairs,
+            vec![
+                (
+                    "packages/app/src/consumer.ts".to_string(),
+                    "packages/app/src/main".to_string()
+                ),
+                (
+                    "packages/app/src/consumer.ts".to_string(),
+                    "packages/core".to_string()
+                ),
+                (
+                    "packages/app/src/consumer.ts".to_string(),
+                    "packages/core/src/util".to_string()
+                ),
+            ]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_pairs: Vec<_> = build_file_import_edges(&files, &module_to_file, &workspace)
+            .into_iter()
+            .map(|edge| (edge.source, edge.target))
+            .collect();
+        assert_eq!(
+            file_pairs,
+            // File→File rows are (source, target)-sorted by construction, so
+            // this order is the persisted topology, not encounter order.
+            vec![
+                (
+                    "packages/app/src/consumer.ts".to_string(),
+                    "packages/app/src/main.ts".to_string()
+                ),
+                (
+                    "packages/app/src/consumer.ts".to_string(),
+                    // `@scope/core` -> <pkgdir> is not a file's module, so the
+                    // File→File probe falls through to the barrel.
+                    "packages/core/src/index.ts".to_string()
+                ),
+                (
+                    "packages/app/src/consumer.ts".to_string(),
+                    "packages/core/src/util.ts".to_string()
+                ),
+            ]
+        );
+    }
+
+    /// Without a workspace table the alias/package specifiers must resolve to
+    /// nothing — proving the new edges come from the table, not from the bare
+    /// prefix walk accidentally matching.
+    #[test]
+    fn alias_and_package_specifiers_need_the_workspace_table() {
+        let files = vec![
+            source_file(
+                "packages/core/src/util.ts",
+                "packages/core/src/util",
+                "typescript",
+                &[],
+            ),
+            source_file(
+                "packages/app/src/consumer.ts",
+                "packages/app/src/consumer",
+                "typescript",
+                &["@/main", "@scope/core/util"],
+            ),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        assert!(build_import_edges(&files, &known_modules, &JsWorkspace::default()).is_empty());
+    }
+
     /// The branch is language-gated: a relative specifier in a language that
     /// does not use module-path imports must not pick up the new behaviour.
     #[test]
     fn module_path_candidates_are_language_gated() {
         let ts = source_file("a/b.ts", "a/b", "typescript", &["./c"]);
-        assert_eq!(module_path_import_candidates(&ts, "./c"), vec!["a/c"]);
+        assert_eq!(module_path_import_candidates(&ts, "./c", &JsWorkspace::default()), vec!["a/c"]);
 
         let py = source_file("a/b.py", "a.b", "python", &["./c"]);
-        assert!(module_path_import_candidates(&py, "./c").is_empty());
+        assert!(module_path_import_candidates(&py, "./c", &JsWorkspace::default()).is_empty());
 
         let js = source_file("a/b.js", "a/b", "javascript", &["../d/index.js"]);
         assert_eq!(
-            module_path_import_candidates(&js, "../d/index.js"),
+            module_path_import_candidates(&js, "../d/index.js", &JsWorkspace::default()),
             vec!["d/index", "d"]
         );
 
         // Non-relative specifiers are left to the caller's prefix walk.
-        assert!(module_path_import_candidates(&ts, "zod").is_empty());
-        assert!(module_path_import_candidates(&ts, "@scope/core").is_empty());
+        assert!(module_path_import_candidates(&ts, "zod", &JsWorkspace::default()).is_empty());
+        assert!(module_path_import_candidates(&ts, "@scope/core", &JsWorkspace::default()).is_empty());
         // Escaping the project root yields nothing rather than a bogus path.
-        assert!(module_path_import_candidates(&ts, "../../../outside").is_empty());
+        assert!(module_path_import_candidates(&ts, "../../../outside", &JsWorkspace::default()).is_empty());
     }
 
     #[test]
@@ -1202,7 +1364,7 @@ mod determinism_tests {
             &["ArgumentParser"],
         )];
         let known_modules = HashSet::from(["ArgumentParser".to_string()]);
-        let edges = build_import_edges(&files, &known_modules);
+        let edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].module, "ArgumentParser");
     }
@@ -1220,7 +1382,7 @@ mod determinism_tests {
             ("crate::beta".into(), "src/beta.rs".into()),
         ]);
 
-        let edges = build_file_import_edges(&[source], &module_to_file);
+        let edges = build_file_import_edges(&[source], &module_to_file, &JsWorkspace::default());
         let pairs: Vec<_> = edges
             .iter()
             .map(|edge| (edge.source.as_str(), edge.target.as_str()))

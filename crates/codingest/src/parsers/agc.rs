@@ -829,7 +829,11 @@ mod tests {
         let parsed = parse(
             "START\tTC ROUTINE\n\tTCF EXIT\n\tBZF ZERO\nROUTINE\tTC Q\nEXIT\tTC Q\nZERO\tTC Q\n",
         );
-        let (graph, _) = crate::builder::load::load_into_graph(&parsed, None).unwrap();
+        let (graph, _) = crate::builder::load::load_into_graph(
+            &parsed,
+            None,
+            &crate::builder::js_workspace::JsWorkspace::default(),
+        ).unwrap();
         let mut relationships = graph
             .graph
             .edge_indices()
@@ -955,7 +959,11 @@ mod tests {
             SymbolTargetKind::Function
         );
 
-        let (graph, _) = crate::builder::load::load_into_graph(&parsed, None).unwrap();
+        let (graph, _) = crate::builder::load::load_into_graph(
+            &parsed,
+            None,
+            &crate::builder::js_workspace::JsWorkspace::default(),
+        ).unwrap();
         let space = graph
             .graph
             .node_indices()

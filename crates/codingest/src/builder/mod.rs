@@ -1,6 +1,7 @@
 //! Builder: orchestrates parse → model → load phases.
 
 pub mod call_edges;
+pub mod js_workspace;
 pub mod load;
 pub mod other_edges;
 pub mod routes;
@@ -569,8 +570,28 @@ fn finalize_and_load(
     }
 
     let t_load = std::time::Instant::now();
+    // tsconfig `paths` + workspace-package table. Discovered only when the
+    // parse actually produced TS/JS sources, so no other ecosystem pays for
+    // the extra small-file walk.
+    let t_ws = std::time::Instant::now();
+    let js_workspace = if combined
+        .files
+        .iter()
+        .any(|f| crate::parsers::registry::uses_module_path_imports(&f.language))
+    {
+        js_workspace::JsWorkspace::discover(project_root)
+    } else {
+        js_workspace::JsWorkspace::default()
+    };
+    if verbose || std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some() {
+        eprintln!(
+            "[timing] js workspace discovery: {:.3}s",
+            t_ws.elapsed().as_secs_f64()
+        );
+    }
     // `mut` is consumed by the cross-language pass below (and the okf docs pass).
-    let (mut graph, call_stats) = load::load_into_graph(&combined, project_info.as_ref())?;
+    let (mut graph, call_stats) =
+        load::load_into_graph(&combined, project_info.as_ref(), &js_workspace)?;
     if verbose {
         eprintln!("[timing] load: {:.3}s", t_load.elapsed().as_secs_f64());
     }
@@ -675,7 +696,8 @@ pub fn run(src_dir: &Path, verbose: bool) -> Result<Arc<DirGraph>, String> {
         );
     }
 
-    load::load_into_graph(&combined, None).map(|(graph, _stats)| graph)
+    load::load_into_graph(&combined, None, &js_workspace::JsWorkspace::default())
+        .map(|(graph, _stats)| graph)
 }
 
 /// Keep the last occurrence of each key, preserving encounter order otherwise.
@@ -1034,7 +1056,11 @@ mod tests {
             .map(|file| file.module_path.clone())
             .collect();
         let module_pairs: HashSet<_> =
-            other_edges::build_import_edges(&result.files, &known_modules)
+            other_edges::build_import_edges(
+                &result.files,
+                &known_modules,
+                &js_workspace::JsWorkspace::default(),
+            )
                 .into_iter()
                 .map(|edge| (edge.file_path, edge.module))
                 .collect();
@@ -1044,7 +1070,11 @@ mod tests {
             .map(|file| (file.module_path.clone(), file.path.clone()))
             .collect();
         let file_pairs: HashSet<_> =
-            other_edges::build_file_import_edges(&result.files, &module_to_file)
+            other_edges::build_file_import_edges(
+                &result.files,
+                &module_to_file,
+                &js_workspace::JsWorkspace::default(),
+            )
                 .into_iter()
                 .map(|edge| (edge.source, edge.target))
                 .collect();

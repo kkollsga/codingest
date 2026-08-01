@@ -1,0 +1,6 @@
+{
+  // Root config: no `paths` of its own, only a base to extend. This is the
+  // real-world shape — aliases live in the per-package configs below — and it
+  // pins the documented non-goal that `extends` chains are NOT resolved.
+  "extends": "@tsconfig/bun/tsconfig.json"
+}
