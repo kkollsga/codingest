@@ -106,7 +106,11 @@ Options:
   `query` the artifact is an *input*, and `--graph` matches the vocabulary
   `codingest-mcp --graph` already uses.
 - `--format human|csv|json` — see below (default `human`).
-- `--timeout <secs>` — abort the query after this long.
+- `--timeout <secs>` — abort the query after this long; a query that actually
+  hits the deadline exits `1`. The value must be **positive and finite**
+  (at most `1e9` seconds). Zero, a negative, `nan`/`inf` and anything past that
+  bound are rejected as usage errors (exit `2`) — "no timeout" is spelled by
+  omitting the flag, so a `--timeout=0` can only be a mistake.
 - `--require-fresh` — refuse to query a graph that is not provably fresh.
 - `-` in place of the query reads the query text from stdin:
 

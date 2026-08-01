@@ -132,6 +132,39 @@ fn usage_errors_exit_two() {
 }
 
 #[test]
+fn malformed_timeout_is_a_usage_error_not_a_panic() {
+    let (_dir, _source, graph) = fixture();
+    // `-1` and `nan` used to reach `Duration::from_secs_f64` and abort the
+    // process with 101 — off the documented 0/1/2/3 contract entirely. `1e30`
+    // overflows `Duration` the same way. `0` is rejected by policy: "no
+    // timeout" is the flag's absence, so a zero can only be a mistake.
+    for value in ["-1", "nan", "1e30", "inf", "0", "banana"] {
+        let out = query(&graph, &["--timeout", value]);
+        assert_eq!(
+            code(&out),
+            2,
+            "--timeout={value} did not exit 2 as a usage error: {out:?}"
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "--timeout={value} wrote rows to stdout"
+        );
+    }
+}
+
+#[test]
+fn an_expiring_timeout_still_exits_one() {
+    let (_dir, _source, graph) = fixture();
+    let out = query(&graph, &["--timeout", "0.000000001"]);
+    assert_eq!(code(&out), 1, "expiring timeout changed exit code: {out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("timed out"),
+        "no timeout diagnostic on stderr: {stderr}"
+    );
+}
+
+#[test]
 fn cypher_alias_is_visible_and_equivalent() {
     let (_dir, _source, graph) = fixture();
     let aliased = codingest(&[

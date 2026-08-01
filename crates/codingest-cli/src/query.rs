@@ -33,8 +33,9 @@ pub struct QueryArgs {
     /// `--graph` rather than `build`/`status`'s output-shaped `--output`.
     #[arg(short, long, default_value = DEFAULT_GRAPH)]
     pub graph: PathBuf,
-    /// Abort the query after this many seconds.
-    #[arg(long)]
+    /// Abort the query after this many seconds. Must be positive and finite;
+    /// omit the flag for no timeout.
+    #[arg(long, value_parser = parse_timeout)]
     pub timeout: Option<f64>,
     /// Result rendering. An in-query `FORMAT CSV` overrides this.
     #[arg(long, value_enum, default_value_t = QueryFormat::Human)]
@@ -43,6 +44,43 @@ pub struct QueryArgs {
     /// instead of warning on stderr and running anyway.
     #[arg(long)]
     pub require_fresh: bool,
+}
+
+/// Upper bound for `--timeout`, in seconds (~31.7 years). Past it a value is a
+/// typo or a unit mix-up, not a request — and the bound is what keeps the value
+/// inside `Duration`'s range: `Duration::from_secs_f64` *panics* on overflow
+/// exactly as it does on a negative or NaN input.
+const MAX_TIMEOUT_SECS: f64 = 1e9;
+
+/// The `--timeout` domain: strictly positive, finite, and representable.
+///
+/// Zero is rejected rather than given a meaning. "No timeout" is already spelled
+/// by omitting the flag, and "expire immediately" is not something a caller asks
+/// for on purpose — while `--timeout=$SECS` with an unset or zeroed variable is
+/// a routine shell accident. Failing it as a usage error beats failing every
+/// such run with a plausible-looking `Query timed out`.
+///
+/// Shared by the clap parser and [`run_query`] so a directly constructed
+/// [`QueryArgs`] (unit tests, library callers) cannot reach the panic either.
+fn check_timeout(seconds: f64) -> Result<f64, String> {
+    if !seconds.is_finite() || seconds <= 0.0 || seconds > MAX_TIMEOUT_SECS {
+        return Err(format!(
+            "timeout must be a positive, finite number of seconds \
+             (at most {MAX_TIMEOUT_SECS:.0}), got {seconds}"
+        ));
+    }
+    Ok(seconds)
+}
+
+/// clap `value_parser` for `--timeout`, so a malformed value is a *usage* error
+/// (exit code 2, clap's own convention) reported before the value can reach
+/// `Duration::from_secs_f64` — which panics, exiting 101 and breaking the
+/// documented 0/1/2/3 contract.
+fn parse_timeout(raw: &str) -> Result<f64, String> {
+    let seconds: f64 = raw
+        .parse()
+        .map_err(|_| format!("`{raw}` is not a number of seconds"))?;
+    check_timeout(seconds)
 }
 
 /// Result rendering. A separate enum from `StatusFormat` because the variants
@@ -141,6 +179,7 @@ pub(crate) fn run_query(args: &QueryArgs, query: &str) -> Result<QueryOutput> {
     // empty row sets for any caller without a lazy materializer.
     let mut opts = ExecuteOptions::eager(&params).with_csv_import(CsvImportPolicy::LocalFilesystem);
     if let Some(seconds) = args.timeout {
+        let seconds = check_timeout(seconds).map_err(|message| anyhow::anyhow!("{message}"))?;
         opts.deadline = Some(Instant::now() + Duration::from_secs_f64(seconds));
     }
     let outcome = execute_read(&graph, query, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -562,6 +601,35 @@ mod tests {
             crate::exit_code_for(&std::io::Error::from(std::io::ErrorKind::NotFound).into()),
             1
         );
+    }
+
+    #[test]
+    fn parse_timeout_rejects_the_values_that_panic_duration() {
+        // Each of these exited 101 through `Duration::from_secs_f64` before the
+        // value_parser existed: negative, NaN, and past `Duration`'s range.
+        for raw in ["-1", "nan", "-0.5", "inf", "1e30", "0", "-0"] {
+            assert!(parse_timeout(raw).is_err(), "--timeout={raw} was accepted");
+        }
+        assert!(parse_timeout("banana").is_err());
+        assert_eq!(parse_timeout("0.000001"), Ok(0.000001));
+        assert_eq!(parse_timeout("30"), Ok(30.0));
+        assert_eq!(parse_timeout("1e9"), Ok(MAX_TIMEOUT_SECS));
+    }
+
+    #[test]
+    fn run_query_rejects_an_out_of_domain_timeout_without_panicking() {
+        // `QueryArgs` built in code bypasses clap, so the guard has to live in
+        // `run_query` too — this is the call that used to panic.
+        let fx = fixture();
+        for seconds in [-1.0, f64::NAN, 0.0, 1e30, f64::INFINITY] {
+            let mut bad = args(&fx.graph, QueryFormat::Human);
+            bad.timeout = Some(seconds);
+            let error = run_query(&bad, ROWS).unwrap_err().to_string();
+            assert!(
+                error.contains("timeout must be a positive, finite number"),
+                "unexpected error for {seconds}: {error}"
+            );
+        }
     }
 
     #[test]
