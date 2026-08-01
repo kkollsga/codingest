@@ -10,6 +10,35 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- **Top-level factory-wrapped TS/JS bindings are `Function` nodes.**
+  `export const readFile = Effect.fn("Bom.readFile")(function* (…) { … })`
+  bound a function but had a `call_expression` value, so it became a
+  `Constant` with a 100-character `value_preview` and disappeared from the
+  graph as a callable — on one Effect-TS codebase, 147 top-level exports.
+  Such a binding now becomes a single `Function` node (the `Constant` it used
+  to produce is gone, not duplicated) carrying a new `wrapped_by` property
+  naming the factory (`Effect.fn`, `Layer.effect`, `memoize`). The property is
+  only present on graphs that have at least one wrapped binding.
+  The unwrap is deliberately narrow, because `const names = users.map(u =>
+  u.name)` binds an array and not a function: the value's call chain must
+  contain **exactly one** function literal, that literal must be a generator
+  *or* its call must be curried (`f(…)(fn)`), and that call's callee must not
+  be a method on a value receiver — a bare identifier (`memoize`) or a member
+  on a Capitalized identifier (`Effect.fn`) qualifies, `arr.map`,
+  `results.filter` and `tp.split(',').map` do not. Bindings inside a function
+  or closure body are still not node-ified; that is a separate change.
+
+### Fixed
+- **`function*` and `const x = function () {}` were invisible to the TS/JS
+  parser.** tree-sitter-typescript emits `function_expression`,
+  `generator_function` and `generator_function_declaration`, but the parser
+  matched a node kind named `function` that the grammar never produces. Three
+  consequences, all now fixed: `const x = function () {}` and
+  `const x = function* () {}` became `Constant` nodes instead of functions,
+  and a top-level `function* g() {}` — exported or not — produced **no node at
+  all**. Generators are load-bearing in Effect-TS and redux-saga codebases.
+
 ## [0.1.5] - 2026-08-01
 
 ### Added

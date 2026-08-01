@@ -29,6 +29,20 @@ all eight files, and afterwards `git status` reported only
 `ts_monorepo.sha256` as new, so the seven pre-existing digests came back
 byte-identical.
 
+The additive `ts_hof_binding` digest was captured on 2026-08-01 with the
+corpus itself, for the same reason again: no pre-existing corpus contained a
+`const` bound to a function literal, a `function*` in any spelling, or a
+factory-wrapped binding (`Effect.fn(…)(function*…)`), so depth-0 higher-order
+bindings and the TS grammar vocabulary had no golden coverage — the parser
+could emit a `Constant` where a `Function` belongs, or no node at all, with
+every digest staying green. Verified additive the strict way: `capture_goldens`
+rewrote all nine files, and afterwards `git status` reported only
+`ts_hof_binding.sha256` as new, so the eight pre-existing digests came back
+byte-identical. The gate was then mutation-tested — disabling the factory
+unwrap, restoring the dead `"function"` match arm, and dropping the
+`wrapped_by` column promotion each turned it red, and each restore turned it
+back green.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

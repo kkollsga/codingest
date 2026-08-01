@@ -463,7 +463,12 @@ pub(super) fn functions_df(
             ),
         ),
     ];
-    for key in ["symbol_kind", "role_hint"] {
+    // Sparse string metadata, promoted only when some function in the build
+    // actually carries the key — so a corpus without it keeps its exact
+    // column set (and therefore its golden digest). `wrapped_by` is the
+    // TS/JS factory-unwrap label (`Effect.fn`, `Layer.effect`, `memoize`);
+    // without promotion the parser would be writing metadata nothing reads.
+    for key in ["symbol_kind", "role_hint", "wrapped_by"] {
         if fns.iter().any(|function| {
             function
                 .metadata

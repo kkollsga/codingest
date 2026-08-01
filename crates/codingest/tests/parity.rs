@@ -57,6 +57,13 @@ const CORPORA: &[&str] = &[
     // to it could land with zero golden movement. Its golden is therefore
     // captured additively (see `tests/goldens/README.md`).
     "ts_monorepo",
+    // Added 2026-08-01. No other corpus contains a `const` bound to a
+    // function literal, a `function*` in any spelling, or a factory-wrapped
+    // binding (`Effect.fn(…)(function*…)`), so depth-0 higher-order-function
+    // bindings and the TS grammar vocabulary could be changed — or broken —
+    // with zero golden movement. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "ts_hof_binding",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

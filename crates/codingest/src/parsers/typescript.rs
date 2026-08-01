@@ -82,10 +82,26 @@ pub const JSTS_NOISE_NAMES: &[&str] = &[
 
 const NESTED_SCOPES: &[&str] = &[
     "function_declaration",
-    "function",
     "arrow_function",
     "method_definition",
     "generator_function_declaration",
+];
+
+/// The function-literal node kinds tree-sitter-typescript 0.23.2 (and
+/// tree-sitter-javascript) actually emit for a value position.
+///
+/// There is **no** node kind named `function` in either grammar:
+/// `const x = function () {}` is a `function_expression` and
+/// `const x = function* () {}` is a `generator_function`. Until 2026-08-01
+/// this file matched on a bare `"function"` in three places — dead
+/// vocabulary that silently demoted every such binding to a `Constant`, and
+/// (via a missing `generator_function_declaration` arm) made a top-level
+/// `function* g() {}` produce no node at all. Evidence + reproduction:
+/// `dev-docs/bench/out/nested-spike/grammar-vocabulary-defects.txt`.
+const FN_LITERALS: &[&str] = &[
+    "arrow_function",
+    "function_expression",
+    "generator_function",
 ];
 
 pub enum JstsFlavor {
@@ -295,6 +311,151 @@ impl JstsParser {
         false
     }
 
+    // ── the narrowed factory unwrap (D1 item 3, as amended 2026-08-01) ───
+    //
+    // `const readFile = Effect.fn("Bom.readFile")(function* … )` binds a
+    // function, but the declarator's value kind is `call_expression`, so it
+    // used to fall through to the Constant branch and the export vanished
+    // from the graph as a callable. Unwrapping *every* such binding is not
+    // an option: the Phase 1 spike measured "the call chain contains exactly
+    // one function literal" firing 4 345 times on opencode with a median
+    // captured size of 1 LOC — `const names = users.map(u => u.name)` binds
+    // an array, not a function. The rule below is the measured narrowing
+    // (spike rule F5): exactly one literal, that literal is a generator or
+    // its call is curried, and the call's callee is not a method on a value
+    // receiver. See `dev-docs/plans/closure-scoped-definitions.md` D1.
+
+    /// Strip the wrappers that do not change which value an expression
+    /// produces: `(expr)`, `expr as T`, `expr satisfies T`, `expr!`.
+    fn unwrap_expr(mut node: Node) -> Node {
+        loop {
+            match node.kind() {
+                "parenthesized_expression"
+                | "as_expression"
+                | "satisfies_expression"
+                | "non_null_expression" => match node.named_child(0) {
+                    Some(inner) => node = inner,
+                    None => return node,
+                },
+                _ => return node,
+            }
+        }
+    }
+
+    /// Every function literal reachable through a value's call chain,
+    /// without descending into any literal's own body.
+    ///
+    /// Curried callees (`Effect.fn("n")(function*…)`) and call-valued
+    /// arguments (`Layer.effect(S, Effect.gen(function*…))`) are both part
+    /// of the chain. Object/array-literal arguments are not: an object
+    /// argument's methods are configuration, not a factory wrap.
+    fn chain_fn_literals<'t>(value: Node<'t>, out: &mut Vec<Node<'t>>) {
+        let v = Self::unwrap_expr(value);
+        if FN_LITERALS.contains(&v.kind()) {
+            out.push(v);
+            return;
+        }
+        if v.kind() != "call_expression" {
+            return;
+        }
+        if let Some(callee) = v.child_by_field_name("function") {
+            let callee = Self::unwrap_expr(callee);
+            if callee.kind() == "call_expression" {
+                Self::chain_fn_literals(callee, out);
+            }
+        }
+        if let Some(args) = v.child_by_field_name("arguments") {
+            let mut cursor = args.walk();
+            for arg in args.named_children(&mut cursor) {
+                Self::chain_fn_literals(arg, out);
+            }
+        }
+    }
+
+    /// The `wrapped_by` label: callee text of the *outermost* call in the
+    /// chain, with curried callees descended so `Effect.fn("x")(fn)` reports
+    /// `Effect.fn` rather than `Effect.fn("x")`.
+    fn factory_wrapper_name(value: Node, source: &[u8]) -> Option<String> {
+        let mut v = Self::unwrap_expr(value);
+        loop {
+            if v.kind() != "call_expression" {
+                return None;
+            }
+            let callee = Self::unwrap_expr(v.child_by_field_name("function")?);
+            if callee.kind() == "call_expression" {
+                v = callee;
+                continue;
+            }
+            return Some(node_text(callee, source).to_string());
+        }
+    }
+
+    /// `Some((literal, wrapped_by))` when a `const|let|var x = <call-chain>`
+    /// binding qualifies as a factory-wrapped function under the amended
+    /// D1 item 3; `None` when it stays a `Constant`.
+    fn factory_wrapped_fn<'t>(value: Node<'t>, source: &[u8]) -> Option<(Node<'t>, String)> {
+        let root = Self::unwrap_expr(value);
+        if root.kind() != "call_expression" {
+            return None;
+        }
+
+        // Guard 1 — exactly one function literal in the chain. Zero means an
+        // ordinary constant; two or more means we cannot say which one the
+        // binding *is*.
+        let mut literals: Vec<Node> = Vec::new();
+        Self::chain_fn_literals(root, &mut literals);
+        if literals.len() != 1 {
+            return None;
+        }
+        let literal = literals[0];
+
+        // The literal's immediate enclosing call, bounded by the binding value.
+        let mut node = literal;
+        let call = loop {
+            let parent = node.parent()?;
+            if parent.kind() == "call_expression" {
+                break parent;
+            }
+            if parent.id() == root.id() {
+                return None;
+            }
+            node = parent;
+        };
+
+        let callee = call.child_by_field_name("function").map(Self::unwrap_expr);
+
+        // Guard 2 — the callee is not a method on a *value* receiver. A bare
+        // identifier (`memoize`), a curried call (`Effect.fn("x")(…)`) and a
+        // member on a Capitalized identifier (`Effect.fn`, `Layer.effect`)
+        // read as factories; `arr.map`, `results.filter`, `this[k].map` and
+        // `tp.split(',').map` read as operations on data.
+        let non_value_receiver = match callee.map(|c| (c, c.kind())) {
+            Some((_, "identifier")) | Some((_, "call_expression")) => true,
+            Some((c, "member_expression")) => c
+                .child_by_field_name("object")
+                .map(Self::unwrap_expr)
+                .is_some_and(|obj| {
+                    obj.kind() == "identifier"
+                        && node_text(obj, source)
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch.is_uppercase())
+                }),
+            _ => false,
+        };
+
+        // Guard 3 — the literal is function-*like* in the wrap: a generator
+        // (the Effect-TS / redux-saga shape) or a curried application. A
+        // plain `memoize(x => x + 1)` binds the call's result, not the arrow.
+        let curried = matches!(callee.map(|c| c.kind()), Some("call_expression"));
+        let fn_like = curried || literal.kind() == "generator_function";
+
+        if !(non_value_receiver && fn_like) {
+            return None;
+        }
+        Some((literal, Self::factory_wrapper_name(root, source)?))
+    }
+
     fn extract_calls(body: Node, source: &[u8]) -> Vec<(String, u32)> {
         let mut calls: Vec<(String, u32)> = Vec::new();
         fn walk(node: Node, source: &[u8], out: &mut Vec<(String, u32)>) {
@@ -356,7 +517,7 @@ impl JstsParser {
                 // avoid double-counting, and only descend when the anonymous fn
                 // sits directly in a call-argument or JSX-expression position,
                 // which is never node-ified.
-                let inline_anon = matches!(k, "arrow_function" | "function")
+                let inline_anon = FN_LITERALS.contains(&k)
                     && matches!(node.kind(), "arguments" | "jsx_expression");
                 if inline_anon || !NESTED_SCOPES.contains(&k) {
                     walk(child, source, out);
@@ -868,7 +1029,10 @@ impl JstsParser {
         file_info: &mut FileInfo,
     ) {
         match node.kind() {
-            "function_declaration" | "function" => {
+            // `generator_function_declaration` is the grammar's kind for a
+            // top-level `function* g() {}`. Without this arm it matched
+            // nothing and produced NO node at all — not even a Constant.
+            "function_declaration" | "generator_function_declaration" => {
                 let fn_info = self.parse_function(node, source, module_path, rel_path, false, None);
                 result.functions.push(fn_info);
             }
@@ -892,6 +1056,7 @@ impl JstsParser {
                 for child in node.children(&mut cursor) {
                     match child.kind() {
                         "function_declaration"
+                        | "generator_function_declaration"
                         | "class_declaration"
                         | "interface_declaration"
                         | "enum_declaration"
@@ -1012,7 +1177,11 @@ impl JstsParser {
                     let name_node = child.child_by_field_name("name");
                     let value = child.child_by_field_name("value");
                     if let (Some(name_node), Some(value)) = (name_node, value) {
-                        if matches!(value.kind(), "arrow_function" | "function") {
+                        // A bare function literal — `() => …`, `function () {}`,
+                        // `function* () {}`. The last two used to be matched as
+                        // the non-existent kind `"function"` and so became
+                        // Constants (defects D-A / D-B).
+                        if FN_LITERALS.contains(&value.kind()) {
                             let mut fn_info = self.parse_function(
                                 value,
                                 source,
@@ -1023,6 +1192,29 @@ impl JstsParser {
                             );
                             fn_info.name = node_text(name_node, source).to_string();
                             fn_info.qualified_name = format!("{}.{}", module_path, fn_info.name);
+                            result.functions.push(fn_info);
+                            continue;
+                        }
+                        // A factory-wrapped function literal. One node, not
+                        // two: the Constant this used to produce is dropped.
+                        // Span comes from the literal, matching the bare-literal
+                        // branch above, so every `const`-bound function anchors
+                        // on the function it actually is.
+                        if let Some((literal, wrapped_by)) = Self::factory_wrapped_fn(value, source)
+                        {
+                            let mut fn_info = self.parse_function(
+                                literal,
+                                source,
+                                module_path,
+                                rel_path,
+                                false,
+                                None,
+                            );
+                            fn_info.name = node_text(name_node, source).to_string();
+                            fn_info.qualified_name = format!("{}.{}", module_path, fn_info.name);
+                            fn_info
+                                .metadata
+                                .insert("wrapped_by".into(), json!(wrapped_by));
                             result.functions.push(fn_info);
                             continue;
                         }
@@ -1277,5 +1469,249 @@ export async function load() {
 "#,
         );
         assert!(imports.is_empty(), "captured {imports:?}");
+    }
+}
+
+/// Depth-0 higher-order-function bindings and the grammar-vocabulary fixes.
+///
+/// Two things are pinned here (Phase 2 of
+/// `dev-docs/plans/closure-scoped-definitions.md`):
+///
+///  * the **narrowed factory unwrap** (D1 item 3 as amended by the Phase 1
+///    spike) — a `const x = <call-chain>(…)` binding becomes a `Function`
+///    only under the three measured guards, and in particular
+///    `const names = users.map(u => u.name)` must stay a `Constant`;
+///  * the **dead grammar vocabulary** — tree-sitter-typescript 0.23.2 emits
+///    `function_expression` / `generator_function` /
+///    `generator_function_declaration`, never a bare `function`, so the three
+///    reproduced defects D-A / D-B / D-C
+///    (`dev-docs/bench/out/nested-spike/grammar-vocabulary-defects.txt`)
+///    must all produce `Function` nodes.
+#[cfg(test)]
+mod hof_binding_tests {
+    use super::*;
+    use crate::parsers::LanguageParser;
+
+    fn parse_ts(src: &str) -> ParseResult {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.ts");
+        std::fs::write(&path, src).expect("write fixture");
+        JstsParser::typescript().parse_file(&path, dir.path())
+    }
+
+    /// `(name, line_number)` for every Function the parser emitted.
+    fn functions(src: &str) -> Vec<(String, u32)> {
+        parse_ts(src)
+            .functions
+            .iter()
+            .map(|f| (f.name.clone(), f.line_number))
+            .collect()
+    }
+
+    fn constant_names(src: &str) -> Vec<String> {
+        parse_ts(src)
+            .constants
+            .iter()
+            .map(|c| c.name.clone())
+            .collect()
+    }
+
+    /// The `wrapped_by` metadata of the single Function named `name`.
+    fn wrapped_by(src: &str, name: &str) -> Option<String> {
+        let result = parse_ts(src);
+        let f = result
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no Function named {name}; got {:?}",
+                    result.functions.iter().map(|f| &f.name).collect::<Vec<_>>()
+                )
+            });
+        f.metadata
+            .get("wrapped_by")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    }
+
+    // ── (a) the narrowed factory unwrap ──────────────────────────────────
+
+    /// The motivating shape: `bom.ts:18`-class Effect-TS bindings. One node,
+    /// not two — the `Constant` this used to produce is gone.
+    #[test]
+    fn curried_generator_wrap_becomes_one_function_node() {
+        let src = r#"
+export const readFile = Effect.fn("Bom.readFile")(function* (path: string) {
+  return yield decode(path)
+})
+"#;
+        assert_eq!(functions(src), vec![("readFile".to_string(), 2)]);
+        assert!(
+            constant_names(src).is_empty(),
+            "the Constant must be dropped, got {:?}",
+            constant_names(src)
+        );
+        assert_eq!(wrapped_by(src, "readFile").as_deref(), Some("Effect.fn"));
+    }
+
+    /// A curried application qualifies even when the literal is an arrow —
+    /// `f(…)(fn)` is the shape, the generator is only the other half of the
+    /// disjunction.
+    #[test]
+    fn curried_arrow_wrap_becomes_a_function() {
+        let src = r#"
+export const cached = memoize("cache-key")((n: number) => n + 1)
+"#;
+        assert_eq!(functions(src), vec![("cached".to_string(), 2)]);
+        assert!(constant_names(src).is_empty());
+        assert_eq!(wrapped_by(src, "cached").as_deref(), Some("memoize"));
+    }
+
+    /// The chain walks call-valued arguments too, and `wrapped_by` reports
+    /// the OUTERMOST callee — the layer the binding actually is.
+    #[test]
+    fn generator_inside_a_call_valued_argument_is_unwrapped() {
+        let src = r#"
+export const layer = Layer.effect(Service, Effect.gen(function* () {
+  return yield make()
+}))
+"#;
+        assert_eq!(functions(src), vec![("layer".to_string(), 2)]);
+        assert_eq!(wrapped_by(src, "layer").as_deref(), Some("Layer.effect"));
+    }
+
+    /// **The narrowing's regression test.** "Exactly one function literal in
+    /// the chain" is true here, and the binding is still an array. Phase 1
+    /// measured this shape firing 4 345 times on opencode at a median of
+    /// 1 LOC — accepting it is what made D1-3-as-written fail its gate.
+    #[test]
+    fn array_map_binding_stays_a_constant() {
+        let src = r#"
+const users = load()
+export const names = users.map((u) => u.name)
+"#;
+        assert!(
+            functions(src).is_empty(),
+            "arr.map(f) is not a function binding, got {:?}",
+            functions(src)
+        );
+        assert_eq!(constant_names(src), vec!["users", "names"]);
+    }
+
+    /// A chained value receiver (`tp.split(',').map`) is rejected for the
+    /// same reason, via the `member.expr` shape rather than `member.lower`.
+    #[test]
+    fn chained_value_receiver_stays_a_constant() {
+        let src = r#"
+export const parts = raw.split(",").map((s) => s.trim())
+"#;
+        assert!(functions(src).is_empty(), "got {:?}", functions(src));
+        assert_eq!(constant_names(src), vec!["parts"]);
+    }
+
+    /// Zero function literals in the chain — an ordinary constant.
+    #[test]
+    fn zero_function_literal_call_stays_a_constant() {
+        let src = r#"
+export const config = build(1, "two", { three: 3 })
+"#;
+        assert!(functions(src).is_empty(), "got {:?}", functions(src));
+        assert_eq!(constant_names(src), vec!["config"]);
+    }
+
+    /// Two function literals — we cannot say which one the binding *is*, so
+    /// the ambiguity guard declines it.
+    #[test]
+    fn two_function_literal_call_stays_a_constant() {
+        let src = r#"
+export const pair = combine(function* () { yield 1 }, function* () { yield 2 })
+"#;
+        assert!(functions(src).is_empty(), "got {:?}", functions(src));
+        assert_eq!(constant_names(src), vec!["pair"]);
+    }
+
+    /// An uncurried call on an acceptable callee whose literal is a plain
+    /// arrow binds the call's *result*, not the arrow. This is the second
+    /// half of guard 3 and the reason `createMemo(() => …)` (1 511 hits on
+    /// opencode) does not flood the graph.
+    #[test]
+    fn uncurried_arrow_argument_stays_a_constant() {
+        let src = r#"
+export const total = createMemo(() => 1 + 2)
+"#;
+        assert!(functions(src).is_empty(), "got {:?}", functions(src));
+        assert_eq!(constant_names(src), vec!["total"]);
+    }
+
+    // ── (b) the dead grammar vocabulary ──────────────────────────────────
+
+    /// D-A: `const x = function () {}` — kind `function_expression`.
+    #[test]
+    fn const_function_expression_is_a_function() {
+        let src = r#"
+export const asFnExpr = function (n: number): number {
+  return n + 1
+}
+"#;
+        assert_eq!(functions(src), vec![("asFnExpr".to_string(), 2)]);
+        assert!(constant_names(src).is_empty());
+    }
+
+    /// D-B: `const x = function* () {}` — kind `generator_function`.
+    #[test]
+    fn const_generator_expression_is_a_function() {
+        let src = r#"
+export const asGenExpr = function* (n: number) {
+  yield n
+}
+"#;
+        assert_eq!(functions(src), vec![("asGenExpr".to_string(), 2)]);
+        assert!(constant_names(src).is_empty());
+    }
+
+    /// D-C: a top-level `function* g() {}` used to produce **no node at
+    /// all** — not a Constant, not a Function. Both the exported and the
+    /// bare spelling go through different code paths (`export_statement`
+    /// child dispatch vs the top-level match), so both are pinned.
+    #[test]
+    fn top_level_generator_declarations_are_functions() {
+        let src = r#"
+export function* exportedGen(n: number) {
+  yield n
+}
+
+function* localGen(n: number) {
+  yield n
+}
+"#;
+        assert_eq!(
+            functions(src),
+            vec![("exportedGen".to_string(), 2), ("localGen".to_string(), 6),]
+        );
+    }
+
+    /// The exported generator declaration also has to reach `FileInfo.exports`
+    /// — the export dispatch is where D-C's second half lived.
+    #[test]
+    fn exported_generator_declaration_is_recorded_as_an_export() {
+        let result = parse_ts("export function* gen() { yield 1 }\n");
+        assert_eq!(result.files[0].exports, vec!["gen"]);
+    }
+
+    /// Arrow bindings and plain declarations were already correct; this pins
+    /// that the vocabulary fix did not disturb them.
+    #[test]
+    fn arrow_bindings_and_plain_declarations_are_unchanged() {
+        let src = r#"
+export const asArrow = () => 1
+export function asDecl() { return 4 }
+export const PLAIN = 42
+"#;
+        assert_eq!(
+            functions(src),
+            vec![("asArrow".to_string(), 2), ("asDecl".to_string(), 3)]
+        );
+        assert_eq!(constant_names(src), vec!["PLAIN"]);
     }
 }
