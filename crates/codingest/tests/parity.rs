@@ -57,6 +57,48 @@ const CORPORA: &[&str] = &[
     // to it could land with zero golden movement. Its golden is therefore
     // captured additively (see `tests/goldens/README.md`).
     "ts_monorepo",
+    // Added 2026-08-01. No other corpus contains a `const` bound to a
+    // function literal, a `function*` in any spelling, or a factory-wrapped
+    // binding (`Effect.fn(…)(function*…)`), so depth-0 higher-order-function
+    // bindings and the TS grammar vocabulary could be changed — or broken —
+    // with zero golden movement. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "ts_hof_binding",
+    // Added 2026-08-01. Nothing else in the corpus set declares anything
+    // below the top level of a TS file — no nested named binding, no
+    // `namespace`, no closure-scoped helper — so the entire scope walk
+    // (D1/D2/D3/D4) could be changed, or deleted, with zero golden movement.
+    // It pins the shapes that must become nodes *and* the ones that must not
+    // (a binding under an anonymous callback, `arr.map(f)` at depth > 0, a
+    // plain IIFE), the `#{line}` tie-break, and D3's same-file-only CALLS
+    // participation via a cross-file caller that must resolve nothing. Its
+    // golden is captured additively (see `tests/goldens/README.md`).
+    "ts_closure_scope",
+    // Added 2026-08-01. The four committed Python corpora contain nothing but
+    // top-level `def`s and plain classes — not one nested definition between
+    // them — so the Python scope walk (D1/D2/D3/D4) could be changed, or
+    // deleted, with zero golden movement. It pins the shapes that must become
+    // nodes (a decorator factory two levels deep, a closure factory, a nested
+    // helper, a method-local, a function-local class's methods), the block
+    // transparency and lambda rules that are Python's answer to D1 clause 5,
+    // the `#{line}` tie-break on both the `if`/`else` and `try`/`except`
+    // conditional-definition idioms, and D3 from both sides — a cross-file
+    // caller that must resolve nothing against same-file CALLS, REFERENCES_FN
+    // and DECORATES edges that must resolve. Its golden is captured additively
+    // (see `tests/goldens/README.md`).
+    "py_nested_defs",
+    // Added 2026-08-01. Not one of the ten pre-existing corpora contains an
+    // `.mdx`, an upper-cased `.MD`, or a `.txt` that must stay out — so the
+    // docs pass's accepted-extension match could be widened (to `.txt`, the
+    // tempting "helpful" change) or narrowed (dropping `.mdx`) with zero
+    // golden movement. It pins the `.mdx` arm end to end — frontmatter
+    // properties, headings, backtick MENTIONS, a doc→doc DOCUMENTS edge whose
+    // target is an `.mdx` and whose source is a `.md`, and a doc→File edge —
+    // plus the extension-stripped `:Doc` id (`README.MD` → `README`) and the
+    // inertness of embedded JSX/ESM. `NOTES.txt` is markdown-shaped and must
+    // contribute nothing. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "docs_mdx",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

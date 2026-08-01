@@ -29,6 +29,72 @@ all eight files, and afterwards `git status` reported only
 `ts_monorepo.sha256` as new, so the seven pre-existing digests came back
 byte-identical.
 
+The additive `ts_hof_binding` digest was captured on 2026-08-01 with the
+corpus itself, for the same reason again: no pre-existing corpus contained a
+`const` bound to a function literal, a `function*` in any spelling, or a
+factory-wrapped binding (`Effect.fn(…)(function*…)`), so depth-0 higher-order
+bindings and the TS grammar vocabulary had no golden coverage — the parser
+could emit a `Constant` where a `Function` belongs, or no node at all, with
+every digest staying green. Verified additive the strict way: `capture_goldens`
+rewrote all nine files, and afterwards `git status` reported only
+`ts_hof_binding.sha256` as new, so the eight pre-existing digests came back
+byte-identical. The gate was then mutation-tested — disabling the factory
+unwrap, restoring the dead `"function"` match arm, and dropping the
+`wrapped_by` column promotion each turned it red, and each restore turned it
+back green.
+
+The additive `ts_closure_scope` digest was captured on 2026-08-01 with the
+corpus itself. Same reason a third time, one level down: no pre-existing
+corpus declared *anything* below the top level of a TS file — not a nested
+named binding, not a `namespace`, not a closure-scoped helper — so the whole
+nested scope walk could be changed or deleted with every digest staying green.
+It pins both directions of the inclusion criterion: the shapes that must
+become nodes (a closure-scoped `Effect.fn` binding, a nested named arrow, a
+depth-2 chain, a namespace member, a class-method-local) and the shapes that
+must not (a named binding under an anonymous callback, `arr.map(f)` at
+depth > 0, a plain IIFE), plus the `#{line}` duplicate tie-break and D3's
+same-file-only CALLS participation. Verified additive the strict way:
+`capture_goldens` rewrote all ten files, and afterwards `git status` reported
+only `ts_closure_scope.sha256` as new, so the nine pre-existing digests came
+back byte-identical. The gate was then mutation-tested five ways — see the
+Phase 3 commit message.
+
+The additive `py_nested_defs` digest was captured on 2026-08-01 with the
+corpus itself, for the same reason once more, on the other side of the
+language split: the four committed Python corpora contain nothing but
+top-level `def`s and plain classes — not one nested definition between them —
+so the Python scope walk could be changed or deleted with every digest staying
+green. It pins the shapes that must become nodes (a decorator factory two
+levels deep, a closure factory, a nested helper, a method-local, a
+function-local class's methods) alongside Python's answer to D1 clause 5: `if`
+/ `try` / `with` blocks are transparent, and a `lambda` names no scope and
+keeps its calls with the enclosing `def`. It also pins the `#{line}` tie-break
+on both conditional-definition idioms, and D3 from both sides — a cross-file
+caller whose five nested-name calls must resolve to nothing, against same-file
+CALLS, REFERENCES_FN and DECORATES edges into nested definitions that must.
+Verified additive the strict way: `capture_goldens` rewrote all eleven files,
+and afterwards `git status` reported only `py_nested_defs.sha256` as new, so
+the ten pre-existing digests came back byte-identical. The gate was then
+mutation-tested five ways — see the Phase 4 commit message.
+
+The additive `docs_mdx` digest was captured on 2026-08-01 with the corpus
+itself. This one guards the docs pass rather than a parser: not one of the
+eleven pre-existing corpora contains an `.mdx`, an upper-cased `.MD`, or a
+`.txt` that must stay out, so `discover_docs`'s accepted-extension match could
+be widened — `.txt` is the tempting "helpful" widening — or narrowed back with
+every digest staying green. It pins the `.mdx` arm end to end (frontmatter
+properties, heading outline, backtick MENTIONS, a doc→doc DOCUMENTS edge whose
+target is an `.mdx` and whose source is a `.md`, and a doc→File edge), the
+extension-stripped `:Doc` id (`README.MD` → `README`), and the inertness of
+embedded JSX/ESM. `NOTES.txt` is markdown-shaped in every respect — heading,
+backtick symbol, markdown link — and must contribute nothing; if `.txt` were
+ever admitted it would add a Doc node, a MENTIONS edge and a DOCUMENTS edge,
+and this digest would move. Verified additive the strict way: `capture_goldens`
+rewrote all twelve files, and afterwards `git status` reported only
+`docs_mdx.sha256` as new, so the eleven pre-existing digests came back
+byte-identical. The gate was then mutation-tested — see the Phase 5 commit
+message.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

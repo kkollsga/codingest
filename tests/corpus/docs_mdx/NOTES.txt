@@ -1,0 +1,8 @@
+# Operator notes
+
+This file is markdown-shaped on purpose. It has a heading, a backtick mention
+of `drainTelemetry`, and a link to the [guide](docs/guide.mdx).
+
+If `.txt` were ever admitted to the docs pass, all three would show up in the
+graph and this corpus's golden digest would move. That is the point: the
+rejection is pinned by the golden, not only by a unit test.

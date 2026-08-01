@@ -10,6 +10,154 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- **Closure-scoped TS/JS definitions are now graph nodes.** The parse walk
+  only ever looked at the direct children of a file's program root, so
+  everything declared inside a function body, an arrow body, a generator body
+  or a TS `namespace` was invisible — on one Effect-TS codebase that is ~37 %
+  of the core package's named callables, and `packages/opencode/src/mcp/`
+  `index.ts` (1 004 lines) had exactly **3** `Function` nodes. It now has 36.
+  A definition becomes a node when it is a named binding (`function` /
+  `function*` declaration, `const|let|var x = <fn literal>`, or a
+  narrowly-factory-wrapped binding) **and every enclosing scope on its chain
+  is itself named**. A helper declared inside an anonymous callback
+  (`useEffect(() => { const helper = … })`) is deliberately *not* a node: it
+  has no addressable name, and admitting that class is what takes node growth
+  past its budget. Anonymous callbacks remain non-nodes as before.
+  Two new `Function` properties describe the nesting, and both are absent
+  (rather than empty or zero) at top level, so graphs without closure-scoped
+  definitions keep their exact property set: **`parent_scope`**, the qualified
+  name of the nearest named enclosing binding, and **`nesting_depth`**, where
+  1 or more means closure-scoped. Qualified names are scope-chained —
+  `packages/opencode/src/mcp.layer.connectRemote` — so two `get`s in two
+  closures of one module no longer collide. There is no new edge type: the
+  enclosing scope is often a `Constant` or an anonymous literal, so a
+  `Function`→`Function` edge would misrepresent node types; query containment
+  with `WHERE f.parent_scope = '…'`.
+  **Closure-scoped definitions resolve `CALLS` within their own file only.**
+  A nested definition is lexically callable inside its enclosing scope unless
+  it escapes, so it never joins the global name index. Without that rule the
+  ~2 270 new nested names on the same codebase would have taken
+  multi-candidate call names from 664 to 1 562 and turned 293 previously
+  unambiguous names ambiguous. Top-level bindings, including `namespace`
+  members, participate globally exactly as before.
+- **Nested Python `def`s are now graph nodes.** The Python walk only ever
+  looked at the direct children of a module, so a `def` inside a function body
+  was invisible — decorator factories, closure factories, the
+  `def wrapper(...)` at the heart of every `functools.wraps` decorator, and
+  every view function of a Flask **application factory**. On `pallets/flask`
+  the routes the app actually serves were among the missing; on `django/django`
+  it is 391 definitions. A nested `def` becomes a `Function` node carrying the
+  same **`parent_scope`** and **`nesting_depth`** properties as the TS/JS
+  closure walk, with a scope-chained qualified name
+  (`pkg.mod.retrying.decorate.wrapper`), and it resolves `CALLS` — and now also
+  `REFERENCES_FN` and `DECORATES` — **within its own file only**, so a
+  `wrapper` in one module can never be mistaken for a `wrapper` in another.
+  Python's scoping rules are followed exactly rather than the TS model being
+  copied: `if` / `for` / `while` / `with` / `try` / `match` blocks are **not**
+  scopes in Python, so they add no name segment and no nesting level — a `def`
+  inside an `if` inside `outer` is `outer.<name>` at depth 1 — while a `lambda`
+  and the comprehension forms name no scope at all and keep their calls with
+  the enclosing `def`. Because blocks are transparent, the
+  `if`/`else` and `try`/`except` conditional-definition idiom routinely
+  produces two identical qualified names in one scope; the second and
+  subsequent get a `#{line}` suffix, the first is left alone. A class defined
+  inside a function contributes a name segment
+  (`outer.Inner.method`) without becoming a node of its own. Node growth is
+  +5.5 % on flask and +1.8 % on django.
+- **`.mdx` documentation is ingested by the docs pass.** `--include-docs`
+  accepted `.md` and `.rst` only, so an Astro / Starlight / Docusaurus site —
+  where the entire documentation set is `.mdx` — produced nothing. On one
+  repository that was 627 files and 0 `:Doc` nodes; it is now 627 nodes, taking
+  the repository from 117 to 744. `.mdx` is Markdown with embedded JSX/ESM and
+  goes through the Markdown path unchanged, so frontmatter, heading outlines,
+  backtick symbol `MENTIONS` and `[](…)` links all work exactly as they do for
+  `.md`, and an `.mdx` is now a valid link *target* as well: a `.md` linking to
+  `[x](./guide.mdx)` gets a `DOCUMENTS` edge. Embedded JSX and ESM are inert to
+  every extractor — measured across those 627 files, 54 of 21 786 mention
+  candidates (0.25 %) sat on an `import` / `export` / JSX line and **none**
+  resolved to a symbol, so no edge in the graph comes from one.
+  `.txt` is deliberately **not** ingested: it carries no frontmatter, heading
+  or link syntax for any extractor to read, and the extension is
+  indiscriminate — `requirements.txt`, `CMakeLists.txt`, licence files and test
+  fixtures would all become `:Doc` nodes. Genuine `.txt` prose (agent prompt
+  files, say) needs a manifest-driven opt-in rather than a widened extension
+  list; that is recorded as deferred, not forgotten.
+- **Top-level factory-wrapped TS/JS bindings are `Function` nodes.**
+  `export const readFile = Effect.fn("Bom.readFile")(function* (…) { … })`
+  bound a function but had a `call_expression` value, so it became a
+  `Constant` with a 100-character `value_preview` and disappeared from the
+  graph as a callable — on one Effect-TS codebase, 147 top-level exports.
+  Such a binding now becomes a single `Function` node (the `Constant` it used
+  to produce is gone, not duplicated) carrying a new `wrapped_by` property
+  naming the factory (`Effect.fn`, `Layer.effect`, `memoize`). The property is
+  only present on graphs that have at least one wrapped binding.
+  The unwrap is deliberately narrow, because `const names = users.map(u =>
+  u.name)` binds an array and not a function: the value's call chain must
+  contain **exactly one** function literal, that literal must be a generator
+  *or* its call must be curried (`f(…)(fn)`), and that call's callee must not
+  be a method on a value receiver — a bare identifier (`memoize`) or a member
+  on a Capitalized identifier (`Effect.fn`) qualifies, `arr.map`,
+  `results.filter` and `tp.split(',').map` do not. Bindings inside a function
+  or closure body are still not node-ified; that is a separate change.
+- **`codingest_stats --include-docs`.** The accuracy harness built with the
+  docs pass hard-coded off, so `:Doc`, `:MENTIONS` and `:DOCUMENTS` could never
+  appear in a recorded measurement and no docs-pass regression could fail a
+  gate. The flag opts the pass in and is off by default, since docs-off is the
+  configuration the existing result history was taken at; the emitted JSON now
+  states both `include_tests` and `include_docs`, and an unrecognised argument
+  is a usage error instead of being silently ignored.
+
+### Fixed
+- **`function*` and `const x = function () {}` were invisible to the TS/JS
+  parser.** tree-sitter-typescript emits `function_expression`,
+  `generator_function` and `generator_function_declaration`, but the parser
+  matched a node kind named `function` that the grammar never produces. Three
+  consequences, all now fixed: `const x = function () {}` and
+  `const x = function* () {}` became `Constant` nodes instead of functions,
+  and a top-level `function* g() {}` — exported or not — produced **no node at
+  all**. Generators are load-bearing in Effect-TS and redux-saga codebases.
+- **Calls inside a nested named binding were dropped, not mis-attributed.**
+  Call extraction skipped named arrow and function bindings on the theory that
+  they were "node-ified elsewhere" — true only at the top level. A
+  `const handler = () => { foo() }` *inside* a function body was skipped by
+  the extractor **and** never node-ified, so `foo()` left no trace in the
+  graph at all. Those calls now attach to the binding that contains them, and
+  every call site is attributed to exactly one `Function` — the nearest
+  enclosing node-ified scope — so nothing is counted twice either.
+- **The same dropped-calls defect in Python.** Call extraction skipped nested
+  `def`s and `@decorated` definitions with the same false justification, and
+  nothing node-ified them either, so the body of every decorator's `wrapper`
+  and every closure factory's inner function contributed nothing to the graph.
+  Those calls now attach to the definition that contains them.
+- **`REFERENCES_FN` and `DECORATES` could point across files into a
+  closure-scoped definition.** Both resolve a bare identifier to a function
+  that is *globally unique* by short name, and a nested definition entered
+  that index — so a `wrapper`, `inner` or `decorator` declared inside one
+  function could become the target of a reference or a decorator in an
+  unrelated file, which no name in that file can actually refer to. Both now
+  apply the same same-file-only rule `CALLS` already did, and a nested name no
+  longer shadows or disambiguates an identically named top-level export for
+  callers elsewhere.
+- **Django routes could lose their `HANDLES` edge — or gain a wrong one — to a
+  closure-scoped definition.** The `urlpatterns` view resolver is the fourth
+  bare-name index over the function population, and it was the one left
+  ungated. A nested `def` sharing a short name with a real view anywhere in the
+  repository made that view look ambiguous, and the resolver skips rather than
+  guesses, so `path('p/', views.detail)` silently emitted **no** edge whenever
+  any `detail` existed inside another function. In the other direction a
+  globally unique nested name — `wrapper` being the archetype — became the
+  handler of a route declared in a `urls.py` that cannot name it. Both are
+  gone: closure-scoped definitions are offered only to a `urlpatterns` in their
+  own file, the same rule `CALLS`, `REFERENCES_FN` and `DECORATES` follow.
+- **An upper-cased `README.MD` kept its extension in its `:Doc` id.** The docs
+  walk has always accepted markup extensions case-insensitively, but the id was
+  derived by stripping a literal lowercase `.md`, so such a file became the
+  node `README.MD` while every sibling became `README`-shaped. Because doc→doc
+  links are matched against extension-stripped ids, that node could never be
+  linked to. Ids are now derived uniformly for every accepted markup
+  extension.
+
 ## [0.1.5] - 2026-08-01
 
 ### Added

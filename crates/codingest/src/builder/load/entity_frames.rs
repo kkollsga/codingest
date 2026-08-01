@@ -463,7 +463,40 @@ pub(super) fn functions_df(
             ),
         ),
     ];
-    for key in ["symbol_kind", "role_hint"] {
+    // `nesting_depth` — 0 == top level. Written by the parsers only when it
+    // is non-zero, so this column appears only in a build that actually
+    // contains closure-scoped definitions, and NULL reads as "top level".
+    // Together with `parent_scope` below it replaces a Function→Function
+    // containment edge, which would have lied about node types: the
+    // enclosing scope is very often a `Constant` (an Effect-TS `layer`) or
+    // an anonymous literal, not a Function.
+    if fns
+        .iter()
+        .any(|function| function.metadata.contains_key("nesting_depth"))
+    {
+        columns.push((
+            "nesting_depth",
+            ColumnType::Int64,
+            int_col(
+                fns.iter()
+                    .map(|function| {
+                        function
+                            .metadata
+                            .get("nesting_depth")
+                            .and_then(|value| value.as_i64())
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    // Sparse string metadata, promoted only when some function in the build
+    // actually carries the key — so a corpus without it keeps its exact
+    // column set (and therefore its golden digest). `wrapped_by` is the
+    // TS/JS factory-unwrap label (`Effect.fn`, `Layer.effect`, `memoize`);
+    // `parent_scope` is the qualified name of the nearest named enclosing
+    // binding, so containment queries read `WHERE n.parent_scope = '…'`.
+    // Without promotion the parser would be writing metadata nothing reads.
+    for key in ["symbol_kind", "role_hint", "wrapped_by", "parent_scope"] {
         if fns.iter().any(|function| {
             function
                 .metadata

@@ -15,9 +15,20 @@
 //! Usage:
 //!   cargo run -p codingest --bin codingest_stats --release -- <path>
 //!   cargo run -p codingest --bin codingest_stats --release -- <path> --include-tests
+//!   cargo run -p codingest --bin codingest_stats --release -- <path> --include-docs
 //!   cargo run -p codingest --bin codingest_stats --release -- <path> --function-metrics
 //!   cargo run -p codingest --bin codingest_stats --release -- <path> --edge-breakdown
 //!   cargo run -p codingest --bin codingest_stats --release -- <path> --dump-calls a,b,c
+//!
+//! `--include-docs` turns the docs pass on. It is **off by default**, which is
+//! the configuration every historical row in `dev-docs/bench/results/` was
+//! measured at, so the default is the comparable one; without the flag `:Doc`,
+//! `:MENTIONS` and `:DOCUMENTS` are structurally absent and no docs-pass
+//! regression — in node counts or in build time — can be seen here. Both the
+//! tests and the docs configuration are echoed into the emitted JSON so a
+//! recorded row states the configuration it was taken under, and an unknown
+//! flag is a usage error rather than a silently-ignored typo that would report
+//! a measurement under a mode it never ran in.
 //!
 //! `--edge-breakdown` appends a per-connection-type edge histogram to the JSON
 //! object, with `IMPORTS` split by endpoint node type (`IMPORTS(File->File)`
@@ -231,37 +242,76 @@ fn dump_calls(graph: &DirGraph, names: &BTreeSet<String>) -> Vec<CallRow> {
     rows
 }
 
+const USAGE: &str = "usage: codingest_stats <path> [--include-tests] [--include-docs] \
+     [--function-metrics] [--edge-breakdown] [--dump-calls name1,name2,...]";
+
+/// Everything the command line can say, parsed once so the configuration a run
+/// was taken under is a value that can be echoed and tested rather than a
+/// scatter of `any(|a| a == …)` predicates.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Options {
+    include_tests: bool,
+    include_docs: bool,
+    function_metrics: bool,
+    edge_breakdown: bool,
+    dump_calls: Option<BTreeSet<String>>,
+}
+
+/// Parse the arguments after `<path>`. Rejects anything unrecognised: a
+/// typo'd `--include-dcos` must not report a docs-off measurement as a docs-on
+/// one, which is the same reason `codingest_bench` rejects unknown flags.
+fn parse_options(args: &[String]) -> Result<Options, String> {
+    let mut out = Options::default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--include-tests" => out.include_tests = true,
+            "--include-docs" => out.include_docs = true,
+            "--function-metrics" => out.function_metrics = true,
+            "--edge-breakdown" => out.edge_breakdown = true,
+            "--dump-calls" => {
+                let list = args.get(i + 1).ok_or_else(|| {
+                    "--dump-calls requires a comma-separated name list".to_string()
+                })?;
+                out.dump_calls = Some(
+                    list.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                );
+                i += 1;
+            }
+            other => return Err(format!("unknown argument `{other}`")),
+        }
+        i += 1;
+    }
+    Ok(out)
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = match args.next() {
         Some(p) => p,
         None => {
-            eprintln!(
-                "usage: codingest_stats <path> [--include-tests] [--function-metrics] \
-                 [--edge-breakdown] [--dump-calls name1,name2,...]"
-            );
+            eprintln!("{USAGE}");
             std::process::exit(2);
         }
     };
-    let options: Vec<_> = args.collect();
-    let include_tests = options.iter().any(|a| a == "--include-tests");
-    let emit_function_metrics = options.iter().any(|a| a == "--function-metrics");
-    let emit_edge_breakdown = options.iter().any(|a| a == "--edge-breakdown");
-    let dump_call_names: Option<BTreeSet<String>> = options
-        .iter()
-        .position(|a| a == "--dump-calls")
-        .map(|i| match options.get(i + 1) {
-            Some(list) => list
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect(),
-            None => {
-                eprintln!("--dump-calls requires a comma-separated name list");
-                std::process::exit(2);
-            }
-        });
+    let rest: Vec<String> = args.collect();
+    let options = match parse_options(&rest) {
+        Ok(options) => options,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    let include_tests = options.include_tests;
+    let include_docs = options.include_docs;
+    let emit_function_metrics = options.function_metrics;
+    let emit_edge_breakdown = options.edge_breakdown;
+    let dump_call_names = options.dump_calls.clone();
 
     let t = Instant::now();
     let (graph, stats) = match codingest::builder::run_with_options_stats(
@@ -270,7 +320,7 @@ fn main() {
         include_tests,
         None,
         None,
-        false,
+        include_docs,
     ) {
         Ok(pair) => pair,
         Err(e) => {
@@ -306,6 +356,7 @@ fn main() {
     let mut out = serde_json::json!({
         "path": path,
         "include_tests": include_tests,
+        "include_docs": include_docs,
         "build_secs": (build_secs * 1000.0).round() / 1000.0,
         "nodes": graph.graph.node_count(),
         "edges": graph.graph.edge_count(),
@@ -341,6 +392,97 @@ mod tests {
     fn build(name: &str) -> std::sync::Arc<DirGraph> {
         codingest::builder::run_with_options(&corpus(name), false, true, None, None, true)
             .expect("corpus build")
+    }
+
+    fn opts(args: &[&str]) -> Result<Options, String> {
+        parse_options(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn parse_options_defaults_to_the_historical_configuration() {
+        // Every row in dev-docs/bench/results/ predating --include-docs was
+        // measured tests-off/docs-off; the default must stay that way or old
+        // and new rows silently stop being comparable.
+        let parsed = opts(&[]).expect("empty argv parses");
+        assert_eq!(parsed, Options::default());
+        assert!(!parsed.include_tests);
+        assert!(!parsed.include_docs);
+    }
+
+    #[test]
+    fn parse_options_reads_every_flag_including_docs() {
+        let parsed = opts(&[
+            "--include-tests",
+            "--include-docs",
+            "--edge-breakdown",
+            "--function-metrics",
+            "--dump-calls",
+            "run, helper ,,other",
+        ])
+        .expect("all flags parse");
+        assert!(parsed.include_tests);
+        assert!(parsed.include_docs);
+        assert!(parsed.edge_breakdown);
+        assert!(parsed.function_metrics);
+        assert_eq!(
+            parsed.dump_calls,
+            Some(BTreeSet::from([
+                "run".to_string(),
+                "helper".to_string(),
+                "other".to_string()
+            ])),
+            "the name list is split, trimmed and empties dropped"
+        );
+    }
+
+    #[test]
+    fn parse_options_rejects_an_unknown_flag_but_not_a_dump_calls_value() {
+        // A typo must be a usage error: silently ignoring it would report a
+        // measurement under a configuration the run never used.
+        assert_eq!(
+            opts(&["--include-dcos"]),
+            Err("unknown argument `--include-dcos`".to_string())
+        );
+        assert_eq!(
+            opts(&["--dump-calls"]),
+            Err("--dump-calls requires a comma-separated name list".to_string())
+        );
+        // The value that follows --dump-calls is consumed, not re-inspected as
+        // a flag — even when it looks like one.
+        let parsed = opts(&["--dump-calls", "--include-docs", "--include-tests"])
+            .expect("the value after --dump-calls is a value");
+        assert!(!parsed.include_docs, "the value was not read as a flag");
+        assert!(parsed.include_tests);
+    }
+
+    #[test]
+    fn include_docs_is_what_makes_doc_nodes_visible() {
+        // The gap this flag closes: with the docs pass off — the hard-coded
+        // behaviour before it existed — a :Doc node cannot appear in any
+        // codingest_stats number, so no docs-pass regression can fail a gate.
+        fn doc_nodes(include_docs: bool) -> usize {
+            let graph = codingest::builder::run_with_options(
+                &corpus("docs_mdx"),
+                false,
+                true,
+                None,
+                None,
+                include_docs,
+            )
+            .expect("corpus build");
+            let params = HashMap::new();
+            let options = session::ExecuteOptions::eager(&params);
+            session::execute_read(&graph, "MATCH (d:Doc) RETURN d.name", &options)
+                .expect("query docs")
+                .result
+                .rows
+                .len()
+        }
+        assert_eq!(doc_nodes(false), 0, "docs off means no Doc node exists");
+        assert!(
+            doc_nodes(true) > 0,
+            "docs on must surface the docs_mdx corpus's Doc nodes"
+        );
     }
 
     #[test]

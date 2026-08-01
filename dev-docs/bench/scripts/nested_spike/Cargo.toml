@@ -1,0 +1,25 @@
+# Standalone measurement harness — deliberately NOT a workspace member.
+# It is a throwaway-shaped *measurement* (Phase 1 of
+# dev-docs/plans/closure-scoped-definitions.md), not shipped builder code, so
+# it must never enter `cargo build --workspace` / `clippy --all-targets` /
+# `cargo test --workspace`. The empty `[workspace]` table stops cargo walking
+# up to the repo root manifest and adopting this crate.
+[workspace]
+
+[package]
+name = "nested_spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Pinned to the exact grammar versions crates/codingest/Cargo.toml uses, so
+# every node kind this walk matches on is the node kind the real parser sees.
+tree-sitter = "0.26.11"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

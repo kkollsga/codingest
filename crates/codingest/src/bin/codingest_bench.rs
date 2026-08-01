@@ -486,6 +486,11 @@ fn main() {
             "corpus_files": corpus.sha256.as_ref().map(|_| corpus.files),
             "corpus_bytes": corpus.sha256.as_ref().map(|_| corpus.bytes),
             "corpus_sha256": corpus.sha256,
+            // Fixed build configuration, echoed so a recorded row states it.
+            // Unlike codingest_stats, this harness has always built docs-ON,
+            // so the docs pass IS in its build times and node counts.
+            "include_tests": false,
+            "include_docs": true,
             "nodes": nodes,
             "edges": edges,
             "build_a_secs": (build_a_secs * 1000.0).round() / 1000.0,

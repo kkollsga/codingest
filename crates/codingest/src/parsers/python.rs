@@ -7,8 +7,9 @@ use std::sync::OnceLock;
 use tree_sitter::{Node, Parser, Tree};
 
 use super::shared::{
-    compute_complexity, count_lines, extract_comment_annotations, extract_procedure_annotations,
-    get_type_parameters, is_generated_or_minified, node_text, BRANCH_KINDS_PYTHON,
+    break_qualified_name_ties, compute_complexity, count_lines, extend_scope_chain,
+    extract_comment_annotations, extract_procedure_annotations, get_type_parameters,
+    is_generated_or_minified, node_text, scope_qualify, tag_scope, BRANCH_KINDS_PYTHON,
     DEFAULT_COMMENT_TYPES,
 };
 use super::LanguageParser;
@@ -97,7 +98,57 @@ const NESTED_SCOPES: &[&str] = &["function_definition", "lambda", "decorated_def
 /// Unlike [`NESTED_SCOPES`] (used by complexity) this excludes `lambda`:
 /// a lambda gets no node, so calls inside it belong to the enclosing fn
 /// (mirrors the Rust closure handling).
+///
+/// D4 — this comment used to be a *promise* the parser did not keep. Until
+/// the nested-scope walk landed, nothing node-ified a `def` inside a function
+/// body, so the calls skipped here were skipped by the extractor **and**
+/// attributed to nobody: they left the graph entirely. Every kind listed here
+/// is now node-ified whenever its enclosing chain is named (which, in Python,
+/// is always — see [`ANONYMOUS_SCOPES`]), so each call site belongs to exactly
+/// one `Function`: the nearest enclosing definition. TS needs an explicit node
+/// id skip set on top of its equivalent list because it node-ifies literals
+/// the list does not name; Python does not, because every definition it
+/// node-ifies is a `function_definition` or a `decorated_definition` and is
+/// therefore already a member of this set. The
+/// `nested_scope_tests::every_skipped_scope_is_node_ified` test is what keeps
+/// that true.
 const NAMED_NESTED_SCOPES: &[&str] = &["function_definition", "decorated_definition"];
+
+/// D1 clause 5 for Python — the scopes the grammar cannot name.
+///
+/// In TS this is where the rule earns its keep: anonymous callbacks are
+/// everywhere, and refusing a node to a binding underneath one is worth 713
+/// nodes on opencode. Python is the opposite case, and it is worth being
+/// precise about why rather than porting the TS shape on faith:
+///
+///   * Every construct that can lexically *contain* a `def` — the module, a
+///     `class_definition`, a `function_definition` — is named by the grammar.
+///     Python has no anonymous function *statement*.
+///   * The two scopes Python does leave unnamed are the ones listed here: a
+///     `lambda` and the four comprehension forms (which really are separate
+///     scopes in Python 3). Both have **expression-only** bodies, so no `def`
+///     or `class` statement can ever appear inside one.
+///   * `if` / `for` / `while` / `with` / `try` / `match` blocks are not scopes
+///     at all in Python — they share the enclosing function's namespace — so
+///     they are *transparent*: they contribute neither a name segment nor a
+///     nesting level, and `def a()` inside an `if` inside `outer` is
+///     `module.outer.a` at depth 1 exactly as if the `if` were not there.
+///     (That is also why same-named `def`s in an `if`/`else` or `try`/`except`
+///     pair are a routine duplicate-qualified-name collision in Python where
+///     they are a rarity in TS — see `break_qualified_name_ties`.)
+///
+/// So the clause is structurally vacuous here: no definition can ever sit
+/// below an unnamed scope. It is implemented anyway, as the same absorbing
+/// `Option<&[String]>` chain TS uses, so that `parent_scope` means the same
+/// thing in both parsers — and entering one of these prunes the walk, which
+/// `holds_a_definition` asserts is lossless on every debug build.
+const ANONYMOUS_SCOPES: &[&str] = &[
+    "lambda",
+    "list_comprehension",
+    "set_comprehension",
+    "dictionary_comprehension",
+    "generator_expression",
+];
 
 pub struct PythonParser;
 
@@ -732,6 +783,236 @@ impl PythonParser {
         }
     }
 
+    // ── Nested scope walk (D1 as amended / D2) ──────────────────────
+    //
+    // `parse_file` used to look only at the direct children of the module
+    // root, so a `def` inside a function body was never visited: decorator
+    // factories, closure factories and nested helpers had no node, and — see
+    // `NAMED_NESTED_SCOPES` — their calls were dropped rather than
+    // re-attributed. The walk below descends into definition bodies.
+    //
+    // What gets a node is D1 clause 1 (`function_definition`, named by the
+    // grammar) plus clause 5 (`ANONYMOUS_SCOPES`). Clauses 2–4 are TS-only:
+    // Python binds functions by `def`, so there is no fn-literal binding to
+    // recognise and no factory unwrap to narrow — a `x = functools.wraps(f)(g)`
+    // RHS unwrap is explicitly deferred, not forgotten.
+
+    /// The `FunctionInfo` for a nested definition: `parse_function` plus the
+    /// D2 identity (chain-qualified name) and the two scope properties.
+    /// `chain` is the enclosing chain and excludes the definition's own name.
+    fn nested_function(
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: &[String],
+        depth: u32,
+    ) -> FunctionInfo {
+        let mut info = Self::parse_function(node, source, module_path, rel_path, false, None);
+        info.qualified_name = scope_qualify(module_path, chain, &info.name);
+        tag_scope(&mut info, module_path, chain, depth);
+        info
+    }
+
+    /// Walk the statements of `block` for nested definitions, emitting them
+    /// into `out` in source order.
+    ///
+    /// `chain` is the scope chain *including* the block owner's own name;
+    /// `depth` is the nesting depth of whatever the block declares.
+    fn descend_block(
+        block: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+    ) {
+        // A `None` chain is *absorbing*: `extend_scope_chain` maps `None` to
+        // `None` and no arm below ever rebuilds a `Some`, so nothing under an
+        // unnamed scope can be node-ified. Returning here is observably
+        // identical to descending and declining everything.
+        if chain.is_none() {
+            return;
+        }
+        let mut cursor = block.walk();
+        for statement in block.named_children(&mut cursor) {
+            Self::walk_scope(statement, source, module_path, rel_path, chain, depth, out);
+        }
+    }
+
+    /// The recursive scope walk. `node` is any node inside some scope;
+    /// `chain` / `depth` describe that scope.
+    fn walk_scope(
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+    ) {
+        match node.kind() {
+            "function_definition" => {
+                Self::walk_definition(node, None, source, module_path, rel_path, chain, depth, out);
+            }
+            "decorated_definition" => {
+                let Some(inner) = Self::get_decorated_inner(node) else {
+                    return;
+                };
+                match inner.kind() {
+                    "function_definition" => Self::walk_definition(
+                        inner,
+                        Some(node),
+                        source,
+                        module_path,
+                        rel_path,
+                        chain,
+                        depth,
+                        out,
+                    ),
+                    "class_definition" => Self::walk_class_scope(
+                        inner,
+                        source,
+                        module_path,
+                        rel_path,
+                        chain,
+                        depth,
+                        out,
+                    ),
+                    _ => {}
+                }
+            }
+            "class_definition" => {
+                Self::walk_class_scope(node, source, module_path, rel_path, chain, depth, out);
+            }
+            // D1 clause 5. The chain would become `None` here, which is
+            // absorbing, so the subtree is pruned instead of descended —
+            // provably lossless, because the grammar cannot put a definition
+            // inside an expression-bodied scope.
+            kind if ANONYMOUS_SCOPES.contains(&kind) => {
+                debug_assert!(
+                    !Self::holds_a_definition(node),
+                    "an unnamed Python scope ({kind}) held a definition — D1 \
+                     clause 5 is no longer vacuous and the prune is lossy"
+                );
+            }
+            // Everything else — `if`, `for`, `while`, `with`, `try`, `match`,
+            // plain expressions — is not a Python scope, so it is transparent:
+            // same chain, same depth.
+            _ => {
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    Self::walk_scope(child, source, module_path, rel_path, chain, depth, out);
+                }
+            }
+        }
+    }
+
+    /// One nested `def`, optionally wrapped in a `decorated_definition`.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_definition(
+        node: Node,
+        decorated: Option<Node>,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+    ) {
+        let name = Self::get_name(node, source).to_string();
+        if let Some(chain) = chain {
+            let mut info = Self::nested_function(node, source, module_path, rel_path, chain, depth);
+            if let Some(decorated) = decorated {
+                let decorators = Self::get_decorators(decorated, source);
+                for (flag, value) in Self::classify_decorators(&decorators) {
+                    info.metadata.insert(flag.to_string(), value);
+                }
+                info.decorators = decorators;
+            }
+            out.push(info);
+        }
+        // Emitted parent-first, so `out` stays in source order for the
+        // duplicate tie-break. Declining a definition does not decline the
+        // scope below it — but here it cannot: a `None` chain only ever comes
+        // from an anonymous scope, which is pruned before it gets this far.
+        let inner_chain = extend_scope_chain(chain, &name);
+        if let Some(block) = Self::get_block(node) {
+            Self::descend_block(
+                block,
+                source,
+                module_path,
+                rel_path,
+                inner_chain.as_deref(),
+                depth + 1,
+                out,
+            );
+        }
+    }
+
+    /// A `class` inside a function contributes a **name segment but no node**
+    /// — a function-local `Class` node is out of scope for this phase, and D2
+    /// is explicit that `parent_scope` is a property precisely because the
+    /// enclosing scope is often not a node — and **no nesting level**, because
+    /// a class body is a namespace, not a closure. Its methods are ordinary
+    /// grammar-named definitions on a fully named chain, so D1 gives each of
+    /// them a node and their calls land somewhere.
+    fn walk_class_scope(
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+    ) {
+        let name = Self::get_name(node, source).to_string();
+        let inner_chain = extend_scope_chain(chain, &name);
+        let Some(block) = Self::get_block(node) else {
+            return;
+        };
+        Self::descend_block(
+            block,
+            source,
+            module_path,
+            rel_path,
+            inner_chain.as_deref(),
+            depth,
+            out,
+        );
+    }
+
+    /// Descend into a *top-level* definition's body. Its own chain is just
+    /// its name, and what it declares is at depth 1.
+    fn descend_definition(
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        out: &mut Vec<FunctionInfo>,
+    ) {
+        let chain = [Self::get_name(node, source).to_string()];
+        if let Some(block) = Self::get_block(node) {
+            Self::descend_block(block, source, module_path, rel_path, Some(&chain), 1, out);
+        }
+    }
+
+    /// Does this subtree contain a definition? Debug-assertion support for the
+    /// `ANONYMOUS_SCOPES` prune: the claim that a lambda or a comprehension
+    /// cannot hold a `def` is a claim about the grammar, so the parser checks
+    /// it on every debug/test build instead of leaving it in a comment.
+    fn holds_a_definition(node: Node) -> bool {
+        if matches!(node.kind(), "function_definition" | "class_definition") {
+            return true;
+        }
+        let mut cursor = node.walk();
+        let found = node
+            .named_children(&mut cursor)
+            .any(Self::holds_a_definition);
+        found
+    }
+
     // ── Top-level parsers ───────────────────────────────────────────
 
     fn parse_function(
@@ -931,6 +1212,21 @@ impl PythonParser {
                     }
                     method_rel.methods.push(fn_info.clone());
                     result.functions.push(fn_info);
+                    // A method body is a scope like any other: a `def` inside
+                    // it is `module.Class.method.helper` at depth 1. The
+                    // method itself keeps its untagged top-level identity.
+                    let chain = [name.clone(), Self::get_name(fn_node, source).to_string()];
+                    if let Some(block) = Self::get_block(fn_node) {
+                        Self::descend_block(
+                            block,
+                            source,
+                            module_path,
+                            rel_path,
+                            Some(&chain),
+                            1,
+                            &mut result.functions,
+                        );
+                    }
                 }
             }
         }
@@ -1038,6 +1334,13 @@ impl LanguageParser for PythonParser {
                         false,
                         None,
                     ));
+                    Self::descend_definition(
+                        child,
+                        &source,
+                        &module_path,
+                        &rel_path,
+                        &mut result.functions,
+                    );
                 }
                 "decorated_definition" => {
                     if let Some(inner) = Self::get_decorated_inner(child) {
@@ -1057,6 +1360,13 @@ impl LanguageParser for PythonParser {
                                     fn_info.metadata.insert(flag.to_string(), val);
                                 }
                                 result.functions.push(fn_info);
+                                Self::descend_definition(
+                                    inner,
+                                    &source,
+                                    &module_path,
+                                    &rel_path,
+                                    &mut result.functions,
+                                );
                             }
                             "class_definition" => {
                                 let decs = Self::get_decorators(child, &source);
@@ -1194,6 +1504,11 @@ impl LanguageParser for PythonParser {
             }
         }
 
+        // D2 tie-break, after every definition in the file is known and in
+        // source order (each walk emits a definition before the definitions
+        // inside it, so the vector is already ordered by start position).
+        break_qualified_name_ties(&mut result.functions);
+
         // Submodule declarations from __init__ files.
         if matches!(file_info.filename.as_str(), "__init__.py" | "__init__.pyi") {
             if let Some(parent) = filepath.parent() {
@@ -1280,6 +1595,415 @@ mod module_path_tests {
         assert_eq!(
             module_of("/tmp/demo_proj/sub/mod.py", "/tmp/demo_proj"),
             "demo_proj.sub.mod"
+        );
+    }
+}
+
+/// The Python nested-scope walk — D1 (clauses 1 and 5), D2, D3, D4.
+#[cfg(test)]
+mod nested_scope_tests {
+    use super::*;
+    use crate::parsers::LanguageParser;
+
+    /// Parse `src` as `pkg/a.py` with `pkg` as the source root, so the module
+    /// path is the fixed `pkg.a` rather than a tempdir name.
+    fn parse_py(src: &str) -> ParseResult {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("pkg");
+        std::fs::create_dir(&root).expect("mkdir");
+        let path = root.join("a.py");
+        std::fs::write(&path, src).expect("write fixture");
+        PythonParser::new().parse_file(&path, &root)
+    }
+
+    fn qnames(src: &str) -> Vec<String> {
+        parse_py(src)
+            .functions
+            .iter()
+            .map(|f| f.qualified_name.clone())
+            .collect()
+    }
+
+    /// Every emitted Function as `(qualified_name, nesting_depth,
+    /// parent_scope)`, in emission order. Both properties are absent — not
+    /// zero, not empty — at top level.
+    fn scopes(src: &str) -> Vec<(String, Option<u64>, Option<String>)> {
+        parse_py(src)
+            .functions
+            .iter()
+            .map(|f| {
+                (
+                    f.qualified_name.clone(),
+                    f.metadata.get("nesting_depth").and_then(|v| v.as_u64()),
+                    f.metadata
+                        .get("parent_scope")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    /// The call names attributed to one function, by qualified name.
+    fn calls_of(src: &str, qualified_name: &str) -> Vec<String> {
+        parse_py(src)
+            .functions
+            .iter()
+            .find(|f| f.qualified_name == qualified_name)
+            .unwrap_or_else(|| panic!("no function {qualified_name} in {:?}", qnames(src)))
+            .calls
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
+    // ── D2: the qualified-name chain ─────────────────────────────────────
+
+    #[test]
+    fn a_nested_def_is_qualified_by_its_scope_chain() {
+        let src = "\
+def outer(n):
+    def inner(x):
+        return x + n
+
+    return inner(1)
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("pkg.a.outer".into(), None, None),
+                (
+                    "pkg.a.outer.inner".into(),
+                    Some(1),
+                    Some("pkg.a.outer".into())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_chain_extends_to_any_depth() {
+        let src = "\
+def retrying(attempts):
+    def decorate(fn):
+        def wrapper(*args):
+            return fn(*args)
+
+        return wrapper
+
+    return decorate
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("pkg.a.retrying".into(), None, None),
+                (
+                    "pkg.a.retrying.decorate".into(),
+                    Some(1),
+                    Some("pkg.a.retrying".into())
+                ),
+                (
+                    "pkg.a.retrying.decorate.wrapper".into(),
+                    Some(2),
+                    Some("pkg.a.retrying.decorate".into())
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_method_body_is_a_scope_like_any_other() {
+        let src = "\
+class Registry:
+    def install(self, hook):
+        def adapter(value):
+            return hook(value)
+
+        return adapter
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("pkg.a.Registry.install".into(), None, None),
+                (
+                    "pkg.a.Registry.install.adapter".into(),
+                    Some(1),
+                    Some("pkg.a.Registry.install".into())
+                ),
+            ]
+        );
+    }
+
+    /// A decorated nested def keeps its decorators and its classification
+    /// flags, and its identity is the inner `def`'s line, not the `@`'s.
+    #[test]
+    fn a_decorated_nested_def_keeps_its_decorators() {
+        let src = "\
+def outer():
+    @staticmethod
+    def helper():
+        return 1
+
+    return helper
+";
+        let result = parse_py(src);
+        let helper = result
+            .functions
+            .iter()
+            .find(|f| f.qualified_name == "pkg.a.outer.helper")
+            .expect("nested decorated def");
+        assert_eq!(helper.decorators, vec!["staticmethod".to_string()]);
+        assert_eq!(helper.metadata.get("is_static"), Some(&json!(true)));
+        assert_eq!(helper.line_number, 3);
+    }
+
+    // ── D1 clause 5, Python edition ──────────────────────────────────────
+
+    /// Block statements are not scopes in Python — they share the enclosing
+    /// function's namespace — so they contribute neither a chain segment nor
+    /// a nesting level. Copying TS's model without this would either bury the
+    /// def a level deeper or drop it.
+    #[test]
+    fn block_statements_are_transparent() {
+        let src = "\
+def outer(flag):
+    if flag:
+        def a():
+            return 1
+
+    for _ in range(3):
+        def b():
+            return 2
+
+    with open('x') as handle:
+        def c():
+            return handle
+";
+        assert_eq!(
+            qnames(src),
+            vec![
+                "pkg.a.outer",
+                "pkg.a.outer.a",
+                "pkg.a.outer.b",
+                "pkg.a.outer.c"
+            ]
+        );
+    }
+
+    /// A `lambda` is one of Python's two unnamed scopes: it names nothing and
+    /// gets no node, so the calls in its body belong to the enclosing def.
+    #[test]
+    fn a_lambda_names_no_scope_and_keeps_its_calls_with_the_enclosing_def() {
+        let src = "\
+def report(rows):
+    def normalize(row):
+        return row.strip()
+
+    strip_all = lambda row: normalize(row)
+    return strip_all
+";
+        assert_eq!(qnames(src), vec!["pkg.a.report", "pkg.a.report.normalize"]);
+        assert_eq!(calls_of(src, "pkg.a.report"), vec!["normalize".to_string()]);
+    }
+
+    /// The grammar claim behind the `ANONYMOUS_SCOPES` prune: an unnamed
+    /// Python scope has an expression body, so it cannot hold a definition.
+    /// (The parser itself asserts this on every debug build; this pins the
+    /// comprehension forms specifically.)
+    #[test]
+    fn no_unnamed_python_scope_can_hold_a_definition() {
+        let src = "\
+def outer(ys):
+    xs = [(lambda: 1)() for y in ys]
+    zs = {y: (lambda: 2) for y in ys}
+    ws = ((lambda: 3) for y in ys)
+    return xs, zs, ws
+";
+        assert_eq!(qnames(src), vec!["pkg.a.outer"]);
+    }
+
+    /// A function-local class contributes a name segment but no node and no
+    /// nesting level; its methods are grammar-named definitions on a fully
+    /// named chain, so they do get nodes.
+    #[test]
+    fn a_function_local_class_names_the_scope_without_becoming_one() {
+        let src = "\
+def local_class():
+    class Inner:
+        def run(self):
+            def deepest():
+                return 1
+
+            return deepest()
+
+    return Inner
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("pkg.a.local_class".into(), None, None),
+                (
+                    "pkg.a.local_class.Inner.run".into(),
+                    Some(1),
+                    Some("pkg.a.local_class.Inner".into())
+                ),
+                (
+                    "pkg.a.local_class.Inner.run.deepest".into(),
+                    Some(2),
+                    Some("pkg.a.local_class.Inner.run".into())
+                ),
+            ]
+        );
+        assert!(
+            parse_py(src).classes.is_empty(),
+            "a function-local class is not a node in this phase"
+        );
+    }
+
+    // ── D2: the duplicate tie-break ──────────────────────────────────────
+
+    /// Because blocks are transparent, the conditional-definition idiom puts
+    /// two identical qualified names in one scope. The second and subsequent
+    /// take a `#{line}` suffix; the first keeps the bare name.
+    #[test]
+    fn same_named_defs_in_sibling_blocks_are_tie_broken_by_line() {
+        let src = "\
+def pick(flag):
+    if flag:
+        def choose():
+            return 1
+
+    else:
+        def choose():
+            return 2
+
+    return choose
+";
+        assert_eq!(
+            qnames(src),
+            vec!["pkg.a.pick", "pkg.a.pick.choose", "pkg.a.pick.choose#7"]
+        );
+    }
+
+    #[test]
+    fn a_third_duplicate_also_gets_its_own_line_suffix() {
+        let src = "\
+def outer():
+    def dup():
+        return 1
+
+    def dup():
+        return 2
+
+    def dup():
+        return 3
+";
+        assert_eq!(
+            qnames(src),
+            vec![
+                "pkg.a.outer",
+                "pkg.a.outer.dup",
+                "pkg.a.outer.dup#5",
+                "pkg.a.outer.dup#8"
+            ]
+        );
+    }
+
+    /// The tie-break is conditional on purpose: a line number in every
+    /// qualified name would move every CALLS target whenever an unrelated
+    /// line above it changed.
+    #[test]
+    fn a_unique_nested_qualified_name_is_never_suffixed() {
+        let src = "\
+def outer():
+    def only():
+        return 1
+";
+        assert_eq!(qnames(src), vec!["pkg.a.outer", "pkg.a.outer.only"]);
+    }
+
+    /// Top-level identities are the addressable public surface and are never
+    /// rewritten — a collision there predates this walk.
+    #[test]
+    fn a_top_level_collision_is_left_alone() {
+        let src = "\
+def dup():
+    return 1
+
+
+def dup():
+    return 2
+";
+        assert_eq!(qnames(src), vec!["pkg.a.dup", "pkg.a.dup"]);
+    }
+
+    // ── D4: one call site, one Function ──────────────────────────────────
+
+    /// The corroborating defect. `extract_calls` skipped nested definitions
+    /// on the theory that they were node-ified elsewhere; nothing node-ified
+    /// them, so their calls left the graph entirely.
+    #[test]
+    fn a_nested_defs_calls_attach_to_it_and_not_to_its_parent() {
+        let src = "\
+def outer():
+    def helper():
+        audit(1)
+        return 2
+
+    return helper()
+";
+        assert_eq!(
+            calls_of(src, "pkg.a.outer.helper"),
+            vec!["audit".to_string()]
+        );
+        assert_eq!(calls_of(src, "pkg.a.outer"), vec!["helper".to_string()]);
+    }
+
+    /// Nothing is counted twice either: every scope the call extractor skips
+    /// is now a node of its own. This is the invariant that lets the Python
+    /// walk do without TS's explicit node-id skip set — if a future change
+    /// node-ifies something outside `NAMED_NESTED_SCOPES`, or stops
+    /// node-ifying something inside it, this test is what notices.
+    #[test]
+    fn every_skipped_scope_is_node_ified() {
+        let src = "\
+def outer():
+    @staticmethod
+    def decorated():
+        alpha()
+
+    def plain():
+        def deeper():
+            beta()
+
+        gamma()
+
+    class Local:
+        def method(self):
+            delta()
+
+    epsilon()
+";
+        let result = parse_py(src);
+        let attributed: Vec<(String, Vec<String>)> = result
+            .functions
+            .iter()
+            .map(|f| {
+                (
+                    f.qualified_name.clone(),
+                    f.calls.iter().map(|(n, _)| n.clone()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            attributed,
+            vec![
+                ("pkg.a.outer".into(), vec!["epsilon".to_string()]),
+                ("pkg.a.outer.decorated".into(), vec!["alpha".to_string()]),
+                ("pkg.a.outer.plain".into(), vec!["gamma".to_string()]),
+                ("pkg.a.outer.plain.deeper".into(), vec!["beta".to_string()]),
+                ("pkg.a.outer.Local.method".into(), vec!["delta".to_string()]),
+            ]
         );
     }
 }

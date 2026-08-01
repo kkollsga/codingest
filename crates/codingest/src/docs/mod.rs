@@ -17,21 +17,24 @@
 //! Each `:Doc` node also carries a `kind` (readme / changelog / guide / …,
 //! inferred from the filename) and a `headings` outline (JSON list).
 //!
-//! **Two markup formats** are understood: Markdown (`.md`, parsed via the OKF
-//! loader — frontmatter, markdown links) and reStructuredText (`.rst`, parsed
-//! by the [`rst`] submodule — Sphinx is the dominant doc toolchain for the
-//! scientific-Python ecosystem). Format-specific extraction (title / headings /
+//! **Two markup formats** are understood: Markdown (`.md` and `.mdx`, parsed
+//! via the OKF loader — frontmatter, markdown links) and reStructuredText
+//! (`.rst`, parsed by the [`rst`] submodule — Sphinx is the dominant doc
+//! toolchain for the scientific-Python ecosystem). `.mdx` is Markdown with
+//! embedded JSX/ESM and shares the Markdown path unchanged; the JSX is inert
+//! text to every extractor. Format-specific extraction (title / headings /
 //! mention candidates / links) dispatches on [`DocFormat`]; everything
-//! downstream (symbol index, edge emit) is shared.
+//! downstream (symbol index, edge emit) is shared. `.txt` is **not** a doc
+//! format — see the reasoning in [`discover_docs`].
 //!
 //! Runs *after* the code nodes are loaded, so symbol resolution can find them.
 //! Gated on the `okf` feature.
 //!
 //! Repo docs (READMEs, `docs/`, design notes) rarely carry YAML frontmatter, so
-//! this ingests **all** `.md` / `.rst` (`require_frontmatter = false`) while
-//! honoring `kg_skip: true` markers (Markdown) and the same directory pruning as
-//! the code walk (node_modules / target / hidden dirs). Doc bodies are kept
-//! transiently for the link scan but not stored as node properties.
+//! this ingests **all** `.md` / `.mdx` / `.rst` (`require_frontmatter = false`)
+//! while honoring `kg_skip: true` markers (Markdown) and the same directory
+//! pruning as the code walk (node_modules / target / hidden dirs). Doc bodies
+//! are kept transiently for the link scan but not stored as node properties.
 
 mod rst;
 
@@ -66,6 +69,12 @@ fn parent_dir(concept_id: &str) -> &str {
         Some(i) => &concept_id[..i],
         None => "",
     }
+}
+
+/// Last `/`-separated segment of a concept id / relative path. Mirrors the
+/// private `okf::stem`, so the two agree on what a doc's fallback title is.
+fn path_stem(rel_path: &str) -> &str {
+    rel_path.rsplit('/').next().unwrap_or(rel_path)
 }
 use std::sync::OnceLock;
 use walkdir::WalkDir;
@@ -160,7 +169,7 @@ pub fn ingest_and_link(graph: &mut DirGraph, root: &Path, verbose: bool) -> Resu
             .count();
         let rst = docs.len() - md;
         eprintln!(
-            "[docs] ingested {} doc(s) ({md} md, {rst} rst); {mentions} MENTIONS, {documents} DOCUMENTS edge(s)",
+            "[docs] ingested {} doc(s) ({md} md/mdx, {rst} rst); {mentions} MENTIONS, {documents} DOCUMENTS edge(s)",
             docs.len()
         );
     }
@@ -176,16 +185,16 @@ struct Discovered {
     format: DocFormat,
 }
 
-/// Walk `root` for `.md` / `.rst` files, then parse each via its format's
-/// extractor. Markdown reuses the OKF parser (frontmatter, `kg_skip`); RST uses
+/// Walk `root` for `.md` / `.mdx` / `.rst` files, then parse each via its
+/// format's extractor. Markdown reuses the OKF parser (frontmatter, `kg_skip`); RST uses
 /// the [`rst`] submodule. Directory pruning matches the code walk
 /// ([`crate::manifest::walk_filter`]).
 fn discover_and_parse(root: &Path) -> Result<Vec<DocEntry>, String> {
     let found = discover_docs(root);
 
-    // Markdown: hand the discovered `.md` files to the OKF parser (it computes
-    // titles from frontmatter / first heading, honors `kg_skip`, flattens
-    // frontmatter). We bypass `okf::walk` so `.rst` shares one traversal and so
+    // Markdown: hand the discovered `.md` / `.mdx` files to the OKF parser (it
+    // computes titles from frontmatter / first heading, honors `kg_skip`,
+    // flattens frontmatter). We bypass `okf::walk` so `.rst` shares one traversal and so
     // `index.md` is kept (the docs pass builds no Folder hierarchy).
     let md_opts = okf::BuildOptions {
         dialect: okf::Dialect::Okf,
@@ -205,13 +214,36 @@ fn discover_and_parse(root: &Path) -> Result<Vec<DocEntry>, String> {
         .collect();
     let mut docs: Vec<DocEntry> = okf::parse_concepts(&md_files, &md_opts)
         .into_iter()
-        .map(|c| DocEntry {
-            concept_id: c.concept_id,
-            file_path: c.file_path,
-            title: c.title,
-            body: c.body.unwrap_or_default(),
-            props: c.props,
-            format: DocFormat::Markdown,
+        .map(|c| {
+            // The OKF parser derives its `concept_id` by stripping a literal
+            // lowercase `.md`, so any other markup extension we hand it —
+            // `.mdx`, or an upper-cased `.MD` — would survive into the `:Doc`
+            // node id. That matters beyond cosmetics: doc→doc links resolve by
+            // comparing an extension-stripped link target against the set of
+            // concept ids, so an id that kept its extension can never be linked
+            // to. Re-derive it from the file path with the same
+            // [`strip_doc_ext`] the RST path uses, so a `:Doc` id means the
+            // same thing in every markup flavour.
+            // `c.file_path` is verbatim the `rel_path` we passed in, so this
+            // strips the file's real extension and is a no-op for plain `.md`.
+            let concept_id = strip_doc_ext(&c.file_path).to_string();
+            // OKF's last-resort title is the stem of *its* concept id, so an
+            // extension it did not recognise would surface as the node title
+            // ("intro.mdx"). Only that fallback is rewritten; a frontmatter
+            // title or an `# H1` is left exactly as parsed.
+            let title = if c.title == path_stem(&c.file_path) {
+                path_stem(&concept_id).to_string()
+            } else {
+                c.title
+            };
+            DocEntry {
+                concept_id,
+                file_path: c.file_path,
+                title,
+                body: c.body.unwrap_or_default(),
+                props: c.props,
+                format: DocFormat::Markdown,
+            }
         })
         .collect();
 
@@ -226,7 +258,9 @@ fn discover_and_parse(root: &Path) -> Result<Vec<DocEntry>, String> {
     Ok(docs)
 }
 
-/// Enumerate `.md` / `.rst` files under `root`, pruning hidden / build dirs.
+/// Enumerate `.md` / `.mdx` / `.rst` files under `root`, pruning hidden /
+/// build dirs. The accepted-extension match is the single place that decides
+/// what counts as documentation — `.txt` is rejected here, on purpose.
 fn discover_docs(root: &Path) -> Vec<Discovered> {
     let mut out = Vec::new();
     let walker = WalkDir::new(root)
@@ -238,7 +272,29 @@ fn discover_docs(root: &Path) -> Vec<Discovered> {
         }
         let format = match entry.path().extension().and_then(|e| e.to_str()) {
             Some(e) if e.eq_ignore_ascii_case("md") => DocFormat::Markdown,
+            // `.mdx` is Markdown plus embedded JSX/ESM. Every Markdown
+            // extractor (frontmatter, headings, backtick mentions, `[](…)`
+            // links) reads it unchanged; the JSX is inert text to all of them
+            // — `import {X} from "y"` and `<Component />` carry no backtick
+            // span, no `::`-qualified prose and no markdown link, so they
+            // contribute nothing rather than noise. Astro/Starlight/Docusaurus
+            // sites keep their entire documentation set in `.mdx`.
+            Some(e) if e.eq_ignore_ascii_case("mdx") => DocFormat::Markdown,
             Some(e) if e.eq_ignore_ascii_case("rst") => DocFormat::Rst,
+            // `.txt` is deliberately NOT ingested — do not "fix" this.
+            // Two independent reasons:
+            //  1. No structure. A `.txt` file has no frontmatter, no heading
+            //     syntax and no link syntax, so every extractor degrades to
+            //     nothing: the node would carry a filename-derived title, an
+            //     empty `headings` outline, no MENTIONS and no DOCUMENTS.
+            //  2. The extension is indiscriminate. `requirements.txt`,
+            //     `CMakeLists.txt`, `LICENSE.txt`, vendored word lists and
+            //     test fixtures all share it, so ingesting it turns build
+            //     inputs and data blobs into `:Doc` nodes.
+            // Real prose does live in `.txt` (opencode ships 37 model-facing
+            // prompt files that way), but a generic builder cannot separate
+            // those from the junk without a manifest-driven opt-in — parked in
+            // `dev-docs/plans/consider-for-future.md`, not built here.
             _ => continue,
         };
         let Ok(rel) = entry.path().strip_prefix(root) else {
@@ -259,8 +315,11 @@ fn discover_docs(root: &Path) -> Vec<Discovered> {
 }
 
 /// Strip the trailing markup extension from a path, yielding the `concept_id`.
+///
+/// Order is irrelevant: the match is an exact suffix, so `foo.mdx` never
+/// matches `.md` (it ends `dx`) and `foo.md` never matches `.mdx`.
 fn strip_doc_ext(rel_path: &str) -> &str {
-    for ext in [".md", ".rst", ".MD", ".RST"] {
+    for ext in [".md", ".mdx", ".rst", ".MD", ".MDX", ".RST"] {
         if let Some(stem) = rel_path.strip_suffix(ext) {
             return stem;
         }
@@ -728,7 +787,7 @@ fn markdown_link_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r#"\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)"#).unwrap())
 }
 
-/// Markdown link targets: `[text](dest)` → a Doc (`.md` target) or File (other),
+/// Markdown link targets: `[text](dest)` → a Doc (`.md`/`.mdx` target) or File (other),
 /// fenced code + image links skipped.
 fn markdown_link_targets(body: &str, src_dir: &str) -> Vec<LinkTarget> {
     let mut out = Vec::new();
@@ -751,10 +810,16 @@ fn markdown_link_targets(body: &str, src_dir: &str) -> Vec<LinkTarget> {
             let Some(target) = resolve_rel_path(dest.as_str(), src_dir) else {
                 continue;
             };
-            if let Some(rest) = target.strip_suffix(".md") {
-                out.push(LinkTarget::Doc(rest.to_string()));
-            } else {
-                out.push(LinkTarget::File(target));
+            // A `.md` / `.mdx` destination names another doc; anything else is
+            // a source file. (`.rst` is deliberately absent: a markdown link
+            // into an RST tree is vanishingly rare and adding it here would
+            // change existing edges for no measured gain.)
+            match target
+                .strip_suffix(".md")
+                .or_else(|| target.strip_suffix(".mdx"))
+            {
+                Some(rest) => out.push(LinkTarget::Doc(rest.to_string())),
+                None => out.push(LinkTarget::File(target)),
             }
         }
     }
@@ -1070,5 +1135,166 @@ mod tests {
             })
             .map(|nd| nd.title().into_owned());
         assert_eq!(title, Some(Value::String("Getting Started".to_string())));
+    }
+
+    /// Every `:Doc` id in `g`.
+    fn doc_ids(g: &DirGraph) -> BTreeSet<String> {
+        g.graph
+            .node_indices()
+            .filter_map(|n| g.get_node(n))
+            .filter(|nd| nd.node_type_str(&g.interner) == "Doc")
+            .filter_map(|nd| match &*nd.id() {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn strip_doc_ext_covers_mdx_in_both_cases() {
+        assert_eq!(strip_doc_ext("docs/guide.mdx"), "docs/guide");
+        assert_eq!(strip_doc_ext("docs/guide.MDX"), "docs/guide");
+        // The pre-existing formats keep working, and the suffix match is exact
+        // in both directions: `.md` must not swallow `.mdx`, and `.mdx` must
+        // not swallow `.md`.
+        assert_eq!(strip_doc_ext("README.md"), "README");
+        assert_eq!(strip_doc_ext("README.MD"), "README");
+        assert_eq!(strip_doc_ext("doc/io.rst"), "doc/io");
+        // Only the trailing extension goes; an inner `.mdx` is part of the name.
+        assert_eq!(strip_doc_ext("docs/a.mdx.md"), "docs/a.mdx");
+        // Neither a non-doc extension nor a bare name is touched.
+        assert_eq!(strip_doc_ext("notes.txt"), "notes.txt");
+        assert_eq!(strip_doc_ext("Makefile"), "Makefile");
+    }
+
+    #[test]
+    fn mdx_is_ingested_through_the_markdown_path() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn parse_wkt() {}\npub struct KnowledgeGraph;",
+        )
+        .unwrap();
+        // Frontmatter + heading + a backtick mention, wrapped in the JSX/ESM an
+        // `.mdx` file carries: an ESM import, a template-literal export and a
+        // component block. None of those may contribute a mention or a link.
+        fs::write(
+            root.join("docs/guide.mdx"),
+            "---\ntitle: Retry Guide\naudience: operators\n---\n\n\
+             import { Tabs } from \"@astrojs/starlight/components\"\n\n\
+             export const supportEmail = `mailto:ops@example.invalid`\n\n\
+             ## Usage\n\n\
+             <Tabs>\n  Call `parse_wkt` to build a `KnowledgeGraph`.\n</Tabs>\n",
+        )
+        .unwrap();
+
+        let g = run_with_options(&root, false, true, None, None, true).unwrap();
+
+        // The id is extension-stripped exactly like a `.md` doc's.
+        assert_eq!(doc_ids(&g), BTreeSet::from(["docs/guide".to_string()]));
+
+        let node = g
+            .graph
+            .node_indices()
+            .filter_map(|n| g.get_node(n))
+            .find(|nd| {
+                nd.node_type_str(&g.interner) == "Doc"
+                    && matches!(&*nd.id(), Value::String(s) if s == "docs/guide")
+            })
+            .expect("mdx doc node");
+        // Frontmatter is parsed (title + a flattened custom key) and the
+        // markdown heading outline is extracted from the JSX-bearing body.
+        assert_eq!(
+            node.title().into_owned(),
+            Value::String("Retry Guide".into())
+        );
+        assert_eq!(
+            node.get_field_ref("audience").map(|v| v.into_owned()),
+            Some(Value::String("operators".into()))
+        );
+        assert_eq!(
+            node.get_field_ref("headings").map(|v| v.into_owned()),
+            Some(Value::String("[\"Usage\"]".into()))
+        );
+
+        // Mentions come from the prose inside the component, not from the JSX.
+        let names = mention_target_names(&g, "MENTIONS");
+        assert!(names.contains("parse_wkt"), "backtick mention in JSX prose");
+        assert!(names.contains("KnowledgeGraph"));
+        // `mailto` (from the ESM template literal) and the component/module
+        // names resolve to nothing, so the ESM header adds no edges at all.
+        assert_eq!(count_conn(&g, "DOCUMENTS"), 0, "no links in this doc");
+    }
+
+    #[test]
+    fn mdx_is_a_first_class_doc_link_target() {
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn go() {}").unwrap();
+        fs::write(root.join("docs/reference.mdx"), "# Reference\nFields.\n").unwrap();
+        // A `.md` linking to an `.mdx` and an `.mdx` linking back: both sides
+        // only resolve because the two flavours strip to the same id shape.
+        fs::write(
+            root.join("docs/overview.md"),
+            "# Overview\nSee the [reference](./reference.mdx).\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("README.md"),
+            "# Project\nStart at the [overview](docs/overview.md).\n",
+        )
+        .unwrap();
+
+        let g = run_with_options(&root, false, true, None, None, true).unwrap();
+        assert_eq!(
+            doc_ids(&g),
+            BTreeSet::from([
+                "README".to_string(),
+                "docs/overview".to_string(),
+                "docs/reference".to_string(),
+            ])
+        );
+        // overview → reference (the `.mdx` target) and README → overview.
+        assert_eq!(count_conn(&g, "DOCUMENTS"), 2);
+    }
+
+    #[test]
+    fn txt_files_are_never_ingested_as_docs() {
+        // The pin on the `.txt` decision (see `discover_docs`). This file is
+        // markdown-shaped in every respect — heading, backtick symbol mention,
+        // markdown link — so if `.txt` were ever admitted it would produce a
+        // Doc node, a MENTIONS edge and a DOCUMENTS edge, and all three
+        // assertions below would fail at once.
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn drainTelemetry() {}").unwrap();
+        fs::write(
+            root.join("NOTES.txt"),
+            "# Operator notes\nCall `drainTelemetry`. See [readme](README.md).\n",
+        )
+        .unwrap();
+        // The indiscriminate half of the argument: these are `.txt` too.
+        fs::write(root.join("requirements.txt"), "requests==2.31.0\n").unwrap();
+        fs::write(root.join("LICENSE.txt"), "MIT\n").unwrap();
+        fs::write(root.join("README.md"), "# Project\nReal docs.\n").unwrap();
+
+        let g = run_with_options(&root, false, true, None, None, true).unwrap();
+        assert_eq!(
+            doc_ids(&g),
+            BTreeSet::from(["README".to_string()]),
+            "only the .md is a doc; no .txt may appear"
+        );
+        assert_eq!(
+            count_conn(&g, "MENTIONS"),
+            0,
+            ".txt contributes no mentions"
+        );
+        assert_eq!(count_conn(&g, "DOCUMENTS"), 0, ".txt contributes no links");
     }
 }
