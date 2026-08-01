@@ -456,9 +456,602 @@ impl JstsParser {
         Some((literal, Self::factory_wrapper_name(root, source)?))
     }
 
-    fn extract_calls(body: Node, source: &[u8]) -> Vec<(String, u32)> {
+    // ── Nested scope walk (D1 as amended / D2) ───────────────────────────
+    //
+    // `parse_top_level` used to look only at the direct children of the
+    // program root, so everything declared inside a function body, an arrow
+    // body, a generator body or a TS `namespace` was invisible: on opencode
+    // that is ~37 % of the core package's named callables, including the
+    // entire `Layer.effect(Service, Effect.gen(function* () { … }))` service
+    // surface. The walk below descends into those scopes.
+    //
+    // What gets a node is D1 **as amended by the Phase 1 spike**: a named
+    // binding (or grammar-named declaration) whose *whole enclosing scope
+    // chain is itself named*. `chain: Option<&[String]>` is that rule in one
+    // branch — entering an anonymous function literal replaces the chain with
+    // `None`, `None` is absorbing, and `None` means "no node here". The walk
+    // still descends through anonymous scopes; it simply cannot mint a node
+    // beneath one. Dropping bindings under anonymous callbacks is what holds
+    // opencode's node growth at 10.90 % instead of 14.15 % (ceiling 12 %),
+    // and it is why no qualified name ever needs a positional `<anonL{line}>`
+    // segment — see D2 in the plan.
+
+    /// D2 qualified name: module path, then the chain of named enclosing
+    /// scopes, then the own name. An empty chain reproduces the pre-Phase-3
+    /// top-level shape `module.name` byte for byte.
+    fn scope_qualify(module_path: &str, chain: &[String], name: &str) -> String {
+        let mut out = String::from(module_path);
+        for segment in chain {
+            out.push('.');
+            out.push_str(segment);
+        }
+        out.push('.');
+        out.push_str(name);
+        out
+    }
+
+    /// Push `name` onto a named chain. A `None` chain stays `None`: D1's
+    /// clause 5 refuses a node to anything below an anonymous scope.
+    fn extend_chain(chain: Option<&[String]>, name: &str) -> Option<Vec<String>> {
+        chain.map(|c| {
+            let mut next = Vec::with_capacity(c.len() + 1);
+            next.extend_from_slice(c);
+            next.push(name.to_string());
+            next
+        })
+    }
+
+    /// Attach D2's two Function properties. Both are *absent* at top level
+    /// rather than written as empty/zero, so a build with no nested
+    /// definitions keeps its exact column set in `entity_frames`.
+    fn tag_scope(info: &mut FunctionInfo, module_path: &str, chain: &[String], depth: u32) {
+        if let Some((own, head)) = chain.split_last() {
+            info.metadata.insert(
+                "parent_scope".into(),
+                json!(Self::scope_qualify(module_path, head, own)),
+            );
+        }
+        if depth > 0 {
+            info.metadata
+                .insert("nesting_depth".into(), json!(u64::from(depth)));
+        }
+    }
+
+    /// Build the `FunctionInfo` for a nested definition: `parse_function`
+    /// plus the D2 identity (chain-qualified name) and properties.
+    #[allow(clippy::too_many_arguments)]
+    fn nested_function(
+        &self,
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: &[String],
+        name: &str,
+        depth: u32,
+        node_ified: &[usize],
+    ) -> FunctionInfo {
+        let mut info =
+            self.parse_function(node, source, module_path, rel_path, false, None, node_ified);
+        info.name = name.to_string();
+        info.qualified_name = Self::scope_qualify(module_path, chain, name);
+        Self::tag_scope(&mut info, module_path, chain, depth);
+        info
+    }
+
+    /// Walk the members of a scope (`owner`'s named children) for nested
+    /// definitions, emitting them into `out` in source order.
+    ///
+    /// `chain` is the scope chain *including* `owner`'s own name; `depth` is
+    /// the nesting depth of whatever is declared inside it. Returns the node
+    /// ids of the topmost definitions that became their own `Function` node,
+    /// which is exactly what `owner`'s `extract_calls` must skip (D4).
+    #[allow(clippy::too_many_arguments)]
+    fn descend_scope(
+        &self,
+        owner: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+    ) -> Vec<usize> {
+        let mut node_ified = Vec::new();
+        // A `None` chain is *absorbing*: `extend_chain` maps `None` to `None`
+        // and no arm below ever rebuilds a `Some`, so nothing inside an
+        // anonymous scope can be node-ified and nothing can be skipped
+        // either. Not descending is therefore observably identical to
+        // descending and declining everything — and on a callback-dense
+        // codebase it is the difference between walking the whole AST twice
+        // and walking only its named spine. The equivalence is asserted at
+        // the anonymous entry point in `walk_scope`.
+        if chain.is_none() {
+            return node_ified;
+        }
+        let mut cursor = owner.walk();
+        for member in owner.named_children(&mut cursor) {
+            // Name / type chrome carries no scope; the body, an expression
+            // body and `formal_parameters` (default values can hold arrow
+            // literals) all get walked.
+            if matches!(
+                member.kind(),
+                "identifier" | "property_identifier" | "type_parameters" | "type_annotation"
+            ) {
+                continue;
+            }
+            self.walk_scope(
+                member,
+                source,
+                module_path,
+                rel_path,
+                chain,
+                depth,
+                out,
+                &mut node_ified,
+            );
+        }
+        node_ified
+    }
+
+    /// The recursive scope walk. `node` is any node inside some scope;
+    /// `chain`/`depth` describe that scope.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_scope(
+        &self,
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+        node_ified: &mut Vec<usize>,
+    ) {
+        match node.kind() {
+            // D1-1: grammar-named declarations.
+            "function_declaration" | "generator_function_declaration" => {
+                let name = Self::get_name(node, source).to_string();
+                let inner_chain = Self::extend_chain(chain, &name);
+                let mut kids = Vec::new();
+                let inner = self.descend_scope(
+                    node,
+                    source,
+                    module_path,
+                    rel_path,
+                    inner_chain.as_deref(),
+                    depth + 1,
+                    &mut kids,
+                );
+                self.emit_scope(
+                    node,
+                    source,
+                    module_path,
+                    rel_path,
+                    chain,
+                    &name,
+                    depth,
+                    &inner,
+                    kids,
+                    out,
+                    node_ified,
+                );
+            }
+            // D1-2 / D1-3: `const|let|var x = <literal | factory(…)>`.
+            "lexical_declaration" | "variable_declaration" => {
+                let mut cursor = node.walk();
+                for declarator in node
+                    .named_children(&mut cursor)
+                    .filter(|c| c.kind() == "variable_declarator")
+                {
+                    self.walk_declarator(
+                        declarator,
+                        source,
+                        module_path,
+                        rel_path,
+                        chain,
+                        depth,
+                        out,
+                        node_ified,
+                    );
+                }
+            }
+            // Transparent: `export const x = …` is positionally identical to
+            // `const x = …` (this arm only fires inside a namespace body —
+            // at file scope `parse_top_level` owns `export_statement`).
+            "export_statement" => {
+                let mut cursor = node.walk();
+                for kid in node.named_children(&mut cursor) {
+                    self.walk_scope(
+                        kid,
+                        source,
+                        module_path,
+                        rel_path,
+                        chain,
+                        depth,
+                        out,
+                        node_ified,
+                    );
+                }
+            }
+            // D1-4: `namespace X { … }`. Members are export-like, so the
+            // namespace contributes a name segment but NOT a nesting level —
+            // a namespace member is as globally addressable as a top-level
+            // one and keeps full CALLS participation under D3.
+            "internal_module" | "module" => {
+                let Some(name_node) = node.child_by_field_name("name") else {
+                    return;
+                };
+                // `declare module "pkg"` is an ambient declaration, not a
+                // namespace scope.
+                if name_node.kind() == "string" {
+                    return;
+                }
+                let name = node_text(name_node, source).to_string();
+                let inner_chain = Self::extend_chain(chain, &name);
+                if let Some(body) = node.child_by_field_name("body") {
+                    let inner = self.descend_scope(
+                        body,
+                        source,
+                        module_path,
+                        rel_path,
+                        inner_chain.as_deref(),
+                        depth,
+                        out,
+                    );
+                    node_ified.extend(inner);
+                }
+            }
+            // A class nested inside a scope is excluded from D1 (measured: 3
+            // on opencode, 0 elsewhere) and so are its methods — but their
+            // bodies still hold named bindings, and those are addressable via
+            // `Module.Class.method.binding`.
+            "class_declaration" | "class" | "abstract_class_declaration" => {
+                let name = Self::get_name(node, source).to_string();
+                let inner_chain = Self::extend_chain(chain, &name);
+                let Some(body) = Self::get_block(node) else {
+                    return;
+                };
+                let mut cursor = body.walk();
+                for member in body.named_children(&mut cursor) {
+                    if member.kind() == "method_definition" {
+                        let method = Self::get_name(member, source).to_string();
+                        let method_chain = Self::extend_chain(inner_chain.as_deref(), &method);
+                        let inner = self.descend_scope(
+                            member,
+                            source,
+                            module_path,
+                            rel_path,
+                            method_chain.as_deref(),
+                            depth + 1,
+                            out,
+                        );
+                        node_ified.extend(inner);
+                    } else {
+                        self.walk_scope(
+                            member,
+                            source,
+                            module_path,
+                            rel_path,
+                            inner_chain.as_deref(),
+                            depth,
+                            out,
+                            node_ified,
+                        );
+                    }
+                }
+            }
+            // Reached structurally rather than through a binding: an
+            // anonymous function literal. D1 clause 5 — nothing below it can
+            // be node-ified, so the chain becomes `None` from here down.
+            kind if FN_LITERALS.contains(&kind) => {
+                let inner =
+                    self.descend_scope(node, source, module_path, rel_path, None, depth + 1, out);
+                debug_assert!(inner.is_empty(), "a None chain cannot node-ify anything");
+                node_ified.extend(inner);
+            }
+            // Any other statement/expression: structural pass-through.
+            _ => {
+                let mut cursor = node.walk();
+                for kid in node.named_children(&mut cursor) {
+                    self.walk_scope(
+                        kid,
+                        source,
+                        module_path,
+                        rel_path,
+                        chain,
+                        depth,
+                        out,
+                        node_ified,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Emit (or decline) a node for a definition whose body has already been
+    /// walked. `inner` are the node ids node-ified directly inside it and
+    /// `kids` the `FunctionInfo`s they produced.
+    ///
+    /// Declining is not the same as discarding: when the chain is `None`, or
+    /// when a factory binding fails the D1-3 narrowing, the definitions
+    /// *below* it may still be nodes, so their ids have to bubble up to
+    /// whichever ancestor scope does own the surrounding call sites.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_scope(
+        &self,
+        node: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        name: &str,
+        depth: u32,
+        inner: &[usize],
+        kids: Vec<FunctionInfo>,
+        out: &mut Vec<FunctionInfo>,
+        node_ified: &mut Vec<usize>,
+    ) {
+        match chain {
+            Some(chain) => {
+                let info = self.nested_function(
+                    node,
+                    source,
+                    module_path,
+                    rel_path,
+                    chain,
+                    name,
+                    depth,
+                    inner,
+                );
+                out.push(info);
+                out.extend(kids);
+                node_ified.push(node.id());
+            }
+            None => {
+                out.extend(kids);
+                node_ified.extend_from_slice(inner);
+            }
+        }
+    }
+
+    /// One `variable_declarator`. Returns `true` when the binding itself
+    /// became a `Function` node — the signal `parse_top_level` uses to skip
+    /// its `Constant` fallback.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_declarator(
+        &self,
+        declarator: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+        node_ified: &mut Vec<usize>,
+    ) -> bool {
+        let Some(value) = declarator.child_by_field_name("value") else {
+            return false;
+        };
+        // A destructuring pattern binds no single name, so D1 declines it
+        // (49 such bindings on opencode) — but the value still holds code.
+        let Some(name_node) = declarator
+            .child_by_field_name("name")
+            .filter(|n| n.kind() == "identifier")
+        else {
+            self.walk_scope(
+                value,
+                source,
+                module_path,
+                rel_path,
+                chain,
+                depth,
+                out,
+                node_ified,
+            );
+            return false;
+        };
+        let name = node_text(name_node, source).to_string();
+        let unwrapped = Self::unwrap_expr(value);
+
+        // D1-2 — a bare function literal.
+        if FN_LITERALS.contains(&unwrapped.kind()) {
+            let inner_chain = Self::extend_chain(chain, &name);
+            let mut kids = Vec::new();
+            let inner = self.descend_scope(
+                unwrapped,
+                source,
+                module_path,
+                rel_path,
+                inner_chain.as_deref(),
+                depth + 1,
+                &mut kids,
+            );
+            let emitted = chain.is_some();
+            self.emit_scope(
+                unwrapped,
+                source,
+                module_path,
+                rel_path,
+                chain,
+                &name,
+                depth,
+                &inner,
+                kids,
+                out,
+                node_ified,
+            );
+            return emitted;
+        }
+
+        // D1-3 — a factory-wrapped literal. The scope descent runs for every
+        // single-literal chain, narrowing or not: `const rows = xs.map(x => …)`
+        // is a Constant, but a helper declared inside that callback is still
+        // reachable as `Module.rows.helper`, which is what the Phase 1 spike
+        // measured. Only the *node* for the binding itself is gated on the
+        // narrowing.
+        if unwrapped.kind() == "call_expression" {
+            let mut literals: Vec<Node> = Vec::new();
+            Self::chain_fn_literals(unwrapped, &mut literals);
+            if literals.len() == 1 {
+                let literal = literals[0];
+                let inner_chain = Self::extend_chain(chain, &name);
+                let mut kids = Vec::new();
+                let inner = self.descend_scope(
+                    literal,
+                    source,
+                    module_path,
+                    rel_path,
+                    inner_chain.as_deref(),
+                    depth + 1,
+                    &mut kids,
+                );
+                let wrapped = Self::factory_wrapped_fn(value, source);
+                let emitted = match (chain, wrapped) {
+                    (Some(chain), Some((_, wrapped_by))) => {
+                        let mut info = self.nested_function(
+                            literal,
+                            source,
+                            module_path,
+                            rel_path,
+                            chain,
+                            &name,
+                            depth,
+                            &inner,
+                        );
+                        info.metadata.insert("wrapped_by".into(), json!(wrapped_by));
+                        out.push(info);
+                        out.extend(kids);
+                        node_ified.push(literal.id());
+                        true
+                    }
+                    _ => {
+                        out.extend(kids);
+                        node_ified.extend_from_slice(&inner);
+                        false
+                    }
+                };
+                // The rest of the call chain (other arguments) is ordinary
+                // code belonging to the *enclosing* scope.
+                self.walk_excluding(
+                    unwrapped,
+                    literal,
+                    source,
+                    module_path,
+                    rel_path,
+                    chain,
+                    depth,
+                    out,
+                    node_ified,
+                );
+                return emitted;
+            }
+        }
+
+        self.walk_scope(
+            value,
+            source,
+            module_path,
+            rel_path,
+            chain,
+            depth,
+            out,
+            node_ified,
+        );
+        false
+    }
+
+    /// Walk everything under `root` except the subtree rooted at `skip`.
+    #[allow(clippy::too_many_arguments)]
+    fn walk_excluding(
+        &self,
+        root: Node,
+        skip: Node,
+        source: &[u8],
+        module_path: &str,
+        rel_path: &str,
+        chain: Option<&[String]>,
+        depth: u32,
+        out: &mut Vec<FunctionInfo>,
+        node_ified: &mut Vec<usize>,
+    ) {
+        let mut cursor = root.walk();
+        for kid in root.named_children(&mut cursor) {
+            if kid.id() == skip.id() {
+                continue;
+            }
+            if kid.byte_range().start <= skip.byte_range().start
+                && kid.byte_range().end >= skip.byte_range().end
+            {
+                self.walk_excluding(
+                    kid,
+                    skip,
+                    source,
+                    module_path,
+                    rel_path,
+                    chain,
+                    depth,
+                    out,
+                    node_ified,
+                );
+            } else {
+                self.walk_scope(
+                    kid,
+                    source,
+                    module_path,
+                    rel_path,
+                    chain,
+                    depth,
+                    out,
+                    node_ified,
+                );
+            }
+        }
+    }
+
+    /// D2's duplicate-qualified-name tie-break.
+    ///
+    /// A fully-named scope chain still collides when sibling blocks of one
+    /// scope declare the same name (4 sites in 10 374 opencode captures, e.g.
+    /// two `const scrub` in two branches of one function). The second and
+    /// subsequent occurrences in a file, in source order, take a `#{line}`
+    /// suffix; the first keeps the bare name.
+    ///
+    /// Deliberately *not* unconditional. Suffixing every qualified name would
+    /// put a line number into every CALLS target and every golden digest, so
+    /// an edit anywhere above a function would move its identity — the exact
+    /// fragility D2's amendment removed by dropping the `<anonL{line}>`
+    /// marker. Only nested definitions are ever rewritten: top-level and
+    /// method qualified names are the addressable public surface and a
+    /// collision there predates this walk.
+    fn break_qualified_name_ties(functions: &mut [FunctionInfo]) {
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(functions.len());
+        for function in functions.iter_mut() {
+            if !seen.insert(function.qualified_name.clone()) {
+                let nested = function
+                    .metadata
+                    .get("nesting_depth")
+                    .and_then(|v| v.as_u64())
+                    .is_some_and(|d| d > 0);
+                if nested {
+                    function.qualified_name =
+                        format!("{}#{}", function.qualified_name, function.line_number);
+                    seen.insert(function.qualified_name.clone());
+                }
+            }
+        }
+    }
+
+    /// Call sites belonging to `body`, minus the subtrees in `node_ified`.
+    ///
+    /// `node_ified` holds the tree-sitter node ids of the *topmost* nested
+    /// definitions the scope walk turned into their own `Function` node (D4).
+    /// Every call site is attributed to exactly one node — the nearest
+    /// enclosing node-ified scope — instead of being counted twice.
+    fn extract_calls(body: Node, source: &[u8], node_ified: &[usize]) -> Vec<(String, u32)> {
         let mut calls: Vec<(String, u32)> = Vec::new();
-        fn walk(node: Node, source: &[u8], out: &mut Vec<(String, u32)>) {
+        fn walk(node: Node, source: &[u8], out: &mut Vec<(String, u32)>, node_ified: &[usize]) {
             match node.kind() {
                 "call_expression" => {
                     let line = node.start_position().row as u32 + 1;
@@ -508,23 +1101,35 @@ impl JstsParser {
             }
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
+                // D4 — this subtree became its own Function node, so its call
+                // sites are that node's, not ours. Checked first because a
+                // node-ified literal can sit in a position the rules below
+                // would happily descend into: a `function_expression` (not in
+                // NESTED_SCOPES at all) or a factory argument such as
+                // `Effect.fn("n")(function* () { … })`, which reads as an
+                // inline anonymous callback but is a named binding's body.
+                if node_ified.contains(&child.id()) {
+                    continue;
+                }
                 let k = child.kind();
                 // Inline anonymous functions — callbacks like `.map(x => foo(x))`
                 // and JSX handlers like `onClick={() => foo()}` — get no graph
-                // node, so their calls belong to the enclosing function. Arrow /
-                // function expressions *assigned to a name* are node-ified
-                // elsewhere; we keep skipping those (they're in NESTED_SCOPES) to
-                // avoid double-counting, and only descend when the anonymous fn
-                // sits directly in a call-argument or JSX-expression position,
-                // which is never node-ified.
+                // node, so their calls belong to the enclosing function. The
+                // NESTED_SCOPES skip below is a *conservative* boundary, not a
+                // statement that everything behind it is node-ified: before the
+                // Phase 3 scope walk it dropped the calls of every nested named
+                // binding on the floor, because nothing node-ified those either.
+                // The precise "already has its own node" question is answered by
+                // `node_ified` above; this stays as the outer bound on how much
+                // of an unattributed nested scope we fold into the parent.
                 let inline_anon = FN_LITERALS.contains(&k)
                     && matches!(node.kind(), "arguments" | "jsx_expression");
                 if inline_anon || !NESTED_SCOPES.contains(&k) {
-                    walk(child, source, out);
+                    walk(child, source, out, node_ified);
                 }
             }
         }
-        walk(body, source, &mut calls);
+        walk(body, source, &mut calls, node_ified);
         calls
     }
 
@@ -702,6 +1307,7 @@ impl JstsParser {
         members
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn parse_function(
         &self,
         node: Node,
@@ -710,6 +1316,7 @@ impl JstsParser {
         rel_path: &str,
         is_method: bool,
         owner: Option<&str>,
+        node_ified: &[usize],
     ) -> FunctionInfo {
         let name = Self::get_name(node, source).to_string();
         let prefix = match owner {
@@ -729,7 +1336,7 @@ impl JstsParser {
         }
 
         let calls = block
-            .map(|b| Self::extract_calls(b, source))
+            .map(|b| Self::extract_calls(b, source, node_ified))
             .unwrap_or_default();
         let parameters = Self::extract_parameters(node, source);
         let param_count = Some(
@@ -911,6 +1518,21 @@ impl JstsParser {
             let mut cursor = body.walk();
             for child in body.children(&mut cursor) {
                 if matches!(child.kind(), "method_definition" | "function_declaration") {
+                    // The method keeps its own identity (`Module.Class.method`,
+                    // untagged), but its body is a scope like any other: named
+                    // bindings inside it become `Module.Class.method.binding`.
+                    let method = Self::get_name(child, source).to_string();
+                    let chain = [name.clone(), method];
+                    let mut nested = Vec::new();
+                    let node_ified = self.descend_scope(
+                        child,
+                        source,
+                        module_path,
+                        rel_path,
+                        Some(&chain),
+                        1,
+                        &mut nested,
+                    );
                     let fn_info = self.parse_function(
                         child,
                         source,
@@ -918,9 +1540,11 @@ impl JstsParser {
                         rel_path,
                         true,
                         Some(&name),
+                        &node_ified,
                     );
                     method_rel.methods.push(fn_info.clone());
                     result.functions.push(fn_info);
+                    result.functions.extend(nested);
                 }
             }
         }
@@ -976,6 +1600,8 @@ impl JstsParser {
                 let mut ic = child.walk();
                 for item in child.children(&mut ic) {
                     if matches!(item.kind(), "method_signature" | "method_definition") {
+                        // An interface member is a signature: no body, so no
+                        // scope to descend into.
                         let fn_info = self.parse_function(
                             item,
                             source,
@@ -983,6 +1609,7 @@ impl JstsParser {
                             rel_path,
                             true,
                             Some(&name),
+                            &[],
                         );
                         iface_rel.methods.push(fn_info.clone());
                         result.functions.push(fn_info);
@@ -1033,14 +1660,52 @@ impl JstsParser {
             // top-level `function* g() {}`. Without this arm it matched
             // nothing and produced NO node at all — not even a Constant.
             "function_declaration" | "generator_function_declaration" => {
-                let fn_info = self.parse_function(node, source, module_path, rel_path, false, None);
+                let name = Self::get_name(node, source).to_string();
+                let chain = [name];
+                let mut nested = Vec::new();
+                let node_ified = self.descend_scope(
+                    node,
+                    source,
+                    module_path,
+                    rel_path,
+                    Some(&chain),
+                    1,
+                    &mut nested,
+                );
+                let fn_info = self.parse_function(
+                    node,
+                    source,
+                    module_path,
+                    rel_path,
+                    false,
+                    None,
+                    &node_ified,
+                );
                 result.functions.push(fn_info);
+                result.functions.extend(nested);
             }
             "class_declaration" => self.parse_class(node, source, module_path, rel_path, result),
             "interface_declaration" => {
                 self.parse_interface(node, source, module_path, rel_path, result)
             }
             "enum_declaration" => self.parse_enum(node, source, module_path, rel_path, result),
+            // TS `namespace X { … }`. There was no arm for this at all, so
+            // every namespace member was invisible (55 namespaces on
+            // opencode). Members are export-like: the namespace adds a name
+            // segment but not a nesting level.
+            "internal_module" | "module" => {
+                let mut node_ified = Vec::new();
+                self.walk_scope(
+                    node,
+                    source,
+                    module_path,
+                    rel_path,
+                    Some(&[]),
+                    0,
+                    &mut result.functions,
+                    &mut node_ified,
+                );
+            }
             "export_statement" => {
                 // `export … from '…'` / `export * from '…'` is an import in
                 // every sense that matters to a dependency graph: the file
@@ -1060,6 +1725,7 @@ impl JstsParser {
                         | "class_declaration"
                         | "interface_declaration"
                         | "enum_declaration"
+                        | "internal_module"
                         | "type_alias_declaration" => {
                             self.parse_top_level(
                                 child,
@@ -1174,51 +1840,30 @@ impl JstsParser {
                     if child.kind() != "variable_declarator" {
                         continue;
                     }
+                    // One shared code path with the nested walk, at depth 0
+                    // with an empty scope chain: D1-2's bare function literal
+                    // (`() => …`, `function () {}`, `function* () {}`) and
+                    // D1-3's narrowed factory unwrap both emit here, the
+                    // Constant they used to produce is dropped, and the
+                    // binding's body is descended into for nested definitions.
+                    // An empty chain qualifies as `module.name`, byte-identical
+                    // to what this arm produced before, and `tag_scope` adds
+                    // neither property at depth 0.
+                    let mut node_ified = Vec::new();
+                    if self.walk_declarator(
+                        child,
+                        source,
+                        module_path,
+                        rel_path,
+                        Some(&[]),
+                        0,
+                        &mut result.functions,
+                        &mut node_ified,
+                    ) {
+                        continue;
+                    }
                     let name_node = child.child_by_field_name("name");
                     let value = child.child_by_field_name("value");
-                    if let (Some(name_node), Some(value)) = (name_node, value) {
-                        // A bare function literal — `() => …`, `function () {}`,
-                        // `function* () {}`. The last two used to be matched as
-                        // the non-existent kind `"function"` and so became
-                        // Constants (defects D-A / D-B).
-                        if FN_LITERALS.contains(&value.kind()) {
-                            let mut fn_info = self.parse_function(
-                                value,
-                                source,
-                                module_path,
-                                rel_path,
-                                false,
-                                None,
-                            );
-                            fn_info.name = node_text(name_node, source).to_string();
-                            fn_info.qualified_name = format!("{}.{}", module_path, fn_info.name);
-                            result.functions.push(fn_info);
-                            continue;
-                        }
-                        // A factory-wrapped function literal. One node, not
-                        // two: the Constant this used to produce is dropped.
-                        // Span comes from the literal, matching the bare-literal
-                        // branch above, so every `const`-bound function anchors
-                        // on the function it actually is.
-                        if let Some((literal, wrapped_by)) = Self::factory_wrapped_fn(value, source)
-                        {
-                            let mut fn_info = self.parse_function(
-                                literal,
-                                source,
-                                module_path,
-                                rel_path,
-                                false,
-                                None,
-                            );
-                            fn_info.name = node_text(name_node, source).to_string();
-                            fn_info.qualified_name = format!("{}.{}", module_path, fn_info.name);
-                            fn_info
-                                .metadata
-                                .insert("wrapped_by".into(), json!(wrapped_by));
-                            result.functions.push(fn_info);
-                            continue;
-                        }
-                    }
                     if let Some(name_node) = name_node {
                         let name = node_text(name_node, source).to_string();
                         let mut type_ann: Option<String> = None;
@@ -1352,6 +1997,10 @@ impl LanguageParser for JstsParser {
                 &mut file_info,
             );
         }
+        // D2 tie-break, after every definition in the file is known and in
+        // source order (the walk emits parent-before-child, so the vector is
+        // already ordered by start position).
+        Self::break_qualified_name_ties(&mut result.functions);
         file_info.annotations = extract_comment_annotations(root, &source, DEFAULT_COMMENT_TYPES);
         result.files.push(file_info);
         result
@@ -1713,5 +2362,476 @@ export const PLAIN = 42
             vec![("asArrow".to_string(), 2), ("asDecl".to_string(), 3)]
         );
         assert_eq!(constant_names(src), vec!["PLAIN"]);
+    }
+}
+
+/// The nested scope walk: D1 as amended, D2 qualified names + properties,
+/// D3's inputs and D4's call attribution (Phase 3 of
+/// `dev-docs/plans/closure-scoped-definitions.md`).
+#[cfg(test)]
+mod closure_scope_tests {
+    use super::*;
+    use crate::parsers::LanguageParser;
+
+    fn parse_ts(src: &str) -> ParseResult {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.ts");
+        std::fs::write(&path, src).expect("write fixture");
+        JstsParser::typescript().parse_file(&path, dir.path())
+    }
+
+    /// Every emitted Function as `(qualified_name, nesting_depth,
+    /// parent_scope)`, in emission order. Both properties are absent (not
+    /// zero / not empty) at top level.
+    fn scopes(src: &str) -> Vec<(String, Option<u64>, Option<String>)> {
+        parse_ts(src)
+            .functions
+            .iter()
+            .map(|f| {
+                (
+                    f.qualified_name.clone(),
+                    f.metadata.get("nesting_depth").and_then(|v| v.as_u64()),
+                    f.metadata
+                        .get("parent_scope")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    fn qnames(src: &str) -> Vec<String> {
+        parse_ts(src)
+            .functions
+            .iter()
+            .map(|f| f.qualified_name.clone())
+            .collect()
+    }
+
+    /// The call names attributed to one function, by qualified name.
+    fn calls_of(src: &str, qualified_name: &str) -> Vec<String> {
+        parse_ts(src)
+            .functions
+            .iter()
+            .find(|f| f.qualified_name == qualified_name)
+            .unwrap_or_else(|| panic!("no function {qualified_name} in {:?}", qnames(src)))
+            .calls
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
+    // ── D2: the qualified-name chain ─────────────────────────────────────
+
+    #[test]
+    fn a_nested_binding_is_qualified_by_its_scope_chain() {
+        let src = "\
+export function outer(n: number) {
+  const inner = (x: number) => x + n
+  return inner(1)
+}
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("a.outer".to_string(), None, None),
+                ("a.outer.inner".to_string(), Some(1), Some("a.outer".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_chain_grows_with_every_named_scope() {
+        let src = "\
+function a() {
+  const b = () => {
+    function c() {
+      return 1
+    }
+    return c()
+  }
+  return b()
+}
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("a.a".to_string(), None, None),
+                ("a.a.b".to_string(), Some(1), Some("a.a".into())),
+                ("a.a.b.c".to_string(), Some(2), Some("a.a.b".into())),
+            ]
+        );
+    }
+
+    /// The motivating Effect-TS shape. The enclosing scope is the *binding*
+    /// the closure is assigned to (`layer`), exactly as the Phase 1 spike
+    /// emitted `packages/opencode/src/mcp.layer.connectRemote`.
+    #[test]
+    fn an_effect_service_closure_names_its_members_after_the_binding() {
+        let src = "\
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const connectRemote = Effect.fn(\"connectRemote\")(function* (url: string) {
+      return yield fetchIt(url)
+    })
+    return { connectRemote }
+  }),
+)
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("a.layer".to_string(), None, None),
+                (
+                    "a.layer.connectRemote".to_string(),
+                    Some(1),
+                    Some("a.layer".into())
+                ),
+            ]
+        );
+        let parsed = parse_ts(src);
+        let nested = parsed
+            .functions
+            .iter()
+            .find(|f| f.name == "connectRemote")
+            .expect("connectRemote");
+        assert_eq!(
+            nested.metadata.get("wrapped_by").and_then(|v| v.as_str()),
+            Some("Effect.fn")
+        );
+    }
+
+    /// A `namespace` contributes a name segment but NOT a nesting level: its
+    /// members are as globally addressable as a top-level export, so they
+    /// keep full cross-file CALLS participation under D3.
+    #[test]
+    fn namespace_members_are_named_but_not_nested() {
+        let src = "\
+export namespace Text {
+  export function widen(v: string): string {
+    return v
+  }
+}
+";
+        assert_eq!(
+            scopes(src),
+            vec![("a.Text.widen".to_string(), None, Some("a.Text".into()))]
+        );
+    }
+
+    #[test]
+    fn ambient_module_declarations_are_not_a_namespace_scope() {
+        let src = "\
+declare module \"pkg\" {
+  export function fromAmbient(): void
+}
+";
+        assert_eq!(qnames(src), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_class_method_body_is_a_scope() {
+        let src = "\
+export class Runner {
+  run(n: number) {
+    const step = (x: number) => x + 1
+    return step(n)
+  }
+}
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                // The method itself keeps its plain identity: untagged.
+                ("a.Runner.run".to_string(), None, None),
+                (
+                    "a.Runner.run.step".to_string(),
+                    Some(1),
+                    Some("a.Runner.run".into())
+                ),
+            ]
+        );
+    }
+
+    // ── D1 clause 5: nothing below an anonymous scope ────────────────────
+
+    /// The regression test for the amendment that brought opencode's node
+    /// growth from 14.15 % to 10.90 %. The walk must still *descend* into the
+    /// callback — that is how it would reach a named binding below one — it
+    /// just must not mint a node whose chain passed through it.
+    #[test]
+    fn a_named_binding_inside_an_anonymous_callback_is_not_a_node() {
+        let src = "\
+export function outer(items: string[]) {
+  items.forEach((item) => {
+    const hidden = (label: string) => label.trim()
+    hidden(item)
+  })
+  const visible = (label: string) => label.trim()
+  return visible(\"x\")
+}
+";
+        assert_eq!(
+            qnames(src),
+            vec!["a.outer".to_string(), "a.outer.visible".to_string()]
+        );
+    }
+
+    #[test]
+    fn anonymity_is_absorbing_all_the_way_down() {
+        let src = "\
+export function outer() {
+  run(() => {
+    const mid = () => {
+      const deep = () => 1
+      return deep()
+    }
+    return mid()
+  })
+}
+";
+        assert_eq!(qnames(src), vec!["a.outer".to_string()]);
+    }
+
+    // ── D1-3: the narrowing still holds at depth > 0 ─────────────────────
+
+    /// `const x = arr.map(f)` binds an array, not a function — the single
+    /// most expensive over-capture the Phase 1 spike found (4 345 hits on
+    /// opencode at a median of 1 LOC). Phase 2 pinned it at depth 0; the
+    /// scope walk must not reintroduce it at depth 1.
+    #[test]
+    fn a_value_receiver_call_stays_a_constant_inside_a_closure() {
+        let src = "\
+export function outer(users: string[]) {
+  const names = users.map((u) => u.trim())
+  return names
+}
+";
+        assert_eq!(qnames(src), vec!["a.outer".to_string()]);
+    }
+
+    /// Declining the *binding* is not declining the *scope*: a helper
+    /// declared inside that callback is still addressable through the name
+    /// the callback is bound to. This is what the Phase 1 spike counted, and
+    /// what the +3 062-node figure includes.
+    #[test]
+    fn a_declined_factory_binding_still_names_the_scope_below_it() {
+        let src = "\
+export function outer(users: string[]) {
+  const names = users.map((u) => {
+    const clean = (s: string) => s.trim()
+    return clean(u)
+  })
+  return names
+}
+";
+        assert_eq!(
+            scopes(src),
+            vec![
+                ("a.outer".to_string(), None, None),
+                (
+                    "a.outer.names.clean".to_string(),
+                    Some(2),
+                    Some("a.outer.names".into())
+                ),
+            ]
+        );
+    }
+
+    /// A plain IIFE is *not* a factory wrap: its single function literal is
+    /// the callee, and D1-3's chain walk covers curried callees and
+    /// call-valued arguments only. Pinned so the +3 062-node ceiling — which
+    /// counts this shape among the 10 654 opencode "no literal in the chain"
+    /// exclusions — is not silently widened.
+    /// Follow-up: `dev-docs/plans/iife-module-factory-scope.md`.
+    #[test]
+    fn a_plain_iife_binding_is_neither_a_function_nor_a_scope() {
+        let src = "\
+export const registry = (function () {
+  function register(name: string) {
+    return name
+  }
+  return { register }
+})()
+";
+        assert_eq!(qnames(src), Vec::<String>::new());
+        assert_eq!(
+            parse_ts(src)
+                .constants
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["registry"]
+        );
+    }
+
+    // ── D2: the duplicate-qualified-name tie-break ───────────────────────
+
+    #[test]
+    fn a_duplicate_nested_qualified_name_is_broken_by_line() {
+        let src = "\
+export function normalize(input: string, upper: boolean) {
+  if (upper) {
+    const scrub = (raw: string) => raw.toUpperCase()
+    return scrub(input)
+  } else {
+    const scrub = (raw: string) => raw.trimStart()
+    return scrub(input)
+  }
+}
+";
+        assert_eq!(
+            qnames(src),
+            vec![
+                "a.normalize".to_string(),
+                // First occurrence in source order keeps the bare name.
+                "a.normalize.scrub".to_string(),
+                // Second takes the suffix, at its own line.
+                "a.normalize.scrub#6".to_string(),
+            ]
+        );
+    }
+
+    /// Three collisions, so the rule is "second and subsequent", not "swap".
+    #[test]
+    fn every_repeat_after_the_first_takes_a_suffix() {
+        let src = "\
+export function f() {
+  {
+    const g = () => 1
+    g()
+  }
+  {
+    const g = () => 2
+    g()
+  }
+  {
+    const g = () => 3
+    g()
+  }
+}
+";
+        assert_eq!(
+            qnames(src),
+            vec![
+                "a.f".to_string(),
+                "a.f.g".to_string(),
+                "a.f.g#7".to_string(),
+                "a.f.g#11".to_string(),
+            ]
+        );
+    }
+
+    /// The suffix is NOT unconditional. Making every qualified name carry a
+    /// line number is the fragility D2's amendment removed: an edit anywhere
+    /// above a function would move its identity, every CALLS target and every
+    /// golden digest with it.
+    #[test]
+    fn a_unique_nested_qualified_name_carries_no_line_number() {
+        let src = "\
+export function f() {
+  const g = () => 1
+  return g()
+}
+export function h() {
+  const g = () => 2
+  return g()
+}
+";
+        assert_eq!(
+            qnames(src),
+            vec![
+                "a.f".to_string(),
+                "a.f.g".to_string(),
+                "a.h".to_string(),
+                "a.h.g".to_string(),
+            ]
+        );
+    }
+
+    /// Top-level identities are never rewritten — a collision there predates
+    /// the scope walk and is not the walk's to renumber.
+    #[test]
+    fn top_level_duplicates_are_left_alone() {
+        let src = "\
+export function dup() {
+  return 1
+}
+export function dup() {
+  return 2
+}
+";
+        assert_eq!(qnames(src), vec!["a.dup".to_string(), "a.dup".to_string()]);
+    }
+
+    // ── D4: exactly one owner per call site ──────────────────────────────
+
+    /// Before Phase 3 these calls were **dropped**, not mis-attributed:
+    /// `extract_calls` skipped the arrow because it is in `NESTED_SCOPES`, on
+    /// the theory that named arrows "are node-ified elsewhere" — true only at
+    /// top level. Nothing node-ified this one, so `helper`'s calls left no
+    /// trace in the graph at all.
+    #[test]
+    fn calls_inside_a_nested_named_binding_attach_to_it() {
+        let src = "\
+export function outer(n: number) {
+  const helper = (x: number) => {
+    return transform(x)
+  }
+  return helper(n)
+}
+";
+        assert_eq!(calls_of(src, "a.outer.helper"), vec!["transform"]);
+        assert_eq!(calls_of(src, "a.outer"), vec!["helper"]);
+    }
+
+    /// …and are not counted twice. A `function_expression` is not in
+    /// `NESTED_SCOPES`, so before the D4 guard the enclosing scope walked
+    /// straight through it.
+    #[test]
+    fn a_node_ified_function_expression_is_not_double_counted() {
+        let src = "\
+export function outer(n: number) {
+  const helper = function (x: number) {
+    return transform(x)
+  }
+  return helper(n)
+}
+";
+        assert_eq!(calls_of(src, "a.outer.helper"), vec!["transform"]);
+        assert_eq!(calls_of(src, "a.outer"), vec!["helper"]);
+    }
+
+    /// A factory-wrapped literal sits in argument position, which
+    /// `extract_calls` treats as an inline anonymous callback and descends
+    /// into. Once the binding is node-ified, the D4 guard has to win.
+    #[test]
+    fn a_node_ified_factory_argument_is_not_double_counted() {
+        let src = "\
+export function outer(n: number) {
+  const wrapped = Effect.fn(\"w\")(function* (x: number) {
+    return yield transform(x)
+  })
+  return wrapped(n)
+}
+";
+        assert_eq!(calls_of(src, "a.outer.wrapped"), vec!["transform"]);
+        assert_eq!(calls_of(src, "a.outer"), vec!["Effect.fn", "wrapped"]);
+    }
+
+    /// An anonymous callback is still folded into the enclosing node-ified
+    /// scope — D1 keeps it out of the graph, so its calls have to land
+    /// somewhere, and the nearest node-ified scope is the honest owner.
+    #[test]
+    fn anonymous_callback_calls_still_belong_to_the_enclosing_scope() {
+        let src = "\
+export function outer(items: string[]) {
+  items.forEach((item) => {
+    transform(item)
+  })
+}
+";
+        assert_eq!(calls_of(src, "a.outer"), vec!["items.forEach", "transform"]);
     }
 }

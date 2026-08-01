@@ -64,6 +64,16 @@ const CORPORA: &[&str] = &[
     // with zero golden movement. Its golden is captured additively (see
     // `tests/goldens/README.md`).
     "ts_hof_binding",
+    // Added 2026-08-01. Nothing else in the corpus set declares anything
+    // below the top level of a TS file — no nested named binding, no
+    // `namespace`, no closure-scoped helper — so the entire scope walk
+    // (D1/D2/D3/D4) could be changed, or deleted, with zero golden movement.
+    // It pins the shapes that must become nodes *and* the ones that must not
+    // (a binding under an anonymous callback, `arr.map(f)` at depth > 0, a
+    // plain IIFE), the `#{line}` tie-break, and D3's same-file-only CALLS
+    // participation via a cross-file caller that must resolve nothing. Its
+    // golden is captured additively (see `tests/goldens/README.md`).
+    "ts_closure_scope",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

@@ -229,6 +229,29 @@ fn qname_starts_with_any(qname: &str, scopes: &[String]) -> bool {
     false
 }
 
+/// D3 candidate assembly: the globally visible targets for a call name plus
+/// the nested (closure-scoped) targets declared in the *caller's own file*.
+///
+/// Borrows both sides untouched in the common case — `storage` is filled only
+/// when a name has candidates on both sides, which is rare.
+fn merge_candidates<'a, 'b>(
+    global: Option<&'b Vec<&'a str>>,
+    local: Option<&'b Vec<&'a str>>,
+    storage: &'b mut Vec<&'a str>,
+) -> &'b [&'a str] {
+    match (global, local) {
+        (Some(g), None) => g.as_slice(),
+        (None, Some(l)) => l.as_slice(),
+        (None, None) => &[],
+        (Some(g), Some(l)) => {
+            storage.reserve(g.len() + l.len());
+            storage.extend_from_slice(g);
+            storage.extend_from_slice(l);
+            storage.as_slice()
+        }
+    }
+}
+
 fn infer_lang_group(qname: &str) -> &'static str {
     if qname.contains("::") {
         "rust_cpp"
@@ -262,29 +285,64 @@ pub fn build_call_edges(
 ) -> (Vec<CallEdge>, CallResolutionStats) {
     let verbose = std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some();
     let t0 = std::time::Instant::now();
-    // Bare name → every qualified_name that matches.
+    // D3 — a closure-scoped definition (`nesting_depth > 0`) is lexically
+    // callable only inside its enclosing scope unless it escapes. It
+    // therefore never joins the global lookups; it is offered only to
+    // callers in its own file. Without this the ~2 270 nested names opencode
+    // gains would flood the bare-name index: the Phase 1 spike measured
+    // multi-candidate names going 664 → 1 562 and 293 currently-unique names
+    // turning ambiguous, which is exactly the false-positive class v0.1.5's
+    // resolution metadata was built to keep out. Escape analysis (which
+    // nested functions really do leak cross-file) is the deliberate
+    // non-goal; same-file is the conservative approximation.
+    let is_nested = |f: &FunctionInfo| {
+        f.metadata
+            .get("nesting_depth")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|d| d > 0)
+    };
+
+    // Bare name → every qualified_name that matches. Top-level definitions
+    // only; nested ones go to `nested_names` below, keyed by file.
     let mut name_lookup: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut nested_names: HashMap<&str, HashMap<&str, Vec<&str>>> = HashMap::new();
     for fn_info in functions {
-        name_lookup
-            .entry(fn_info.name.as_str())
-            .or_default()
-            .push(fn_info.qualified_name.as_str());
+        let target = if is_nested(fn_info) {
+            nested_names
+                .entry(fn_info.file_path.as_str())
+                .or_default()
+                .entry(fn_info.name.as_str())
+                .or_default()
+        } else {
+            name_lookup.entry(fn_info.name.as_str()).or_default()
+        };
+        target.push(fn_info.qualified_name.as_str());
     }
     // Exact qualified call text → one ordinary function or every overload in
     // that same-scope group. Parser call sites keep the source-level base ID,
     // while graph identities carry a signature discriminator.
     let mut qualified_lookup: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut nested_qualified: HashMap<&str, HashMap<&str, Vec<&str>>> = HashMap::new();
     for function in functions {
         let qualified_name = function.qualified_name.as_str();
-        qualified_lookup
-            .entry(qualified_name)
-            .or_default()
-            .push(qualified_name);
+        let mut keys: Vec<&str> = vec![qualified_name];
         if let Some(base) = super::overload_base_qualified_name(qualified_name) {
-            qualified_lookup
-                .entry(base)
-                .or_default()
-                .push(qualified_name);
+            keys.push(base);
+        }
+        for key in keys {
+            if is_nested(function) {
+                nested_qualified
+                    .entry(function.file_path.as_str())
+                    .or_default()
+                    .entry(key)
+                    .or_default()
+                    .push(qualified_name);
+            } else {
+                qualified_lookup
+                    .entry(key)
+                    .or_default()
+                    .push(qualified_name);
+            }
         }
     }
 
@@ -348,6 +406,10 @@ pub fn build_call_edges(
             let caller_prefix = qname_to_prefix.get(caller_qn).copied();
             let caller_owner = qname_to_owner.get(caller_qn).copied();
             let caller_file = fn_info.file_path.as_str();
+            // D3: the nested definitions this caller may see — its own file's,
+            // and nothing else's.
+            let local_names = nested_names.get(caller_file);
+            let local_qualified = nested_qualified.get(caller_file);
 
             let mut out: Vec<(&str, &str, u32, Resolution, usize)> = Vec::new();
             let mut counts = Counts::default();
@@ -359,16 +421,22 @@ pub fn build_call_edges(
                     counts.excluded += 1;
                     continue;
                 }
-                if let Some(targets) = qualified_lookup.get(called_name.as_str()) {
+                let mut exact_storage: Vec<&str> = Vec::new();
+                let exact: &[&str] = merge_candidates(
+                    qualified_lookup.get(called_name.as_str()),
+                    local_qualified.and_then(|m| m.get(called_name.as_str())),
+                    &mut exact_storage,
+                );
+                if !exact.is_empty() {
                     counts.resolved += 1;
-                    for &target in targets {
+                    for &target in exact {
                         if target != caller_qn {
                             out.push((
                                 caller_qn,
                                 target,
                                 *line,
                                 Resolution::ExactQualified,
-                                targets.len(),
+                                exact.len(),
                             ));
                         }
                     }
@@ -379,10 +447,16 @@ pub fn build_call_edges(
                     None => (None, called_name.as_str()),
                 };
 
-                let Some(candidates) = name_lookup.get(method_name) else {
+                let mut name_storage: Vec<&str> = Vec::new();
+                let candidates: &[&str] = merge_candidates(
+                    name_lookup.get(method_name),
+                    local_names.and_then(|m| m.get(method_name)),
+                    &mut name_storage,
+                );
+                if candidates.is_empty() {
                     counts.no_candidate += 1;
                     continue;
-                };
+                }
 
                 if candidates.len() == 1 {
                     counts.resolved += 1;
@@ -393,7 +467,7 @@ pub fn build_call_edges(
                     continue;
                 }
 
-                let mut targets: &[&str] = candidates.as_slice();
+                let mut targets: &[&str] = candidates;
                 let mut filtered: Vec<&str>;
 
                 // Tier 0: receiver-type filter. Two sources of hints —
@@ -680,6 +754,97 @@ mod stats_tests {
             .collect();
         rows.sort();
         rows
+    }
+
+    /// D3: mark a function as closure-scoped, the way the TS scope walk does.
+    fn nested(mut f: FunctionInfo, depth: u64) -> FunctionInfo {
+        f.metadata
+            .insert("nesting_depth".into(), serde_json::json!(depth));
+        f
+    }
+
+    /// D3 — a `nesting_depth > 0` definition never joins the global bare-name
+    /// lookup. Naively merging opencode's ~2 270 nested names into it took
+    /// multi-candidate names from 664 to 1 562 and flipped 293 unique names
+    /// ambiguous (Phase 1 spike), which is exactly the false-positive class
+    /// v0.1.5's resolution metadata exists to keep out.
+    #[test]
+    fn a_nested_definition_is_invisible_to_a_caller_in_another_file() {
+        let functions = vec![
+            func("b.consume", "b.ts", &[("helper", 3)]),
+            nested(func("a.outer.helper", "a.ts", &[]), 1),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert!(
+            edges.is_empty(),
+            "leaked cross-file edges: {:?}",
+            edges
+                .iter()
+                .map(|e| (&e.caller, &e.callee))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// …but a caller in its own file resolves it, top-level or nested.
+    #[test]
+    fn a_nested_definition_resolves_for_callers_in_its_own_file() {
+        let functions = vec![
+            func("a.outer", "a.ts", &[("helper", 3)]),
+            nested(func("a.outer.helper", "a.ts", &[("deeper", 5)]), 1),
+            nested(func("a.outer.helper.deeper", "a.ts", &[]), 2),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        let mut pairs: Vec<_> = edges
+            .iter()
+            .map(|e| (e.caller.as_str(), e.callee.as_str()))
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("a.outer", "a.outer.helper"),
+                ("a.outer.helper", "a.outer.helper.deeper"),
+            ]
+        );
+    }
+
+    /// The gating is by *name visibility*, not by dropping the node: a
+    /// nested definition in one file must not shadow or suppress an
+    /// identically named top-level export in another.
+    #[test]
+    fn a_nested_name_does_not_disturb_the_global_lookup() {
+        let functions = vec![
+            func("b.consume", "b.ts", &[("helper", 3)]),
+            func("c.helper", "c.ts", &[]),
+            nested(func("a.outer.helper", "a.ts", &[]), 1),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert_eq!(
+            meta(&edges),
+            vec![("c.helper", "unique_name", 1, false)],
+            "the cross-file caller must see exactly the top-level `helper`"
+        );
     }
 
     #[test]

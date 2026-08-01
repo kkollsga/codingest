@@ -11,6 +11,36 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **Closure-scoped TS/JS definitions are now graph nodes.** The parse walk
+  only ever looked at the direct children of a file's program root, so
+  everything declared inside a function body, an arrow body, a generator body
+  or a TS `namespace` was invisible — on one Effect-TS codebase that is ~37 %
+  of the core package's named callables, and `packages/opencode/src/mcp/`
+  `index.ts` (1 004 lines) had exactly **3** `Function` nodes. It now has 36.
+  A definition becomes a node when it is a named binding (`function` /
+  `function*` declaration, `const|let|var x = <fn literal>`, or a
+  narrowly-factory-wrapped binding) **and every enclosing scope on its chain
+  is itself named**. A helper declared inside an anonymous callback
+  (`useEffect(() => { const helper = … })`) is deliberately *not* a node: it
+  has no addressable name, and admitting that class is what takes node growth
+  past its budget. Anonymous callbacks remain non-nodes as before.
+  Two new `Function` properties describe the nesting, and both are absent
+  (rather than empty or zero) at top level, so graphs without closure-scoped
+  definitions keep their exact property set: **`parent_scope`**, the qualified
+  name of the nearest named enclosing binding, and **`nesting_depth`**, where
+  1 or more means closure-scoped. Qualified names are scope-chained —
+  `packages/opencode/src/mcp.layer.connectRemote` — so two `get`s in two
+  closures of one module no longer collide. There is no new edge type: the
+  enclosing scope is often a `Constant` or an anonymous literal, so a
+  `Function`→`Function` edge would misrepresent node types; query containment
+  with `WHERE f.parent_scope = '…'`.
+  **Closure-scoped definitions resolve `CALLS` within their own file only.**
+  A nested definition is lexically callable inside its enclosing scope unless
+  it escapes, so it never joins the global name index. Without that rule the
+  ~2 270 new nested names on the same codebase would have taken
+  multi-candidate call names from 664 to 1 562 and turned 293 previously
+  unambiguous names ambiguous. Top-level bindings, including `namespace`
+  members, participate globally exactly as before.
 - **Top-level factory-wrapped TS/JS bindings are `Function` nodes.**
   `export const readFile = Effect.fn("Bom.readFile")(function* (…) { … })`
   bound a function but had a `call_expression` value, so it became a
@@ -38,6 +68,14 @@ ship time — it's the only place the version bumps.
   `const x = function* () {}` became `Constant` nodes instead of functions,
   and a top-level `function* g() {}` — exported or not — produced **no node at
   all**. Generators are load-bearing in Effect-TS and redux-saga codebases.
+- **Calls inside a nested named binding were dropped, not mis-attributed.**
+  Call extraction skipped named arrow and function bindings on the theory that
+  they were "node-ified elsewhere" — true only at the top level. A
+  `const handler = () => { foo() }` *inside* a function body was skipped by
+  the extractor **and** never node-ified, so `foo()` left no trace in the
+  graph at all. Those calls now attach to the binding that contains them, and
+  every call site is attributed to exactly one `Function` — the nearest
+  enclosing node-ified scope — so nothing is counted twice either.
 
 ## [0.1.5] - 2026-08-01
 

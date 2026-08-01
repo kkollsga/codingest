@@ -43,6 +43,22 @@ unwrap, restoring the dead `"function"` match arm, and dropping the
 `wrapped_by` column promotion each turned it red, and each restore turned it
 back green.
 
+The additive `ts_closure_scope` digest was captured on 2026-08-01 with the
+corpus itself. Same reason a third time, one level down: no pre-existing
+corpus declared *anything* below the top level of a TS file — not a nested
+named binding, not a `namespace`, not a closure-scoped helper — so the whole
+nested scope walk could be changed or deleted with every digest staying green.
+It pins both directions of the inclusion criterion: the shapes that must
+become nodes (a closure-scoped `Effect.fn` binding, a nested named arrow, a
+depth-2 chain, a namespace member, a class-method-local) and the shapes that
+must not (a named binding under an anonymous callback, `arr.map(f)` at
+depth > 0, a plain IIFE), plus the `#{line}` duplicate tie-break and D3's
+same-file-only CALLS participation. Verified additive the strict way:
+`capture_goldens` rewrote all ten files, and afterwards `git status` reported
+only `ts_closure_scope.sha256` as new, so the nine pre-existing digests came
+back byte-identical. The gate was then mutation-tested five ways — see the
+Phase 3 commit message.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now
