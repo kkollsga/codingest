@@ -698,17 +698,29 @@ pub fn build_references_edges(
 /// Resolution mirrors `build_call_edges`'s name-keyed lookup: only
 /// emit an edge when the identifier matches exactly one function in
 /// the project (skip ambiguous matches to avoid noise from
-/// argument-name collisions with unrelated functions).
+/// argument-name collisions with unrelated functions) — and, per D3,
+/// a closure-scoped definition is offered only to referrers in its own
+/// file. `wrapper`, `inner` and `decorator` are the most common nested
+/// names there are; without the gate a globally unique one of them
+/// becomes a cross-file REFERENCES_FN target, which is the same
+/// false-positive class D3 keeps out of CALLS.
 pub fn build_references_fn_edges(functions: &[FunctionInfo]) -> Vec<ReferencesFnEdge> {
     if functions.is_empty() {
         return Vec::new();
     }
     let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut nested_by_file: HashMap<&str, HashMap<&str, Vec<&str>>> = HashMap::new();
     for f in functions {
-        by_name
-            .entry(f.name.as_str())
-            .or_default()
-            .push(f.qualified_name.as_str());
+        let bucket = if super::call_edges::is_nested_function(f) {
+            nested_by_file
+                .entry(f.file_path.as_str())
+                .or_default()
+                .entry(f.name.as_str())
+                .or_default()
+        } else {
+            by_name.entry(f.name.as_str()).or_default()
+        };
+        bucket.push(f.qualified_name.as_str());
     }
 
     let mut out: Vec<ReferencesFnEdge> = Vec::new();
@@ -717,11 +729,15 @@ pub fn build_references_fn_edges(functions: &[FunctionInfo]) -> Vec<ReferencesFn
             continue;
         }
         let caller = f.qualified_name.as_str();
+        let local = nested_by_file.get(f.file_path.as_str());
         let mut seen: HashSet<&str> = HashSet::new();
         for (ident, line) in &f.function_refs {
-            let Some(matches) = by_name.get(ident.as_str()) else {
-                continue;
-            };
+            let mut storage: Vec<&str> = Vec::new();
+            let matches = super::call_edges::merge_candidates(
+                by_name.get(ident.as_str()),
+                local.and_then(|m| m.get(ident.as_str())),
+                &mut storage,
+            );
             // Only emit on unambiguous matches — if the bare name maps
             // to multiple functions, skip rather than guess. Function
             // pointers passed as arguments don't carry receiver-type
@@ -837,12 +853,24 @@ pub fn build_decorates_edges(functions: &[FunctionInfo]) -> Vec<DecoratesEdge> {
         return Vec::new();
     }
     // bare name → list of qualified_names that share that short name.
+    // D3, as in `build_call_edges` and `build_references_fn_edges`: a
+    // closure-scoped definition is a candidate decorator only for functions
+    // in its own file. A decorator factory's `def wrapper` is the archetypal
+    // nested name, and resolving `@wrapper` in an unrelated file to it would
+    // be a pure false positive.
     let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut nested_by_file: HashMap<&str, HashMap<&str, Vec<&str>>> = HashMap::new();
     for f in functions {
-        by_name
-            .entry(f.name.as_str())
-            .or_default()
-            .push(f.qualified_name.as_str());
+        let bucket = if super::call_edges::is_nested_function(f) {
+            nested_by_file
+                .entry(f.file_path.as_str())
+                .or_default()
+                .entry(f.name.as_str())
+                .or_default()
+        } else {
+            by_name.entry(f.name.as_str()).or_default()
+        };
+        bucket.push(f.qualified_name.as_str());
     }
 
     let mut out: Vec<DecoratesEdge> = Vec::new();
@@ -851,6 +879,7 @@ pub fn build_decorates_edges(functions: &[FunctionInfo]) -> Vec<DecoratesEdge> {
             continue;
         }
         let function_qname = f.qualified_name.as_str();
+        let local = nested_by_file.get(f.file_path.as_str());
         // Dedup per (decorator_qname → function) — a function with two
         // decorators that happen to resolve to the same target only
         // emits one edge. Carries the *first* raw decorator_name we
@@ -869,9 +898,12 @@ pub fn build_decorates_edges(functions: &[FunctionInfo]) -> Vec<DecoratesEdge> {
                 .map(|(_, t)| t)
                 .or_else(|| head.rsplit_once('.').map(|(_, t)| t))
                 .unwrap_or(head);
-            let Some(candidates) = by_name.get(bare) else {
-                continue;
-            };
+            let mut storage: Vec<&str> = Vec::new();
+            let candidates = super::call_edges::merge_candidates(
+                by_name.get(bare),
+                local.and_then(|m| m.get(bare)),
+                &mut storage,
+            );
             if candidates.len() != 1 {
                 continue; // ambiguous bare name — skip rather than guess
             }
@@ -1442,5 +1474,98 @@ mod determinism_tests {
             .map(|edge| edge.type_name.as_str())
             .collect();
         assert_eq!(targets, vec!["crate::alpha::Alpha", "crate::beta::Beta"]);
+    }
+}
+
+/// D3 is a property of every bare-name index over the function population,
+/// not just `build_call_edges`. These two builders resolve a bare name to a
+/// *globally unique* function, which is exactly the shape a nested `wrapper`
+/// / `inner` / `decorator` satisfies — so before the gate they minted
+/// cross-file edges into closure-scoped definitions that no caller in that
+/// file can even see.
+#[cfg(test)]
+mod nested_visibility_tests {
+    use super::*;
+    use crate::models::FunctionInfo;
+
+    fn top_level(qname: &str, file: &str, name: &str) -> FunctionInfo {
+        FunctionInfo {
+            name: name.into(),
+            qualified_name: qname.into(),
+            file_path: file.into(),
+            ..FunctionInfo::default()
+        }
+    }
+
+    fn nested(qname: &str, file: &str, name: &str) -> FunctionInfo {
+        let mut f = top_level(qname, file, name);
+        f.metadata
+            .insert("nesting_depth".into(), serde_json::json!(1));
+        f
+    }
+
+    #[test]
+    fn a_nested_definition_is_not_a_cross_file_references_fn_target() {
+        let mut referrer = top_level("b.consume", "b.py", "consume");
+        referrer.function_refs = vec![("wrapper".into(), 4)];
+        let functions = vec![referrer, nested("a.deco.wrapper", "a.py", "wrapper")];
+        assert!(
+            build_references_fn_edges(&functions).is_empty(),
+            "a closure-scoped `wrapper` in another file is not referable"
+        );
+    }
+
+    #[test]
+    fn a_nested_definition_is_a_same_file_references_fn_target() {
+        let mut referrer = top_level("a.deco", "a.py", "deco");
+        referrer.function_refs = vec![("wrapper".into(), 4)];
+        let functions = vec![referrer, nested("a.deco.wrapper", "a.py", "wrapper")];
+        let pairs: Vec<_> = build_references_fn_edges(&functions)
+            .into_iter()
+            .map(|e| (e.caller, e.callee))
+            .collect();
+        assert_eq!(pairs, vec![("a.deco".into(), "a.deco.wrapper".into())]);
+    }
+
+    #[test]
+    fn a_nested_definition_is_not_a_cross_file_decorator() {
+        let mut decorated = top_level("b.handler", "b.py", "handler");
+        decorated.decorators = vec!["wrapper".into()];
+        let functions = vec![decorated, nested("a.deco.wrapper", "a.py", "wrapper")];
+        assert!(
+            build_decorates_edges(&functions).is_empty(),
+            "a closure-scoped `wrapper` in another file cannot decorate"
+        );
+    }
+
+    #[test]
+    fn a_nested_definition_still_decorates_within_its_file() {
+        let mut decorated = top_level("a.handler", "a.py", "handler");
+        decorated.decorators = vec!["wrapper".into()];
+        let functions = vec![decorated, nested("a.deco.wrapper", "a.py", "wrapper")];
+        let pairs: Vec<_> = build_decorates_edges(&functions)
+            .into_iter()
+            .map(|e| (e.decorator, e.function))
+            .collect();
+        assert_eq!(pairs, vec![("a.deco.wrapper".into(), "a.handler".into())]);
+    }
+
+    /// The gate is by visibility, not by deletion: a nested name must not
+    /// shadow an identically named top-level export for a cross-file
+    /// referrer, nor make it look ambiguous.
+    #[test]
+    fn a_nested_name_does_not_disturb_the_global_index() {
+        let mut referrer = top_level("b.consume", "b.py", "consume");
+        referrer.function_refs = vec![("wrapper".into(), 4)];
+        let functions = vec![
+            referrer,
+            top_level("c.wrapper", "c.py", "wrapper"),
+            nested("a.deco.wrapper", "a.py", "wrapper"),
+        ];
+        let pairs: Vec<_> = build_references_fn_edges(&functions)
+            .into_iter()
+            .map(|e| (e.caller, e.callee))
+            .collect();
+        assert_eq!(pairs, vec![("b.consume".into(), "c.wrapper".into())]);
     }
 }

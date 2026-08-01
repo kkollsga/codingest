@@ -229,12 +229,24 @@ fn qname_starts_with_any(qname: &str, scopes: &[String]) -> bool {
     false
 }
 
+/// D3: a closure-scoped definition — one the parser tagged with a non-zero
+/// `nesting_depth` — is lexically reachable only inside its enclosing scope
+/// unless it escapes. Every bare-name index over `functions` has to keep it
+/// out of the global tier and offer it to its own file only.
+pub(super) fn is_nested_function(function: &FunctionInfo) -> bool {
+    function
+        .metadata
+        .get("nesting_depth")
+        .and_then(|value| value.as_u64())
+        .is_some_and(|depth| depth > 0)
+}
+
 /// D3 candidate assembly: the globally visible targets for a call name plus
 /// the nested (closure-scoped) targets declared in the *caller's own file*.
 ///
 /// Borrows both sides untouched in the common case — `storage` is filled only
 /// when a name has candidates on both sides, which is rare.
-fn merge_candidates<'a, 'b>(
+pub(super) fn merge_candidates<'a, 'b>(
     global: Option<&'b Vec<&'a str>>,
     local: Option<&'b Vec<&'a str>>,
     storage: &'b mut Vec<&'a str>,
@@ -294,13 +306,11 @@ pub fn build_call_edges(
     // turning ambiguous, which is exactly the false-positive class v0.1.5's
     // resolution metadata was built to keep out. Escape analysis (which
     // nested functions really do leak cross-file) is the deliberate
-    // non-goal; same-file is the conservative approximation.
-    let is_nested = |f: &FunctionInfo| {
-        f.metadata
-            .get("nesting_depth")
-            .and_then(|v| v.as_u64())
-            .is_some_and(|d| d > 0)
-    };
+    // non-goal; same-file is the conservative approximation. The predicate
+    // itself is `is_nested_function` above — `build_references_fn_edges` and
+    // `build_decorates_edges` are bare-name indexes over the same population
+    // and gate on it too.
+    let is_nested = is_nested_function;
 
     // Bare name → every qualified_name that matches. Top-level definitions
     // only; nested ones go to `nested_names` below, keyed by file.

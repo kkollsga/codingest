@@ -76,6 +76,15 @@ ship time — it's the only place the version bumps.
   graph at all. Those calls now attach to the binding that contains them, and
   every call site is attributed to exactly one `Function` — the nearest
   enclosing node-ified scope — so nothing is counted twice either.
+- **`REFERENCES_FN` and `DECORATES` could point across files into a
+  closure-scoped definition.** Both resolve a bare identifier to a function
+  that is *globally unique* by short name, and a nested definition entered
+  that index — so a `wrapper`, `inner` or `decorator` declared inside one
+  function could become the target of a reference or a decorator in an
+  unrelated file, which no name in that file can actually refer to. Both now
+  apply the same same-file-only rule `CALLS` already did, and a nested name no
+  longer shadows or disambiguates an identically named top-level export for
+  callers elsewhere.
 
 ## [0.1.5] - 2026-08-01
 
