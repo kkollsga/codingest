@@ -143,6 +143,10 @@ struct LoadPipeline<'a> {
     /// tsconfig `paths` + workspace package table, discovered once per build.
     /// Empty when the project has no TS/JS sources.
     js_workspace: &'a super::js_workspace::JsWorkspace,
+    /// Resolved `(source_file, target_file)` IMPORTS pairs, produced by
+    /// `structural_edges` and consumed by `call_edges` for `import_backed`.
+    /// A `BTreeSet` so its construction is order-independent.
+    file_import_pairs: std::collections::BTreeSet<(String, String)>,
 }
 
 impl<'a> LoadPipeline<'a> {
@@ -155,6 +159,7 @@ impl<'a> LoadPipeline<'a> {
             result,
             project_info,
             js_workspace,
+            file_import_pairs: std::collections::BTreeSet::new(),
             graph: DirGraph::new(),
             modules: Vec::new(),
             known_modules: std::collections::HashSet::new(),
@@ -752,6 +757,14 @@ impl<'a> LoadPipeline<'a> {
             &module_to_file,
             self.js_workspace,
         );
+        // Kept for the call pass: `import_backed` on a CALLS edge asks whether
+        // the caller's file imports the callee's, and this is the only place
+        // the resolved file-import set exists. `structural_edges` runs before
+        // `call_edges`, so stashing it here avoids resolving imports twice.
+        self.file_import_pairs = file_imports
+            .iter()
+            .map(|edge| (edge.source.clone(), edge.target.clone()))
+            .collect();
         if !file_imports.is_empty() {
             maintain::add_connections(
                 graph,
@@ -840,12 +853,18 @@ impl<'a> LoadPipeline<'a> {
         let graph = &mut self.graph;
         // Function CALLS Function (5-tier resolution).
         let noise = super::call_edges::noise_names_for_files(&result.files);
+        let import_pairs: std::collections::HashSet<(&str, &str)> = self
+            .file_import_pairs
+            .iter()
+            .map(|(source, target)| (source.as_str(), target.as_str()))
+            .collect();
         let (mut call_edges, mut call_stats) = super::call_edges::build_call_edges(
             &result.functions,
             &result.files,
             &noise,
             5,
             &result.type_relationships,
+            &import_pairs,
         );
         let semantic = super::semantic_edges::build_control_edges(
             &result.control_transfers,

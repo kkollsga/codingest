@@ -115,6 +115,30 @@ pub(super) fn call_edges_df(edges: &[super::super::call_edges::CallEdge]) -> Dat
             str_col(edges.iter().map(|edge| edge.via.clone()).collect()),
         ));
     }
+    // Resolution metadata: present whenever any edge in the frame carries it
+    // (ordinary CALLS always do; AGC semantic edges never do), sparse-null
+    // otherwise — the same conditional-column pattern as `raw_targets`.
+    if edges.iter().any(|edge| edge.resolution.is_some()) {
+        columns.push((
+            "resolution",
+            ColumnType::String,
+            str_col(edges.iter().map(|edge| edge.resolution.clone()).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.candidates.is_some()) {
+        columns.push((
+            "candidates",
+            ColumnType::Int64,
+            int_col(edges.iter().map(|edge| edge.candidates).collect()),
+        ));
+    }
+    if edges.iter().any(|edge| edge.import_backed.is_some()) {
+        columns.push((
+            "import_backed",
+            ColumnType::Boolean,
+            bool_col(edges.iter().map(|edge| edge.import_backed).collect()),
+        ));
+    }
     if edges.iter().any(|edge| edge.address_lines.is_some()) {
         columns.push((
             "address_lines",

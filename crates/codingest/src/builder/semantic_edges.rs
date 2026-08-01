@@ -177,6 +177,13 @@ pub fn build_control_edges(
                 offsets: join_strings(&aggregate.offsets),
                 via: join_strings(&aggregate.via),
                 address_lines: optional_lines(&aggregate.address_lines),
+                // AGC control transfers are resolved by the semantic pass, not
+                // by the name-resolution tiers, so the tier metadata does not
+                // apply. Left `None` (the established sparse-column pattern)
+                // rather than invented.
+                resolution: None,
+                candidates: None,
+                import_backed: None,
             }
         })
         .collect();

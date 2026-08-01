@@ -25,6 +25,62 @@ pub struct CallEdge {
     pub offsets: Option<String>,
     pub via: Option<String>,
     pub address_lines: Option<String>,
+    /// Which tier pinned this edge — see [`Resolution`]. `None` for semantic
+    /// (AGC control-transfer) edges, which do not go through the tiers.
+    pub resolution: Option<String>,
+    /// How many candidates survived the tiers at the emit point. `1` means the
+    /// resolution was unambiguous; `> 1` means the site fanned out and this
+    /// edge is one of several guesses for the same call.
+    pub candidates: Option<i64>,
+    /// True when the caller's file is the callee's file, or imports it. The
+    /// structural check a name-resolved edge otherwise lacks: on a large
+    /// corpus, `fetch()` resolving to a project function named `fetch` in a
+    /// file the caller never imports is what makes "who calls X" unusable.
+    pub import_backed: Option<bool>,
+}
+
+/// The tier that pinned a call site to its target, best precision first.
+///
+/// The declaration order IS the precision ranking, and it is load-bearing: one
+/// edge aggregates every call site between the same pair, and when two sites
+/// disagree the edge keeps the *best* tier (with `candidates` taking the
+/// minimum). Without a fixed total order that merge would depend on iteration
+/// order and the graph would stop being deterministic.
+///
+/// The ranking is by how much evidence pinned the target: an exact qualified
+/// name is the call text itself; a receiver type is a real type constraint;
+/// same-owner / namespace-import / same-file are scope constraints of
+/// decreasing tightness; `UniqueName` is only "no other symbol in the project
+/// has this name" (which is exactly how a project `fetch` absorbs every call
+/// to the web global); `LangGroup` narrows by separator convention alone; and
+/// `GlobalFallback` means no tier narrowed anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Resolution {
+    ExactQualified,
+    Receiver,
+    Inherited,
+    SameOwner,
+    NamespaceImport,
+    SameFile,
+    UniqueName,
+    LangGroup,
+    GlobalFallback,
+}
+
+impl Resolution {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Resolution::ExactQualified => "exact_qualified",
+            Resolution::Receiver => "receiver",
+            Resolution::Inherited => "inherited",
+            Resolution::SameOwner => "same_owner",
+            Resolution::NamespaceImport => "namespace_import",
+            Resolution::SameFile => "same_file",
+            Resolution::UniqueName => "unique_name",
+            Resolution::LangGroup => "lang_group",
+            Resolution::GlobalFallback => "global_fallback",
+        }
+    }
 }
 
 /// Aggregate counters describing how the resolver classified every call
@@ -138,8 +194,9 @@ fn build_ancestor_map(rels: &[TypeRelationship]) -> HashMap<&str, HashSet<&str>>
 }
 
 /// Per-function output of the parallel match loop: borrowed
-/// `(caller, callee, line)` tuples plus that function's [`Counts`].
-type FnMatchResult<'a> = (Vec<(&'a str, &'a str, u32)>, Counts);
+/// `(caller, callee, line, tier, surviving-candidate-count)` tuples plus that
+/// function's [`Counts`].
+type FnMatchResult<'a> = (Vec<(&'a str, &'a str, u32, Resolution, usize)>, Counts);
 
 /// True if `qname` lives under any of the namespace prefixes in `scopes`.
 /// A "lives under" match requires `qname` to start with `scope` followed by
@@ -190,6 +247,7 @@ pub fn build_call_edges(
     excluded_names: &std::collections::HashSet<&str>,
     max_targets: usize,
     type_relationships: &[TypeRelationship],
+    file_import_pairs: &HashSet<(&str, &str)>,
 ) -> (Vec<CallEdge>, CallResolutionStats) {
     let verbose = std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some();
     let t0 = std::time::Instant::now();
@@ -280,7 +338,7 @@ pub fn build_call_edges(
             let caller_owner = qname_to_owner.get(caller_qn).copied();
             let caller_file = fn_info.file_path.as_str();
 
-            let mut out: Vec<(&str, &str, u32)> = Vec::new();
+            let mut out: Vec<(&str, &str, u32, Resolution, usize)> = Vec::new();
             let mut counts = Counts::default();
 
             for (called_name, line) in &fn_info.calls {
@@ -294,7 +352,13 @@ pub fn build_call_edges(
                     counts.resolved += 1;
                     for &target in targets {
                         if target != caller_qn {
-                            out.push((caller_qn, target, *line));
+                            out.push((
+                                caller_qn,
+                                target,
+                                *line,
+                                Resolution::ExactQualified,
+                                targets.len(),
+                            ));
                         }
                     }
                     continue;
@@ -313,7 +377,7 @@ pub fn build_call_edges(
                     counts.resolved += 1;
                     let target = candidates[0];
                     if target != caller_qn {
-                        out.push((caller_qn, target, *line));
+                        out.push((caller_qn, target, *line, Resolution::UniqueName, 1));
                     }
                     continue;
                 }
@@ -338,6 +402,9 @@ pub fn build_call_edges(
                     None
                 };
                 let mut owner_hint_hit = false;
+                // Tracks the LAST tier that actually narrowed the candidate
+                // set. `GlobalFallback` means none of them did.
+                let mut tier = Resolution::GlobalFallback;
                 if let Some(hint) = explicit_hint.or(implicit_hint) {
                     filtered = targets
                         .iter()
@@ -347,6 +414,7 @@ pub fn build_call_edges(
                     if !filtered.is_empty() {
                         targets = &filtered[..];
                         owner_hint_hit = true;
+                        tier = Resolution::Receiver;
                     }
                 }
 
@@ -375,12 +443,13 @@ pub fn build_call_edges(
                                 counts.resolved += 1;
                                 counts.inherited += 1;
                                 if inh[0] != caller_qn {
-                                    out.push((caller_qn, inh[0], *line));
+                                    out.push((caller_qn, inh[0], *line, Resolution::Inherited, 1));
                                 }
                                 continue;
                             } else if !inh.is_empty() {
                                 filtered = inh;
                                 targets = &filtered[..];
+                                tier = Resolution::Inherited;
                             }
                         }
                     }
@@ -396,6 +465,7 @@ pub fn build_call_edges(
                         if !narrowed.is_empty() {
                             filtered = narrowed;
                             targets = &filtered[..];
+                            tier = Resolution::SameOwner;
                         }
                     }
                 }
@@ -416,6 +486,7 @@ pub fn build_call_edges(
                         if !narrowed.is_empty() {
                             filtered = narrowed;
                             targets = &filtered[..];
+                            tier = Resolution::NamespaceImport;
                         }
                     }
                 }
@@ -429,6 +500,7 @@ pub fn build_call_edges(
                     if !narrowed.is_empty() {
                         filtered = narrowed;
                         targets = &filtered[..];
+                        tier = Resolution::SameFile;
                     }
                 }
 
@@ -441,6 +513,7 @@ pub fn build_call_edges(
                     if !narrowed.is_empty() {
                         filtered = narrowed;
                         targets = &filtered[..];
+                        tier = Resolution::LangGroup;
                     }
                 }
 
@@ -452,7 +525,7 @@ pub fn build_call_edges(
                 counts.resolved += 1;
                 for &target in targets {
                     if target != caller_qn {
-                        out.push((caller_qn, target, *line));
+                        out.push((caller_qn, target, *line, tier, targets.len()));
                     }
                 }
             }
@@ -472,11 +545,22 @@ pub fn build_call_edges(
     }
 
     // Merge into the final dedupe map sequentially — 200K inserts is ~5ms.
+    // One edge aggregates every call site between the pair, so the tier and
+    // candidate count must merge too: keep the BEST tier seen (the `Ord` on
+    // `Resolution` is the documented precision ranking) and the MINIMUM
+    // candidate count. Both are order-independent, which is what keeps the
+    // three-build determinism gate green.
     let total: usize = per_fn.iter().map(|(v, _)| v.len()).sum();
-    let mut seen: HashMap<(&str, &str), Vec<u32>> = HashMap::with_capacity(total);
+    let mut seen: HashMap<(&str, &str), (Vec<u32>, Resolution, usize)> =
+        HashMap::with_capacity(total);
     for (edges, _) in per_fn {
-        for (caller, callee, line) in edges {
-            seen.entry((caller, callee)).or_default().push(line);
+        for (caller, callee, line, tier, candidates) in edges {
+            let entry = seen
+                .entry((caller, callee))
+                .or_insert_with(|| (Vec::new(), tier, candidates));
+            entry.0.push(line);
+            entry.1 = entry.1.min(tier);
+            entry.2 = entry.2.min(candidates);
         }
     }
 
@@ -496,7 +580,11 @@ pub fn build_call_edges(
     let result: Vec<CallEdge> = keys
         .into_iter()
         .map(|(caller, callee)| {
-            let mut lines = seen.remove(&(caller, callee)).unwrap_or_default();
+            let (mut lines, tier, candidates) = seen.remove(&(caller, callee)).unwrap_or((
+                Vec::new(),
+                Resolution::GlobalFallback,
+                0,
+            ));
             lines.sort_unstable();
             lines.dedup();
             let count = lines.len() as i64;
@@ -508,6 +596,14 @@ pub fn build_call_edges(
                 use std::fmt::Write;
                 let _ = write!(call_lines, "{}", l);
             }
+            // A same-file call needs no import to be structurally backed;
+            // otherwise the caller's file must actually import the callee's.
+            let caller_file = qname_to_file.get(caller).copied();
+            let callee_file = qname_to_file.get(callee).copied();
+            let import_backed = match (caller_file, callee_file) {
+                (Some(from), Some(to)) => from == to || file_import_pairs.contains(&(from, to)),
+                _ => false,
+            };
             CallEdge {
                 caller: caller.to_string(),
                 callee: callee.to_string(),
@@ -517,6 +613,9 @@ pub fn build_call_edges(
                 offsets: None,
                 via: None,
                 address_lines: None,
+                resolution: Some(tier.as_str().to_string()),
+                candidates: Some(candidates as i64),
+                import_backed: Some(import_backed),
             }
         })
         .collect();
@@ -538,6 +637,12 @@ mod stats_tests {
     use super::*;
     use crate::models::{FileInfo, FunctionInfo, TypeRelationship};
 
+    /// A build with no resolved file imports — `import_backed` then reduces to
+    /// "caller and callee share a file".
+    fn no_imports() -> HashSet<(&'static str, &'static str)> {
+        HashSet::new()
+    }
+
     fn func(qn: &str, file: &str, calls: &[(&str, u32)]) -> FunctionInfo {
         FunctionInfo {
             name: qn.rsplit(['.', ':']).next().unwrap_or(qn).to_string(),
@@ -546,6 +651,222 @@ mod stats_tests {
             calls: calls.iter().map(|(n, l)| (n.to_string(), *l)).collect(),
             ..Default::default()
         }
+    }
+
+    /// `(callee, resolution, candidates, import_backed)` for every edge,
+    /// sorted — the property assertions read off this.
+    fn meta(edges: &[CallEdge]) -> Vec<(&str, &str, i64, bool)> {
+        let mut rows: Vec<_> = edges
+            .iter()
+            .map(|e| {
+                (
+                    e.callee.as_str(),
+                    e.resolution.as_deref().expect("resolution set"),
+                    e.candidates.expect("candidates set"),
+                    e.import_backed.expect("import_backed set"),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn unique_name_tier_is_labelled_and_counted() {
+        let functions = vec![
+            func("a.foo", "a.py", &[("bar", 1)]),
+            func("a.bar", "a.py", &[]),
+        ];
+        let files = vec![FileInfo {
+            path: "a.py".into(),
+            ..Default::default()
+        }];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &files,
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        // Same file, so import_backed holds without any IMPORTS edge.
+        assert_eq!(meta(&edges), vec![("a.bar", "unique_name", 1, true)]);
+    }
+
+    #[test]
+    fn exact_qualified_tier_is_labelled() {
+        let caller = func("m.START", "m.agc", &[("m.P61", 7)]);
+        let mut target = func("m.P61", "other.agc", &[]);
+        target.name = "P61".into();
+        let (edges, _) = build_call_edges(
+            &[caller, target],
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert_eq!(meta(&edges), vec![("m.P61", "exact_qualified", 1, false)]);
+    }
+
+    #[test]
+    fn receiver_tier_is_labelled() {
+        // `read` exists on two owners; the explicit receiver pins one.
+        let functions = vec![
+            func("m.Cfg.read", "a.py", &[]),
+            func("m.Db.read", "b.py", &[]),
+            func("m.caller", "c.py", &[("Cfg.read", 3)]),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert_eq!(meta(&edges), vec![("m.Cfg.read", "receiver", 1, false)]);
+    }
+
+    #[test]
+    fn inherited_tier_is_labelled() {
+        let files = vec![FileInfo {
+            path: "a.py".into(),
+            ..Default::default()
+        }];
+        let functions = vec![
+            func("mod.Base.m", "a.py", &[]),
+            func("mod.Other.m", "a.py", &[]),
+            func("mod.Derived.caller", "a.py", &[("m", 1)]),
+        ];
+        let rels = vec![TypeRelationship {
+            source_type: "mod.Derived".into(),
+            target_type: Some("mod.Base".into()),
+            relationship: "extends".into(),
+            methods: vec![],
+        }];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &files,
+            &std::collections::HashSet::new(),
+            5,
+            &rels,
+            &no_imports(),
+        );
+        assert_eq!(meta(&edges), vec![("mod.Base.m", "inherited", 1, true)]);
+    }
+
+    #[test]
+    fn namespace_import_tier_is_labelled() {
+        // Two `True`s; the caller's file imports only one namespace, so the
+        // namespace-import tier is what narrows. This tier had no test at all
+        // before — it was added for dotnet/runtime and never covered.
+        let functions = vec![
+            func("xunit.Assert.True", "x.cs", &[]),
+            func("fluent.Assert.True", "f.cs", &[]),
+            func("app.caller", "app.cs", &[("True", 4)]),
+        ];
+        let files = vec![FileInfo {
+            path: "app.cs".into(),
+            imports: vec!["xunit".into()],
+            ..Default::default()
+        }];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &files,
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert_eq!(
+            meta(&edges),
+            vec![("xunit.Assert.True", "namespace_import", 1, false)]
+        );
+    }
+
+    #[test]
+    fn fan_out_records_the_surviving_candidate_count_on_every_edge() {
+        // Two same-named targets no tier can separate: both get an edge, and
+        // BOTH must say `candidates: 2` — that is the annotation that makes a
+        // fan-out guess distinguishable from a pinned resolution.
+        let functions = vec![
+            func("one/a.fetch", "one/a.ts", &[]),
+            func("two/b.fetch", "two/b.ts", &[]),
+            func("three/c.caller", "three/c.ts", &[("fetch", 9)]),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert_eq!(
+            meta(&edges),
+            vec![
+                ("one/a.fetch", "lang_group", 2, false),
+                ("two/b.fetch", "lang_group", 2, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_backed_follows_the_resolved_file_import_set() {
+        let functions = vec![
+            func("a.helper", "a.ts", &[]),
+            func("b.caller", "b.ts", &[("helper", 1)]),
+            func("c.caller", "c.ts", &[("helper", 1)]),
+        ];
+        // b.ts imports a.ts; c.ts does not.
+        let imports: HashSet<(&str, &str)> = HashSet::from([("b.ts", "a.ts")]);
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &imports,
+        );
+        let backed: Vec<(&str, bool)> = {
+            let mut v: Vec<_> = edges
+                .iter()
+                .map(|e| (e.caller.as_str(), e.import_backed.expect("set")))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(backed, vec![("b.caller", true), ("c.caller", false)]);
+    }
+
+    #[test]
+    fn aggregation_keeps_the_best_tier_and_the_smallest_candidate_count() {
+        // `m.caller` reaches `m.Cfg.read` twice: once by exact qualified name
+        // (1 candidate) and once bare, which only the lang-group tier narrows
+        // (2 candidates). The single aggregated edge must report the BETTER
+        // tier and the SMALLER count — and must do so regardless of the order
+        // the sites were seen in.
+        let functions = vec![
+            func("m.Cfg.read", "a.py", &[]),
+            func("m.Db.read", "b.py", &[]),
+            func("m.caller", "c.py", &[("m.Cfg.read", 1), ("read", 2)]),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        let cfg = edges
+            .iter()
+            .find(|e| e.callee == "m.Cfg.read")
+            .expect("edge to m.Cfg.read");
+        assert_eq!(cfg.resolution.as_deref(), Some("exact_qualified"));
+        assert_eq!(cfg.candidates, Some(1));
+        assert_eq!(cfg.call_lines, "1,2");
     }
 
     #[test]
@@ -567,7 +888,7 @@ mod stats_tests {
         let mut noise = std::collections::HashSet::new();
         noise.insert("noisy");
 
-        let (edges, stats) = build_call_edges(&functions, &files, &noise, 5, &[]);
+        let (edges, stats) = build_call_edges(&functions, &files, &noise, 5, &[], &no_imports());
 
         assert_eq!(stats.total_calls, 4);
         assert_eq!(stats.excluded_noise, 1);
@@ -600,6 +921,7 @@ mod stats_tests {
             &std::collections::HashSet::new(),
             5,
             &[],
+            &no_imports(),
         );
 
         assert_eq!(stats.total_calls, 1);
@@ -623,7 +945,7 @@ mod stats_tests {
         let mut noise = std::collections::HashSet::new();
         noise.insert("WAITLIST");
 
-        let (edges, stats) = build_call_edges(&functions, &[], &noise, 5, &[]);
+        let (edges, stats) = build_call_edges(&functions, &[], &noise, 5, &[], &no_imports());
 
         assert_eq!(stats.total_calls, 1);
         assert_eq!(stats.excluded_noise, 1);
@@ -653,7 +975,7 @@ mod stats_tests {
         }];
         let noise = std::collections::HashSet::new();
 
-        let (edges, stats) = build_call_edges(&functions, &files, &noise, 5, &rels);
+        let (edges, stats) = build_call_edges(&functions, &files, &noise, 5, &rels, &no_imports());
 
         assert_eq!(stats.resolved_via_inheritance, 1);
         let pairs: Vec<(&str, &str)> = edges
@@ -679,7 +1001,7 @@ mod stats_tests {
         ];
         let noise = std::collections::HashSet::new();
 
-        let (_edges, stats) = build_call_edges(&functions, &files, &noise, 5, &[]);
+        let (_edges, stats) = build_call_edges(&functions, &files, &noise, 5, &[], &no_imports());
         assert_eq!(stats.resolved_via_inheritance, 0);
     }
 
@@ -696,7 +1018,14 @@ mod stats_tests {
         }];
 
         let python_noise = noise_names_for_files(&python_files);
-        let (edges, stats) = build_call_edges(&functions, &python_files, &python_noise, 5, &[]);
+        let (edges, stats) = build_call_edges(
+            &functions,
+            &python_files,
+            &python_noise,
+            5,
+            &[],
+            &no_imports(),
+        );
 
         assert_eq!(stats.total_calls, 1);
         assert_eq!(stats.excluded_noise, 0);
@@ -712,7 +1041,14 @@ mod stats_tests {
         });
 
         let polyglot_noise = noise_names_for_files(&polyglot_files);
-        let (edges, stats) = build_call_edges(&functions, &polyglot_files, &polyglot_noise, 5, &[]);
+        let (edges, stats) = build_call_edges(
+            &functions,
+            &polyglot_files,
+            &polyglot_noise,
+            5,
+            &[],
+            &no_imports(),
+        );
 
         assert_eq!(stats.total_calls, 1);
         assert_eq!(stats.excluded_noise, 1);

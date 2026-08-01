@@ -413,6 +413,99 @@ fn capture_goldens() {
     }
 }
 
+// ── serialized-bytes determinism ─────────────────────────────────────────
+//
+// `golden_parity` digests the graph as it exists IN MEMORY, from sorted maps
+// and sorted vectors. That rendering is structurally insulated from the order
+// properties were inserted in — which is precisely the bug class that bit this
+// project before: two builds with identical in-memory digests wrote `.kgl`
+// files that differed byte-for-byte, because edge-property insertion order
+// leaked into the serialization (fixed engine-side in kglite 0.14.5; the
+// codingest-side assertion never existed). CALLS edges now carry three more
+// properties each, so the exposure is larger, not smaller.
+//
+// This is the net the in-memory digest cannot provide: build the same corpus
+// repeatedly, save each build, compare the FILES.
+#[test]
+fn kgl_bytes_are_stable_across_builds() {
+    let tmp = tempfile::Builder::new()
+        .prefix("codingest-kgl-bytes-")
+        .tempdir()
+        .unwrap();
+    let root = corpus_root();
+
+    // `ts_monorepo` carries the densest multi-property CALLS edge set
+    // (resolution + candidates + import_backed on every edge); `agc_basic`
+    // exercises the sparse-column path, where the semantic pass leaves those
+    // three null while populating raw_targets / via / address_lines.
+    for name in ["ts_monorepo", "agc_basic"] {
+        let dir = root.join(name);
+        assert!(dir.is_dir(), "missing corpus dir: {}", dir.display());
+
+        let mut bytes: Vec<Vec<u8>> = Vec::new();
+        for run in 1..=BUILDS_PER_CORPUS {
+            let dest = tmp.path().join(format!("{name}-{run}.kgl"));
+            codingest::builder::run_with_options(&dir, false, true, Some(&dest), None, true)
+                .unwrap_or_else(|e| panic!("[{name}] build {run} failed: {e}"));
+            bytes.push(std::fs::read(&dest).expect("read written .kgl"));
+        }
+
+        for run in 2..=BUILDS_PER_CORPUS {
+            let (first, again) = (&bytes[0], &bytes[run - 1]);
+            if first == again {
+                continue;
+            }
+            let at = first
+                .iter()
+                .zip(again.iter())
+                .position(|(a, b)| a != b)
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "end (length differs)".into());
+            panic!(
+                "[{name}] .kgl BYTES differ between build 1 and build {run} \
+                 ({} vs {} bytes, first difference at offset {at}). The in-memory \
+                 parity digest cannot see this: it is built from sorted maps, so \
+                 property INSERTION order is invisible to it while remaining \
+                 visible in the serialized file.",
+                first.len(),
+                again.len()
+            );
+        }
+    }
+}
+
+/// Diagnostic dump of every corpus's canonical rendering, one file per
+/// corpus, into the directory named by `CODINGEST_CANONICAL_DUMP`.
+///
+/// This is the tool the golden-regeneration protocol runs on: when a change is
+/// *supposed* to move only one section of the rendering (e.g. adding edge
+/// properties must not touch `node_type_counts`, `edge_type_counts`,
+/// `node_identities` or `node_props`), dumping before and after and diffing
+/// the sections proves it. A digest tells you *that* something moved; only the
+/// rendering tells you *what*, and blessing an edge-set change inside a
+/// "properties-only" regeneration would hide it forever.
+///
+///   CODINGEST_CANONICAL_DUMP=/tmp/before \
+///     cargo test -p codingest --test parity -- --ignored dump_canonical
+#[test]
+#[ignore = "diagnostic; run explicitly with --ignored dump_canonical"]
+fn dump_canonical() {
+    let out_dir = PathBuf::from(
+        std::env::var("CODINGEST_CANONICAL_DUMP")
+            .expect("set CODINGEST_CANONICAL_DUMP to the output directory"),
+    );
+    std::fs::create_dir_all(&out_dir).expect("create dump dir");
+    let root = corpus_root();
+    for name in CORPORA {
+        let dir = root.join(name);
+        let g = codingest::builder::run_with_options(&dir, false, true, None, None, true)
+            .unwrap_or_else(|e| panic!("[{name}] codingest build failed: {e}"));
+        let path = out_dir.join(format!("{name}.txt"));
+        std::fs::write(&path, canonical_graph_string(&g)).expect("write dump");
+        eprintln!("dumped {name} -> {}", path.display());
+    }
+}
+
 // ── rev-path parity ──────────────────────────────────────────────────────
 
 fn git_available() -> bool {

@@ -10,6 +10,21 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- **`CALLS` edges carry how they were resolved.** Three new properties:
+  `resolution` names the tier that pinned the edge (`exact_qualified`,
+  `receiver`, `inherited`, `same_owner`, `namespace_import`, `same_file`,
+  `unique_name`, `lang_group`, `global_fallback`); `candidates` is how many
+  targets survived the tiers, so `> 1` marks an edge as one of several guesses
+  for the same call site; `import_backed` says whether the caller's file is —
+  or imports — the callee's. Until now a query could not tell a receiver-pinned
+  edge from a global-name guess, which is what makes "who calls X" unusable on
+  a large corpus: `MATCH ()-[r:CALLS]->(f) WHERE r.import_backed AND
+  r.candidates = 1` is now expressible. When several call sites between the
+  same pair disagree, the edge keeps the best-precision tier and the smallest
+  candidate count, by a fixed documented ranking. AGC control-transfer edges,
+  which do not go through the tiers, leave all three null.
+
 ### Fixed
 - **TypeScript/JavaScript imports now resolve.** Relative specifiers were
   discarded at parse time (`import { x } from "./util"` was dropped before the
