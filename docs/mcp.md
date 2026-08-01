@@ -290,6 +290,7 @@ more cheaply:
 | switch between repositories at runtime | manifest + `set_root_dir` |
 | serve a prebuilt graph artifact | `--graph /path/to/graph.kgl` |
 | build once in CI, no server | `codingest build` |
+| one-shot query in CI, no server | `codingest query` (see [cli.md](cli.md)) |
 
 One precedence surprise: a manifest declaring `workspace: {kind: local}` wins
 over the mode flags — supply one and the server runs in local-workspace mode

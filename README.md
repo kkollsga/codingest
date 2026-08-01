@@ -109,8 +109,15 @@ The bundled terminal command offers the same workflow:
 ```bash
 codingest build /path/to/repo
 codingest status --output /path/to/repo/.kglite/code-review.kgl
+codingest query -g /path/to/repo/.kglite/code-review.kgl \
+  "MATCH (f:Function)-[:CALLS]->(g:Function) RETURN f.name, g.name LIMIT 20"
 kglite describe /path/to/repo/.kglite/code-review.kgl --connections
 ```
+
+`codingest query` prints unbounded TSV to stdout (use `--format csv|json`, or
+Cypher `LIMIT` to bound rows), warns on stderr when the graph has gone stale,
+and with `--require-fresh` refuses a stale graph with exit code 3 — see
+[docs/cli.md](docs/cli.md).
 
 ## Analyse an open-source repository
 
