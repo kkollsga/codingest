@@ -60,7 +60,7 @@ Then configure the client command as `codingest-mcp --mcp-config
 **`root` is the starting root, not a boundary.** It sets where the server
 points initially; on its own it does **not** constrain where `set_root_dir` can
 subsequently point. Containment is `sandbox_root`, it is **opt-in**, and it
-requires the kglite 0.15.5 engine floor: with it, a swap outside the boundary is
+was introduced in kglite 0.15.5: with it, a swap outside the boundary is
 refused and the active root does not move; without it, a root swap is
 unbounded.
 

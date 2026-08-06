@@ -10,6 +10,18 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-06
+
+### Changed
+- **The KGLite engine floor is now 0.15.6 across Cargo and Python.** The Rust
+  engine, embedded MCP server, Python runtime requirement, and documentation
+  move together. This picks up corrected mixed-selection vector search,
+  community modularity scoring, sampled-centrality validation, persisted HNSW
+  validation, and the 0.15.6 graph-algorithm and vector-search improvements.
+  Release tests now enforce that the Cargo engine/MCP floors and Python runtime
+  floor remain aligned, and Python acceptance tests prove they exercise an
+  installed KGLite version inside the wheel's declared range.
+
 ## [0.1.6] - 2026-08-01
 
 ### Added

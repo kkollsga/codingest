@@ -8,11 +8,40 @@ build-then-load handoff: `build()` returns the *installed kglite wheel's own*
 
 from __future__ import annotations
 
+import importlib.metadata
+import re
 from pathlib import Path
 
 import kglite
 
 import codingest
+
+
+def test_installed_kglite_satisfies_codingest_floor() -> None:
+    """Prove this suite is exercising the runtime floor shipped by the wheel."""
+    requirements = [
+        requirement
+        for requirement in importlib.metadata.requires("codingest") or []
+        if requirement.lower().replace(" ", "").startswith("kglite>=")
+    ]
+    assert len(requirements) == 1, f"expected one KGLite requirement: {requirements!r}"
+    requirement = requirements[0].replace(" ", "")
+    floor_match = re.search(r">=(\d+\.\d+\.\d+)", requirement)
+    ceiling_match = re.search(r"<(\d+\.\d+)", requirement)
+    assert floor_match, f"could not parse KGLite floor from {requirement!r}"
+    assert ceiling_match, f"could not parse KGLite ceiling from {requirement!r}"
+
+    installed = importlib.metadata.version("kglite")
+
+    def release(value: str) -> tuple[int, ...]:
+        return tuple(map(int, value.split(".")[:3]))
+
+    assert release(floor_match.group(1)) <= release(installed) < release(
+        ceiling_match.group(1)
+    ), (
+        f"KGLite {installed} does not satisfy codingest's declared requirement "
+        f"{requirement}"
+    )
 
 
 def _count(g, cypher: str) -> int:

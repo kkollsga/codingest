@@ -30,6 +30,7 @@ THREE WAYS A GATE IS BORN DEAD — each is guarded here:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -921,6 +922,30 @@ def test_the_real_repo_pins_are_in_lockstep_with_the_workspace_version():
     assert res.returncode == 0, (
         "the REAL manifests are out of lockstep — a published crate would declare "
         f"the wrong requirement on its sibling:\n{res.stderr}"
+    )
+
+
+def test_kglite_cargo_and_python_floors_are_in_lockstep():
+    """The Rust writer and Python reader must share one KGLite patch floor.
+
+    `codingest.build()` writes `.kgl` bytes with the Rust crate and loads them
+    through the separately installed Python wheel. A Cargo-only floor bump can
+    therefore leave the acceptance suite exercising the previous Python engine.
+    """
+    cargo = (REPO / "Cargo.toml").read_text()
+    rust_floors = re.findall(
+        r'^kglite(?:-mcp-server)? = \{ version = "([^"]+)"',
+        cargo,
+        flags=re.MULTILINE,
+    )
+    assert len(rust_floors) == 2, "did not find both KGLite workspace dependencies"
+    assert len(set(rust_floors)) == 1, "kglite and kglite-mcp-server floors differ"
+
+    pyproject = (REPO / "pyproject.toml").read_text()
+    match = re.search(r'"kglite>=([^,]+),<0\.16"', pyproject)
+    assert match, "did not find the bounded Python KGLite runtime requirement"
+    assert match.group(1) == rust_floors[0], (
+        "Python KGLite floor differs from the Rust engine/MCP floor"
     )
 
 
