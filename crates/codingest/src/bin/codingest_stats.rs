@@ -550,10 +550,12 @@ mod tests {
                 call_lines: "5".into(),
                 resolution: "unique_name".into(),
                 candidates: 1,
-                // No IMPORTS edge exists between these two files — Python
-                // absolute imports do not resolve (filed separately), which is
-                // exactly why this property must be read, not assumed.
-                import_backed: false,
+                // `pkg/app.py` imports `pkg.util`, which now resolves to a
+                // File→File IMPORTS edge, so the call is import-backed. Read
+                // from the graph, never assumed: this property was `false` for
+                // every Python CALLS edge while absolute imports went
+                // unresolved, and reading it is what makes the fix observable.
+                import_backed: true,
             }],
             "expected the single helper CALLS edge"
         );

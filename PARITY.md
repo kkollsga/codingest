@@ -7,6 +7,28 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Track D — Python absolute imports — 2026-08-10 (branch `feat/backlog-2026-08`)
+
+**Deliberate digest movement, two corpora.** The Python parser prefixes every
+module path with the source root's directory name (`pkg/app.py` →
+`py_basic.pkg.app`) while import specifiers are root-relative (`pkg.util`), so
+the resolver's prefix walk could never match and Python absolute imports
+produced **zero** `IMPORTS` edges — the carve-out recorded under Release 0.1.5
+below. The fix is resolver-side and additive (`builder/other_edges.rs`): after
+the raw prefix walk misses, Python specifiers are retried under the recovered
+root prefix, extended by each of the importing file's ancestor directories
+(covering `src/` layouts). The parser is untouched.
+
+Movement, verified exclusive by `git status` after `capture_goldens`: **only**
+`py_basic` and `py_nested_defs` moved. Measured edge deltas — `py_basic`
+0 → 1 `IMPORTS(File→Module)` + 1 `IMPORTS(File→File)`; `py_nested_defs`
+0 → 2 + 2; its CALLS edges become `import_backed`. Every other corpus,
+including `cross_ts_py` and all TS/JS corpora, is byte-identical: a clone
+layout (`xarray/core/dataset.py` → `xarray.core.dataset`) has no prefix to
+recover, so it generates no new candidates at all. Gate mutated to confirm it
+can fail: disabling the new branch turns three new unit tests, the
+`codingest_stats` `import_backed` test and both regenerated goldens red.
+
 ## Release 0.1.6 verification — 2026-08-01
 
 The release-mode gate is green: `golden_parity`, `rev_self_consistency` and
@@ -89,14 +111,11 @@ Cross-build query parity at release: **11 queries, 11 OK, 0 MISMATCH**, with
 both builds producing identical 28,179-node / 59,522-edge graphs
 (`corpus_sha256 04a90c5d…`, opencode pinned at `1e17856b`).
 
-**Known and deliberately shipped:** Python absolute imports never produce
-`IMPORTS` edges, so `py_basic` pins that behaviour — a golden that currently
-freezes a defect. It predates every release and 0.1.5 does not worsen it; the
-fix will move that golden *with* a recorded reason, which is exactly what the
-protocol is for. The consequence for users is documented in the CHANGELOG and
-`docs/cli.md`: the `import_backed AND candidates = 1` filter removes
-essentially all true cross-file Python call edges. The defect is tracked in
-the local backlog, not here.
+**Known and deliberately shipped (fixed after 0.1.7 — see Track D):** through
+0.1.7, Python absolute imports never produced `IMPORTS` edges, so `py_basic`
+pinned that behaviour — a golden that froze a defect. It predated every release
+and 0.1.5 did not worsen it; the fix moved that golden *with* a recorded reason,
+which is exactly what the protocol is for.
 
 ## Track C — graph resolution precision — 2026-08-01 (branch `feat/graph-resolution-precision`, shipped in 0.1.5)
 
@@ -292,7 +311,10 @@ SHA-256 golden digests at `crates/codingest/tests/goldens/<corpus>.sha256`.
   node/edge count maps, identity set, and full property sweeps that §1
   compares), SHA-256s it, and asserts it equals the stored golden. It never
   references `kglite::code_tree`, so it outlives the in-tree deletion. Digests
-  captured from the in-tree authority (first 12 hex):
+  **as first captured from the in-tree authority** (first 12 hex) — a historical
+  record, not the current file contents; several have since been moved by
+  recorded, deliberate builder changes, so read
+  `crates/codingest/tests/goldens/*.sha256` for what is in force:
   `py_basic 83c20d86fa6c`, `py_inheritance d27d37313d02`,
   `rust_xfile a44952b16301`, `ts_callback ea30ba202d55`,
   `cross_ts_py 16abbe05f4bc`, `dup_minified_assets 5a0799382c3b`.
@@ -300,6 +322,11 @@ SHA-256 golden digests at `crates/codingest/tests/goldens/<corpus>.sha256`.
   2026-07-21, then intentionally refreshed for the 0.1.3 semantic model on
   2026-07-22: `agc_basic 4e0c3d4aad2c`. It supplements the six historical
   authority digests without changing them.
+  `py_basic`'s lineage since: `83c20d86fa6c` (in-tree authority) →
+  `c362f2a87ed4` (commit `8094244`, which added `resolution`, `candidates` and
+  `import_backed` properties to CALLS edges) → `11478e9dded5` (Track D, Python
+  absolute imports now resolve). Each step is a deliberate builder change with
+  its reason in the moving commit.
 - `capture_goldens` (`#[ignore]`) regenerates the goldens; while the in-tree
   builder exists it captures from that authority, and retargets to the
   codingest builder once the in-tree builder is deleted (documented at the

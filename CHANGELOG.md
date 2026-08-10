@@ -11,6 +11,23 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Fixed
+- **Python absolute imports now resolve for standard project layouts**
+  (root-relative and `src/` layouts): `IMPORTS` `File→Module` and `File→File`
+  edges are emitted, and `import_backed` becomes meaningful on Python `CALLS`
+  edges. The Python parser prefixes module paths with the source root's own
+  directory name (`pkg/app.py` → `myproj.pkg.app`) while specifiers are
+  root-relative (`pkg.util`), so the resolver's prefix walk could never match
+  and a Python project produced **zero** import edges; a `src/` layout added two
+  such segments. The resolver now retries Python specifiers under the recovered
+  root prefix after the plain walk misses. This **supersedes the 0.1.5 guidance
+  below to not filter Python graphs on `import_backed`** — that guidance was
+  correct for 0.1.5 through 0.1.7 and no longer applies. Only candidates that
+  name a module the project actually defines become edges, so no target is
+  invented; the clone layout that already worked
+  (`xarray/core/dataset.py` → `xarray.core.dataset`) is unchanged, as are all
+  TS/JS graphs. Two golden digests moved deliberately (`py_basic`,
+  `py_nested_defs`). Python *relative* imports (`from .util import x`) are still
+  dropped at parse time and remain unresolved.
 - **Builds rooted at a dot-named or ignore-listed directory no longer produce a
   silently empty graph.** `WalkDir::filter_entry` applies its predicate to the
   walk *root* as well as its descendants, so pointing the builder at a `.`-named

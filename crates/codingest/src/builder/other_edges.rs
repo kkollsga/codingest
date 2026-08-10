@@ -258,6 +258,125 @@ fn module_path_import_candidates(
     candidates
 }
 
+/// The leading segments a parser's `file_to_module_path` prepended to this
+/// file's module path but which import specifiers never carry.
+///
+/// Python's `file_to_module_path` prefixes every module path with the source
+/// root's own directory name, so a checkout of `pkg/app.py` under `py_basic/`
+/// gets module path `py_basic.pkg.app` while its own `from pkg.util import
+/// helper` names `pkg.util`. The two can never meet in a raw prefix walk. The
+/// prefix is recovered rather than assumed: render the file path the way the
+/// parser does (drop the extension, drop a trailing `__init__`), join it with
+/// the module separator, and subtract that tail from the module path. What is
+/// left is exactly the segments the parser added.
+///
+/// Returns `None` when nothing was added — a clone layout
+/// (`xarray/core/dataset.py` → `xarray.core.dataset`) subtracts to nothing, so
+/// that layout provably generates no extra candidates at all.
+///
+/// The second return value is the file's own directory rendered in module form
+/// (`src.mypkg` for `src/mypkg/app.py`); see [`module_path_prefix_candidates`],
+/// which walks its prefixes as candidate import roots.
+fn module_path_root_prefix(file: &FileInfo, sep: &str) -> Option<(String, Vec<String>)> {
+    let mut segments: Vec<String> = file
+        .path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if let Some(last) = segments.last_mut() {
+        if let Some((stem, _ext)) = last.rsplit_once('.') {
+            if !stem.is_empty() {
+                *last = stem.to_string();
+            }
+        }
+    }
+    if segments.last().map(String::as_str) == Some("__init__") {
+        segments.pop();
+    }
+    let module = file.module_path.as_str();
+    let tail = segments.join(sep);
+    // Everything above the file's own leaf segment: the directories an import
+    // could plausibly be resolved relative to.
+    let dirs: Vec<String> = segments
+        .split_last()
+        .map_or_else(Vec::new, |(_, rest)| rest.to_vec());
+    if tail.is_empty() {
+        // A root-level `__init__.py`: the whole module path is prefix.
+        return (!module.is_empty()).then(|| (module.to_string(), dirs));
+    }
+    if module == tail {
+        return None;
+    }
+    module
+        .strip_suffix(&format!("{sep}{tail}"))
+        .filter(|prefix| !prefix.is_empty())
+        .map(|prefix| (prefix.to_string(), dirs))
+}
+
+/// Extra candidates for an absolute import whose specifier is root-relative
+/// while the project's module paths carry a parser-added root prefix.
+///
+/// Scoped to Python deliberately: it is the one language here whose module
+/// paths are derived from the source root's directory name rather than from a
+/// declaration in the file (`package` in Java/Kotlin) or from the path itself
+/// (TS/JS). Widening it is a change of behaviour for another language, not a
+/// generalisation, so the gate is an explicit language check rather than a
+/// registry predicate — `registry::uses_module_path_imports` also gates
+/// JsWorkspace discovery in `builder/mod.rs` and must stay TS/JS-only.
+///
+/// A specifier is resolved relative to some `sys.path` entry, which the graph
+/// does not record. The plausible entries are the importing file's own ancestor
+/// directories — the project root (the overwhelmingly common case), a `src/`
+/// layout's `src` dir, and, exactly as `python pkg/app.py` puts `sys.path[0]`,
+/// the script's own directory. So the roots tried are the recovered prefix
+/// extended by each leading run of the importer's directory segments,
+/// shallowest first: `proj`, `proj.src`, `proj.src.mypkg` for
+/// `src/mypkg/app.py`. Shallowest-first makes the project root win ties, which
+/// is what keeps the common layout's answer stable.
+///
+/// The specifier is walked longest-first across all roots before any shortening
+/// (mirroring the caller's raw walk), and it never shortens below one segment.
+/// Shortening further would offer a bare root, which every module in the
+/// project is a descendant of — `import functools` would then resolve to the
+/// project root module. That is the manufactured-edge failure this whole
+/// resolver is built to avoid.
+fn module_path_prefix_candidates(file: &FileInfo, raw: &str, sep: &str) -> Vec<String> {
+    if file.language != "python" {
+        return Vec::new();
+    }
+    let trimmed = raw.trim();
+    // Relative imports (`from .util import x`) are dropped at parse time; the
+    // guard keeps a leading dot from ever producing an empty first segment.
+    if trimmed.is_empty() || trimmed.starts_with('.') {
+        return Vec::new();
+    }
+    let Some((prefix, dirs)) = module_path_root_prefix(file, sep) else {
+        return Vec::new();
+    };
+    let roots: Vec<String> = (0..=dirs.len())
+        .map(|depth| {
+            if depth == 0 {
+                prefix.clone()
+            } else {
+                format!("{prefix}{sep}{}", dirs[..depth].join(sep))
+            }
+        })
+        .collect();
+    let parts: Vec<&str> = trimmed.split(sep).collect();
+    let mut out = Vec::new();
+    for end in (1..=parts.len()).rev() {
+        let specifier = parts[..end].join(sep);
+        for root in &roots {
+            let candidate = format!("{root}{sep}{specifier}");
+            if !out.contains(&candidate) {
+                out.push(candidate);
+            }
+        }
+    }
+    out
+}
+
 fn resolve_path_import(
     file: &FileInfo,
     raw: &str,
@@ -310,6 +429,7 @@ pub fn build_import_edges(
                 continue;
             }
             let parts: Vec<&str> = use_path.split(sep).collect();
+            let mut resolved = false;
             for end in (1..=parts.len()).rev() {
                 let candidate = parts[..end].join(sep);
                 if known_modules.contains(&candidate) {
@@ -317,8 +437,25 @@ pub fn build_import_edges(
                         file_path: f.path.clone(),
                         module: candidate,
                     });
+                    resolved = true;
                     break;
                 }
+            }
+            if resolved {
+                continue;
+            }
+            // Last resort: the specifier may be root-relative while this
+            // project's module paths carry a parser-added root prefix. Tried
+            // only here, so a layout the raw walk already resolves keeps its
+            // existing answer byte-for-byte.
+            if let Some(module) = module_path_prefix_candidates(f, use_path, sep)
+                .into_iter()
+                .find(|candidate| known_modules.contains(candidate))
+            {
+                out.push(ImportEdge {
+                    file_path: f.path.clone(),
+                    module,
+                });
             }
         }
     }
@@ -374,6 +511,7 @@ pub fn build_file_import_edges(
                 continue;
             }
             let parts: Vec<&str> = use_path.split(sep).collect();
+            let mut resolved = false;
             for end in (1..=parts.len()).rev() {
                 let candidate = parts[..end].join(sep);
                 if let Some(target_file) = module_to_file.get(&candidate) {
@@ -382,7 +520,24 @@ pub fn build_file_import_edges(
                             .entry((f.path.clone(), target_file.clone()))
                             .or_insert(0) += 1;
                     }
+                    resolved = true;
                     break;
+                }
+            }
+            if resolved {
+                continue;
+            }
+            // Mirror of `build_import_edges`: root-prefixed candidates for a
+            // root-relative specifier, tried only after the raw walk misses.
+            // The self-import guard applies here exactly as above.
+            if let Some(target_file) = module_path_prefix_candidates(f, use_path, sep)
+                .into_iter()
+                .find_map(|candidate| module_to_file.get(&candidate))
+            {
+                if target_file != &f.path {
+                    *counts
+                        .entry((f.path.clone(), target_file.clone()))
+                        .or_insert(0) += 1;
                 }
             }
         }
@@ -1365,6 +1520,143 @@ mod determinism_tests {
         assert!(build_import_edges(&files, &known_modules, &JsWorkspace::default()).is_empty());
     }
 
+    /// A plain absolute import (`from pkg.util import helper`) resolves even
+    /// though the Python parser prefixes module paths with the source root's
+    /// directory name while the specifier is root-relative. Asserted as exact
+    /// edge sets on both edge builders.
+    #[test]
+    fn python_absolute_imports_resolve_across_the_root_prefix() {
+        let files = vec![
+            source_file("pkg/app.py", "root.pkg.app", "python", &["pkg.util"]),
+            source_file("pkg/util.py", "root.pkg.util", "python", &[]),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        let module_pairs: Vec<_> =
+            build_import_edges(&files, &known_modules, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.file_path, edge.module))
+                .collect();
+        assert_eq!(
+            module_pairs,
+            vec![("pkg/app.py".to_string(), "root.pkg.util".to_string())]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|f| (f.module_path.clone(), f.path.clone()))
+            .collect();
+        let file_pairs: Vec<_> =
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.source, edge.target, edge.import_count))
+                .collect();
+        assert_eq!(
+            file_pairs,
+            vec![("pkg/app.py".to_string(), "pkg/util.py".to_string(), 1)]
+        );
+    }
+
+    /// The prefixed candidates resolve against the real module set or not at
+    /// all: an in-project module that does not exist and a stdlib module both
+    /// yield nothing. No target is manufactured, and the walk never shortens
+    /// far enough to land on the project root module.
+    #[test]
+    fn python_absolute_imports_do_not_manufacture_targets() {
+        let files = vec![
+            source_file(
+                "pkg/app.py",
+                "root.pkg.app",
+                "python",
+                &["pkg.nonexistent", "functools"],
+            ),
+            source_file("pkg/util.py", "root.pkg.util", "python", &[]),
+        ];
+        let mut known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        // The ancestor modules a real build materialises, including the root
+        // prefix itself — the shape that makes an over-eager walk visible.
+        known_modules.insert("root".into());
+        known_modules.insert("root.pkg".into());
+
+        let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
+        assert_eq!(
+            module_edges
+                .iter()
+                .map(|e| e.module.as_str())
+                .collect::<Vec<_>>(),
+            // `pkg.nonexistent` shortens to the real package `root.pkg`, the
+            // same answer the raw walk gives every other language; `functools`
+            // resolves to nothing at all.
+            vec!["root.pkg"]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|f| (f.module_path.clone(), f.path.clone()))
+            .collect();
+        // No file owns `root.pkg`, so the file-level pass emits nothing.
+        assert!(
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default()).is_empty()
+        );
+    }
+
+    /// A manifest src-layout adds TWO junk segments (`myproj.src.mypkg.util`);
+    /// subtracting the file's own rendering recovers both.
+    #[test]
+    fn python_src_layout_imports_resolve() {
+        let files = vec![
+            source_file(
+                "src/mypkg/app.py",
+                "proj.src.mypkg.app",
+                "python",
+                &["mypkg.util"],
+            ),
+            source_file("src/mypkg/util.py", "proj.src.mypkg.util", "python", &[]),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        let module_pairs: Vec<_> =
+            build_import_edges(&files, &known_modules, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| edge.module)
+                .collect();
+        assert_eq!(module_pairs, vec!["proj.src.mypkg.util".to_string()]);
+    }
+
+    /// The clone layout the parser already handles (`xarray/core/dataset.py` →
+    /// `xarray.core.dataset`) has no root prefix to subtract, so it resolves on
+    /// the raw walk alone and gains exactly nothing — no second, doubled edge.
+    #[test]
+    fn python_clone_layout_resolves_exactly_once() {
+        let files = vec![
+            source_file(
+                "xarray/core/dataset.py",
+                "xarray.core.dataset",
+                "python",
+                &["xarray.core"],
+            ),
+            source_file("xarray/core/__init__.py", "xarray.core", "python", &[]),
+        ];
+        assert!(module_path_root_prefix(&files[0], ".").is_none());
+        assert!(module_path_prefix_candidates(&files[0], "xarray.core", ".").is_empty());
+
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
+        assert_eq!(module_edges.len(), 1);
+        assert_eq!(module_edges[0].module, "xarray.core");
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|f| (f.module_path.clone(), f.path.clone()))
+            .collect();
+        let file_edges = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default());
+        assert_eq!(
+            file_edges
+                .iter()
+                .map(|e| (e.source.as_str(), e.target.as_str(), e.import_count))
+                .collect::<Vec<_>>(),
+            vec![("xarray/core/dataset.py", "xarray/core/__init__.py", 1)]
+        );
+    }
+
     /// The branch is language-gated: a relative specifier in a language that
     /// does not use module-path imports must not pick up the new behaviour.
     #[test]
@@ -1375,8 +1667,27 @@ mod determinism_tests {
             vec!["a/c"]
         );
 
-        let py = source_file("a/b.py", "a.b", "python", &["./c"]);
+        // Python is not in the TS/JS relative-specifier branch and never joins
+        // it: `./c` is not Python spelling, and relative imports are dropped at
+        // parse time.
+        let py = source_file("a/b.py", "root.a.b", "python", &["./c"]);
         assert!(module_path_import_candidates(&py, "./c", &JsWorkspace::default()).is_empty());
+        assert!(module_path_prefix_candidates(&py, "./c", ".").is_empty());
+        // What Python DOES get is the separate root-prefix pass, on absolute
+        // specifiers only: the full specifier under every candidate import root
+        // (shallowest first) before any shortening, and never shortened below
+        // one segment — the bare `root` is not a candidate.
+        assert_eq!(
+            module_path_prefix_candidates(&py, "c.d", "."),
+            vec![
+                "root.c.d".to_string(),
+                "root.a.c.d".to_string(),
+                "root.c".to_string(),
+                "root.a.c".to_string(),
+            ]
+        );
+        // TS/JS get nothing from that pass, at any separator.
+        assert!(module_path_prefix_candidates(&ts, "a/c", "/").is_empty());
 
         let js = source_file("a/b.js", "a/b", "javascript", &["../d/index.js"]);
         assert_eq!(
