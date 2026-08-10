@@ -54,6 +54,30 @@ jobs:
         # the test is offline and needs no sibling checkout.
         run: cargo test --workspace
 
+  actionlint:
+    name: Lint GitHub Actions workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint .github/workflows with actionlint
+        # Nothing else in this repo checks the workflows themselves: a typo'd
+        # matrix key, an undefined step id in an `if:`, or an unquoted shell
+        # variable in a `run:` block is only discovered when the workflow runs
+        # — and release.yml runs ONLY on a `v*` tag push, so for that file
+        # "when it runs" is during a release. actionlint parses every workflow
+        # statically and bundles shellcheck for the `run:` blocks, so both
+        # classes are caught on every push instead.
+        #
+        # Pinned to an exact actionlint release rather than a moving tag: a
+        # linter that silently gains rules turns an unrelated push red. The
+        # docker:// form is the container action documented by actionlint
+        # upstream and is why this job is ubuntu-only.
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
   release-gates:
     name: Release-gate script unit tests
     runs-on: ubuntu-latest

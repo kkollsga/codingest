@@ -11,6 +11,23 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **CI now lints its own workflows**, and the release-gate suite pins the CI
+  KGLite install to the Cargo floor. A new `actionlint` job (pinned
+  `rhysd/actionlint:1.7.12`) statically checks every file in
+  `.github/workflows/` — undefined matrix keys and step-id references in
+  `if:`/`${{ }}` expressions, plus shellcheck over every `run:` block. This
+  matters most for `release.yml`, which runs only on a `v*` tag push and so was
+  previously first exercised *during a release*. Separately,
+  `test_kglite_cargo_and_python_floors_are_in_lockstep` gained a **third
+  source**: it now also parses `kglite==` out of `ci.yml` and requires it to
+  equal the Cargo floor. The two-source version could not see the CI pin sitting
+  at 0.15.5 while the floor moved to 0.15.6 — the exact drift fixed in 9786c27,
+  where CI's acceptance suite ran against a different engine than the Rust
+  writer targets. An audit of the remaining version-pinned CI/release fixtures
+  turned up two more pins asserted only by prose: `ci.yml` pins `pytest==` in
+  two jobs under a comment claiming they match, and its `maturin==` install is
+  what builds the extension the acceptance suite proves, while `pyproject.toml`
+  separately declares the build-backend floor. Both now have a test.
 - **Permanent `[timing]` diagnostics for the three previously unmeasured
   once-per-build costs**: graph persistence (`save_graph`), source
   fingerprinting (the freshness hash, which runs on `build`, `status` *and*

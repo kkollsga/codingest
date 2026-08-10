@@ -931,6 +931,12 @@ def test_kglite_cargo_and_python_floors_are_in_lockstep():
     `codingest.build()` writes `.kgl` bytes with the Rust crate and loads them
     through the separately installed Python wheel. A Cargo-only floor bump can
     therefore leave the acceptance suite exercising the previous Python engine.
+
+    THREE sources, not two. `ci.yml` installs an EXACT kglite into the venv the
+    acceptance suite runs in, so it is a third statement of the same floor and
+    the one that actually decides which engine CI exercises. It was left behind
+    at 0.15.5 while Cargo and pyproject moved to 0.15.6 (fixed in 9786c27) —
+    a two-source test cannot see that, so ci.yml is asserted here too.
     """
     cargo = (REPO / "Cargo.toml").read_text()
     rust_floors = re.findall(
@@ -946,6 +952,63 @@ def test_kglite_cargo_and_python_floors_are_in_lockstep():
     assert match, "did not find the bounded Python KGLite runtime requirement"
     assert match.group(1) == rust_floors[0], (
         "Python KGLite floor differs from the Rust engine/MCP floor"
+    )
+
+    ci_pins = re.findall(r"kglite==(\S+)", CI_WORKFLOW.read_text())
+    assert ci_pins, (
+        f"did not find a `kglite==` pip pin in {CI_WORKFLOW.name} — the CI venv "
+        "must install the engine explicitly, or the acceptance suite runs on "
+        "whatever kglite pip resolves"
+    )
+    assert set(ci_pins) == {rust_floors[0]}, (
+        f"{CI_WORKFLOW.name} installs kglite=={sorted(set(ci_pins))} but the "
+        f"Cargo floor is {rust_floors[0]} — CI would exercise a different engine "
+        "than the one the Rust writer targets (this is exactly the 9786c27 drift)"
+    )
+
+
+def test_ci_pytest_pins_are_internally_consistent():
+    """`ci.yml` pins pytest twice and its own comment claims they agree.
+
+    The `release-gates` job installs pytest standalone; the `python` job installs
+    it into the venv. The comment above the first says "Same pin as the `python`
+    job below" — a declared invariant with nothing enforcing it. Drift means the
+    two suites run on different pytest majors, so a collection or fixture
+    behaviour change lands in one job and is invisible in the other.
+    """
+    pins = re.findall(r"pytest==(\S+)", CI_WORKFLOW.read_text())
+    assert len(pins) == 2, (
+        f"expected exactly two `pytest==` pins in {CI_WORKFLOW.name}, found "
+        f"{len(pins)}: {pins} — update this test if a job was added or removed"
+    )
+    assert len(set(pins)) == 1, (
+        f"{CI_WORKFLOW.name} pins two different pytest versions {pins}, but the "
+        "comment above the release-gates pin claims they are the same — the two "
+        "suites would run on different pytest versions"
+    )
+
+
+def test_ci_maturin_pin_matches_the_pyproject_build_floor():
+    """The maturin CI installs must be the one the build backend requires.
+
+    `pyproject.toml` declares `requires = ["maturin>=X,<2.0"]` for the build
+    backend; `ci.yml` installs an EXACT maturin into the venv that `maturin
+    develop` then builds the acceptance-suite extension with. If the pyproject
+    floor is raised alone, CI keeps proving a wheel built by an older maturin
+    than the backend demands. Same shape as the KGLite drift above.
+    """
+    ci_pins = re.findall(r"maturin==(\S+)", CI_WORKFLOW.read_text())
+    assert ci_pins, f"did not find a `maturin==` pip pin in {CI_WORKFLOW.name}"
+
+    match = re.search(
+        r'requires = \["maturin>=([^,]+),<2\.0"\]',
+        (REPO / "pyproject.toml").read_text(),
+    )
+    assert match, "did not find the bounded maturin build-system requirement"
+    assert set(ci_pins) == {match.group(1)}, (
+        f"{CI_WORKFLOW.name} installs maturin=={sorted(set(ci_pins))} but "
+        f"pyproject's build backend requires >={match.group(1)} — CI would build "
+        "the extension with a maturin the build backend does not accept"
     )
 
 
