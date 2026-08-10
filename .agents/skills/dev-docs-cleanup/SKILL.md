@@ -76,6 +76,21 @@ On go-ahead, move processed stale files into `dev-docs/bin/` (preserves them for
 7 days in case something was lifted wrongly). Never delete the active plans,
 `todos.md`, or anything the user chose to keep.
 
+## 6. Adapter resync (runs here too, so the check exists outside a release)
+**Diff each adapter against its declared authority, rename-aware.** Identical:
+done. Divergent: classify each hunk before touching either side — an
+*improvement* is merged into the **authority** first and the adapter regenerated
+from it; *staleness* is simply regenerated away. Never run a blind sync on a
+divergent pair: blind sync deletes improvements (sonara, 2026-08-10, ~20 lines),
+and no sync preserves stale doctrine the other harness will follow. The mirror
+check must pass afterwards — the two conventions files byte-identical (the
+Authority line is exempt from the substitution and reads the same in both), and
+each skill pair differing only by the harness-name substitution. Which side is
+the authority is stated in the Authority line at the top of the conventions
+file: the conventions file itself, and the tracked `.agents/skills/` tree.
+Report the verdict per pair; a divergence you resolved is a reportable action,
+not silent housekeeping.
+
 ## Output discipline
 Keep the response under 400 tokens. If the stale-doc review is long, write the
 full report to `dev-docs/temp/cleanup-report.md` (1-day purge) and report that

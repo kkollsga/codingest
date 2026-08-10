@@ -43,6 +43,14 @@ named blocker.
   path** (`git add <file> …`, never `git add -A`/`.`) and verify with
   `git status --porcelain` that only release files are staged. Leave unrelated
   changes untouched for their author.
+  - **That verification is not a formality: `git add` is all-or-nothing across
+    its pathspecs.** One bad path — a typo, a file the plan renamed, a
+    `BENCHMARKS.md` you did not actually refresh — aborts the entire
+    invocation, so *none* of the other files are staged either. The failure is
+    quiet in the reassuring direction: the next `git commit` succeeds, on a
+    release commit missing the bump. Read back the staged set
+    (`git diff --cached --name-only`) and confirm it matches the intended list
+    before committing. (KGLite hit this on 2026-08-09.)
 
 ## Steps
 1. **Goal check — did we achieve what we set out to do?** If this release ships
@@ -136,7 +144,11 @@ named blocker.
      - sdist: `maturin sdist -m crates/codingest-py/Cargo.toml --out <dir>`
        then `test "$(tar -tzf <dir>/*.tar.gz | grep -Ec '/LICENSE$')" -eq 1`
        (use that exact pattern — a looser `grep LICENSE` can match a different
-       entry and report 1 while the real gate sees 0).
+       entry and report 1 while the real gate sees 0). Keep the `grep -Ec`
+       inside `$( )` as written: **`grep -c` exits 1 when the count is zero**,
+       so lifting it out into a `grep -Ec … && …` chain — or running it under
+       `set -e` — turns the one answer you need to act on into a dead script
+       rather than a `0` you can test.
      This only covers the host platform; the other wheel legs still build in CI
      on the tag. That residual is real and worth stating in step 9's report
      rather than pretending it is covered.
@@ -153,7 +165,9 @@ named blocker.
      since the last release** (parser hot loops, builder walk/partition/resolve
      stages, anything per-file; check
      `git diff <last-release-tag>..HEAD --stat -- crates/codingest/src`): run
-     `codingest_bench` (release, min over median) against the reference
+     `codingest_bench` (release, min over median — but judge a heavy-tailed
+     cell by its median, and a once-per-build cost by the mean of first
+     events) against the reference
      repo(s); if timing moved beyond noise, update `BENCHMARKS.md` with the new
      numbers and date (the us-vs-in-tree tables are a frozen historical
      snapshot). If no perf-sensitive path changed, skip the bench and note it —
@@ -288,6 +302,21 @@ the artifact count and platform tags against the previous release.
     worktrees and local/remote branches, and report every retained branch with
     the reason it wasn't safe to remove. Periodic sweep:
     `git branch --merged origin/main` surfaces any stale-branch backlog.
+
+    **Agent worktrees live in `codingest-worktrees/<name>`** (a sibling
+    directory of the repo, never loose in the `Rust/` parent), and that
+    directory exists **only while worktrees are in progress** — this step empties
+    it and deletes it. Per worktree, in order: migrate outstanding actions into
+    `dev-docs/todos.md` (branch, state, what remains, how to resume) → if dirty,
+    save its `git diff` under `dev-docs/` **first** → `git worktree remove` +
+    `git worktree prune`. Removing a worktree never deletes its branch (the ref
+    lives in the main repo's `.git`), so unmerged work always survives removal.
+    **Trap: a branch whose commits landed by *rebase* reads as unmerged** to
+    `git merge-base --is-ancestor`, so the containment proof above will claim
+    unique work that does not exist — `git cherry -v main <branch>` sees through
+    it (`-` = already upstream). Second trap: a fresh worktree does **not**
+    inherit the repo's build-cache symlink, so it cold-builds onto whatever
+    volume the workspace sits on.
 13. **Tidy dev-docs — perform directly, no prompt** (the `/release` invocation
     is the authorization). Follow the **`dev-docs-cleanup`** logic (todos.md-
     driven): auto-purge the time-boxed dirs, then read **only `todos.md`** —
@@ -295,6 +324,22 @@ the artifact count and platform tags against the previous release.
     entry, move any other completed/stale docs to `bin/`, trim the entries (read
     a backlinked doc only to confirm it shipped). Carry the step-1 gaps into
     `todos.md`. Don't read `designs/` or sweep through `plans/`.
+
+    **Adapter resync — diff each adapter against its declared authority,
+    rename-aware.** Identical: done. Divergent: classify each hunk before
+    touching either side — an *improvement* is merged into the **authority**
+    first and the adapter regenerated from it; *staleness* is simply regenerated
+    away. Never run a blind sync on a divergent pair: blind sync deletes
+    improvements (sonara, 2026-08-10, ~20 lines), and no sync preserves stale
+    doctrine the other harness will follow. The mirror check must pass
+    afterwards. Here the two pairs are: the **conventions files**, which must
+    come out byte-identical (`diff` empty — the Authority line is exempt from the
+    substitution and reads the same in both copies), and each **skill pair**,
+    which must differ only by the harness-name substitution
+    (`diff <(sed 's/<other>/<mine>/g' <authority>) <adapter>` empty). Which side
+    is the authority is stated in the Authority line at the top of the
+    conventions file: the conventions file itself, and the tracked
+    `.agents/skills/` tree.
 
 ## Notes
 - Keep responses under 400 tokens; write long diffs/logs/bench tables to a file

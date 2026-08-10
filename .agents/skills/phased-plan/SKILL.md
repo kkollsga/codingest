@@ -27,6 +27,42 @@ subset:**
   (>14-day purge; never write artifacts next to the script). The committed
   regression record is `PARITY.md` + `tests/parity.rs` and `BENCHMARKS.md`.
 
+## Doctrine sync — first action of the run, before Phase −1
+The estate's rules live in the sibling `doctrine` repo and are versioned. **Pull
+them forward before planning anything**, so a plan is never built on doctrine
+this repo has already been told is superseded.
+
+1. Read **`../doctrine/VERSION`** (a date serial, e.g. `2026.08.10`) and
+   **`dev-docs/.doctrine-synced`**. If the marker is absent, create it with the
+   current version and note in the report-out that this was a first sync (there
+   is nothing to replay — the marker's job starts now).
+2. **Versions equal → done.** That is the normal case and it costs **one file
+   read**; it is never worth skipping to save time, and "we're probably current"
+   is not the check.
+3. **Doctrine ahead → read `../doctrine/CHANGELOG.md` forward from the marker**
+   and act on every entry newer than it. Each item carries exactly one action
+   class:
+   - **`[skills-update]`** — merge the change into this repo's **declared
+     authority** (per the Authority line at the top of AGENTS.md: the conventions
+     file itself, and the tracked `.agents/skills/` tree) and regenerate the
+     adapters from it in the same action. Never hand-port into an adapter — that
+     is what doctrine `R7` measures.
+   - **`[local-sweep]`** — run the check command the entry states. If it comes
+     back clean, say so and move on. **If it fails, the sweep becomes Phase 0
+     work of *this* plan** — scoped, listed, and visible in the plan doc — never
+     a silent side-task folded into an unrelated phase.
+   - **`[info]`** — nothing to do.
+4. **Write the new version to `dev-docs/.doctrine-synced` only after those
+   actions completed.** A marker written first permanently hides the entry it
+   skipped: the next run compares against it and sees nothing. If an entry could
+   not be actioned, the marker advances **only** once that item is in the plan —
+   the plan is the record, not the marker.
+
+Doctrine `R14`: read the oracle before the local copy, and cite the oracle
+version the adaptation read. Every divergence between `../doctrine` and this
+repo's installed copy is named as one of exactly two things — a **local
+improvement** (upstream it) or **staleness** (fix it from the oracle).
+
 ## Phase −1 — Start fresh (recommend cleanup first)
 Before investigating, **recommend the user run the `dev-docs-cleanup` skill** so
 we start from a tidy `dev-docs/` and a current `todos.md`. Relevant carried-over
@@ -61,7 +97,7 @@ they decline, proceed without it.
   paths you're about to move and capture their *actual* graph output — don't
   trust your mental model.
 - **Confirm your intended safety net actually catches *this class* of change.**
-  The parity test (`tests/parity.rs`) pins each corpus's graph to a frozen
+  The parity test (`crates/codingest/tests/parity.rs`) pins each corpus's graph to a frozen
   golden digest, but the corpus set is small — a regression on a shape no
   corpus exercises slips through. If your change touches an unrepresented
   language/edge kind, add a corpus (and its golden) or a targeted unit
@@ -79,6 +115,15 @@ they decline, proceed without it.
   the `release` skill's job.
 - Present the plan, then **invite revision: ask the user to revise or approve,
   and loop on their feedback until they approve.**
+- **This is the stage where "I would have designed this differently" belongs —
+  say so explicitly when presenting.** Structure, naming, factoring, "consider
+  using X", scale worries: raise them now or hold them. Review will **refuse**
+  them later (AGENTS.md "Review findings", doctrine `R15`), because once the plan
+  is approved review measures the implementation against *that plan* and against
+  correctness — not against a design the reviewer would have preferred. The
+  invitation and the refusal are a pair: written in only one place, design
+  critique lands wherever the reviewer is standing, which is review, because
+  that is where the code is.
 - **Hard stop — wait for an explicit go-ahead.** Do not create the branch or
   write any code until the user says proceed (e.g. "proceed", "go ahead",
   "approved", "ship it"). A simple proceed is enough. Until then, stay
@@ -98,6 +143,15 @@ they decline, proceed without it.
   only triggers on a `v*` tag push, at release time).
 - Put the phased plan into the **PR description as a checklist** (one box per
   phase). The PR tab then shows plan + progress + CI status in one place.
+- **Run the CI-only steps once locally before the branch's first push.** The
+  Phase 3 loop runs `build` + `clippy` + `cargo test` + parity; `make gate`
+  additionally runs the release-gate script suite, the bench parity smoke, and
+  the **wheel + `tests/python`** acceptance run — exactly the steps CI runs and
+  the phase loop skips, so they stay ungated until CI sees them, and a branch
+  that has never run them accumulates several *independent* failures before its
+  first red run (KGLite's 2026-08-09 program found **four** that way, on a
+  branch whose fast gate was green throughout). Run `make gate` once here, then
+  rely on the phase loop.
 
 ## Phase 3 — Execute each phase (the autonomous loop)
 For every phase, in order:
@@ -109,6 +163,16 @@ For every phase, in order:
      `cargo test -p codingest --test parity` if the change touches the builder
      or any transformed code_tree source. A targeted subset that skips the
      parity test will miss graph-equivalence regressions.
+   **Choose the per-phase gate by what this change could BREAK, not by what it
+   touches.** The suite to run is the touched surface *plus its direct
+   consumers* — the phase that edits a parser also runs whatever asserts on the
+   graph that parser feeds. The Rust battery here is cheap enough that
+   `cargo test --workspace` + parity is that gate for almost every phase, and
+   AGENTS.md's "not just a hand-picked subset" rule still binds. The heavy
+   `make gate` steps are not per-phase work: they run once before the first push
+   (Phase 2) and once over the union at plan completion (Phase 4). Per-phase
+   heavy runs buy nothing a completion-time run does not, and their cost is
+   what makes agents quietly stop running them at all.
    Observe AGENTS.md "Tooling discipline": don't read a gate's status through a
    `tail`/`head` pipe; confirm the command actually reported success.
    **A NEW GATE IS NOT TRUSTED UNTIL YOU HAVE SEEN IT FAIL.** If the phase adds
@@ -131,6 +195,24 @@ For every phase, in order:
    verdict.
    **A pipeline reports its LAST stage's status**, so `cmd … | tail` says 0 for a
    `cmd` that exited non-zero. Never declare a phase green off piped output.
+   **Three more shapes of the same trap, all found on KGLite's 2026-08-09/10
+   program — each lied in the reassuring direction:**
+   - **`git add` with one bad pathspec stages NOTHING.** It is all-or-nothing:
+     a single typo'd or since-renamed path aborts the whole invocation, so the
+     other five files you named are not staged either. This skill's
+     commit step names files by path deliberately — so read back
+     `git status --porcelain` (or `git diff --cached --name-only`) and confirm
+     the staged set is what you intended. A commit that "succeeded" can be empty
+     of the change you meant to ship.
+   - **`grep -c` exits 1 when the count is zero**, so `grep -c … && next` breaks
+     the chain on the one result you most need to act on, and under `set -e` it
+     kills the script. A zero count is a legitimate answer, not an error:
+     capture it (`n=$(… | grep -c … || true)`) and test the number.
+   - **A backgrounded command's output must be read from its artifact.** An
+     echoed exit status, a "done" line, or the absence of visible errors is not
+     the result — open the log/output file the run actually wrote. Inferring
+     success from the wrapper is how a failed background build gets reported as
+     a passing one.
 3. Update `CHANGELOG.md` `[Unreleased]` for user-visible changes (not the
    version block). Create it if missing.
 4. **Commit** the phase (`feat(...)` / `refactor(...)` / `fix(...)`), one commit
@@ -187,8 +269,14 @@ not permission to begin it.
   upstream locally.
 Either way, record it in the **report-out** — a discovered bug never vanishes.
 
-## Phase 4 — Parity + perf gate
+## Phase 4 — Full battery + parity + perf gate
 Before declaring done:
+- **Full battery — once, here, over the union of everything the plan touched:**
+  `make gate` (all 9 steps, including the ones the phase loop skips). The phase
+  loop's targeted gates catch per-landing breakage; this run is what catches the
+  interaction between phases. Per AGENTS.md, a **SKIPPED** step is not a pass —
+  either name `VENV=` explicitly so a skip becomes a failure, or state in the
+  report-out which steps did not run.
 - **Parity — always, unconditionally:** `cargo test -p codingest --test parity`
   green (`golden_parity` + `rev_self_consistency`). An intended digest change
   gets its goldens regenerated in the same commit with a recorded reason.
@@ -201,6 +289,26 @@ Before declaring done:
   now, not in a follow-up. For plans that never touched perf-sensitive code,
   skip the bench with a note — the release-time `BENCHMARKS.md` refresh covers
   it. Refresh `BENCHMARKS.md` only at release time either way.
+  **Four methodology rules, each learned by getting it wrong (KGLite,
+  2026-08-09/10) — every error produced a plausible, low-concern reading:**
+  - **"Trust min" does not hold for a once-per-event cost.** `min` is the right
+    statistic for a repeatable inner loop; a cost paid once per build — first
+    parse of a grammar, index construction, cold cache fill — has no
+    steady-state to find a floor of, and `min` over N builds just reports the
+    luckiest machine moment. Use the **mean of the first events** for those.
+  - **A heavy-tailed cell is judged by median/mean, not min.** If a
+    measurement's `min` sits far below its own median, the distribution is not
+    "noise around a floor" and the floor is not the thing users experience.
+    Check min-vs-median per cell before quoting either.
+  - **A CONTROL cell that regresses is your instrument, not the code.** Always
+    include a query/corpus the change cannot possibly have touched. If that one
+    moves too, you measured the machine (thermals, a background build, a
+    different corpus digest) — throw the whole capture away rather than
+    reasoning about which cells to believe.
+  - **Measure the headline quantity by two independent routes.** Agreement is
+    cheap evidence the harness is sound; disagreement caught a real instrument
+    bug that a single route reported as a clean result. Pairs with the existing
+    rule that a number is meaningless without its `corpus_sha256`.
 
 ## Report out (when the plan completes, before Ship)
 Keep it under the 400-token rule; link the plan doc for detail:
@@ -216,7 +324,8 @@ Keep it under the 400-token rule; link the plan doc for detail:
 
 ## Phase 5 — Ship (only on request)
 When the user asks to ship, run the **`release`** skill. It goal-checks against
-the plan, gates, bumps the one workspace `version` line, promotes the CHANGELOG,
+the plan, gates, bumps the version across all six manifest sites (the workspace
+table plus the five internal path-dependency pins), promotes the CHANGELOG,
 refreshes `PARITY.md` / `BENCHMARKS.md` if they moved, and commits. This skill
 never bumps the version.
 

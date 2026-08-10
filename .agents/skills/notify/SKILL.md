@@ -73,9 +73,10 @@ kebab-case topic). Body:
 ```
 
 Keep it actionable: only file a note if there's something for them to do or
-genuinely useful to know (AGENTS.md "Route to the party who can act"). For an
-upstream-parity ask to KGLite, cite the exact `code_tree` / `kglite::api` site
-and what codingest needs.
+genuinely useful to know (AGENTS.md "Inbox hygiene" — route a note to another
+project only if it carries an actionable task for *them*). For an upstream-parity
+ask to KGLite, cite the exact `code_tree` / `kglite::api` site and what codingest
+needs.
 
 ## 4. Write + report
 Write the file to `<target>/inbox/unread/<filename>` and report the full path.
