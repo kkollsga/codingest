@@ -1,4 +1,4 @@
-// Corpus for Phase 2 of dev-docs/plans/closure-scoped-definitions.md:
+// Corpus for the closure-scoped-definitions work (0.1.6), phase 2:
 // depth-0 factory-wrapped bindings + the grammar-vocabulary fixes.
 //
 // No pre-existing corpus contained a `const` function-literal binding, a

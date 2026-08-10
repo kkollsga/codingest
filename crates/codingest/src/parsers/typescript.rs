@@ -97,8 +97,8 @@ const NESTED_SCOPES: &[&str] = &[
 /// this file matched on a bare `"function"` in three places — dead
 /// vocabulary that silently demoted every such binding to a `Constant`, and
 /// (via a missing `generator_function_declaration` arm) made a top-level
-/// `function* g() {}` produce no node at all. Evidence + reproduction:
-/// `dev-docs/bench/out/nested-spike/grammar-vocabulary-defects.txt`.
+/// `function* g() {}` produce no node at all. The three defects are pinned as
+/// D-A / D-B / D-C in `hof_binding_tests` below, which is the reproduction.
 const FN_LITERALS: &[&str] = &[
     "arrow_function",
     "function_expression",
@@ -324,7 +324,8 @@ impl JstsParser {
     // an array, not a function. The rule below is the measured narrowing
     // (spike rule F5): exactly one literal, that literal is a generator or
     // its call is curried, and the call's callee is not a method on a value
-    // receiver. See `dev-docs/plans/closure-scoped-definitions.md` D1.
+    // receiver. (Decision D1 of the closure-scoped-definitions work, shipped in
+    // 0.1.6; the three guards are pinned by `hof_binding_tests` below.)
 
     /// Strip the wrappers that do not change which value an expression
     /// produces: `(expr)`, `expr as T`, `expr satisfies T`, `expr!`.
@@ -2049,8 +2050,7 @@ export async function load() {
 
 /// Depth-0 higher-order-function bindings and the grammar-vocabulary fixes.
 ///
-/// Two things are pinned here (Phase 2 of
-/// `dev-docs/plans/closure-scoped-definitions.md`):
+/// Two things are pinned here (the closure-scoped-definitions work, 0.1.6):
 ///
 ///  * the **narrowed factory unwrap** (D1 item 3 as amended by the Phase 1
 ///    spike) — a `const x = <call-chain>(…)` binding becomes a `Function`
@@ -2059,9 +2059,7 @@ export async function load() {
 ///  * the **dead grammar vocabulary** — tree-sitter-typescript 0.23.2 emits
 ///    `function_expression` / `generator_function` /
 ///    `generator_function_declaration`, never a bare `function`, so the three
-///    reproduced defects D-A / D-B / D-C
-///    (`dev-docs/bench/out/nested-spike/grammar-vocabulary-defects.txt`)
-///    must all produce `Function` nodes.
+///    reproduced defects D-A / D-B / D-C must all produce `Function` nodes.
 #[cfg(test)]
 mod hof_binding_tests {
     use super::*;
@@ -2292,8 +2290,8 @@ export const PLAIN = 42
 }
 
 /// The nested scope walk: D1 as amended, D2 qualified names + properties,
-/// D3's inputs and D4's call attribution (Phase 3 of
-/// `dev-docs/plans/closure-scoped-definitions.md`).
+/// D3's inputs and D4's call attribution (the closure-scoped-definitions work,
+/// 0.1.6).
 #[cfg(test)]
 mod closure_scope_tests {
     use super::*;
@@ -2570,8 +2568,10 @@ export function outer(users: string[]) {
     /// call-valued arguments only. Pinned so the +3 062-node ceiling — which
     /// counts this shape among the 10 654 opencode "no literal in the chain"
     /// exclusions — is not silently widened.
-    /// Follow-up: `dev-docs/plans/consider-for-future.md`, "IIFE module
-    /// factories are neither a Function nor a named scope".
+    /// Known follow-up, deliberately not implemented: an IIFE module factory
+    /// is currently neither a `Function` nor a named scope, so its inner
+    /// definitions are invisible. Widening this is a graph-shape change and
+    /// would move every affected corpus's golden digest.
     #[test]
     fn a_plain_iife_binding_is_neither_a_function_nor_a_scope() {
         let src = "\

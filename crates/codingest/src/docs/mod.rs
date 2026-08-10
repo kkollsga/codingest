@@ -293,8 +293,8 @@ fn discover_docs(root: &Path) -> Vec<Discovered> {
             //     inputs and data blobs into `:Doc` nodes.
             // Real prose does live in `.txt` (opencode ships 37 model-facing
             // prompt files that way), but a generic builder cannot separate
-            // those from the junk without a manifest-driven opt-in — parked in
-            // `dev-docs/plans/consider-for-future.md`, not built here.
+            // those from the junk without a manifest-driven opt-in, which is a
+            // known follow-up and deliberately not built here.
             _ => continue,
         };
         let Ok(rel) = entry.path().strip_prefix(root) else {

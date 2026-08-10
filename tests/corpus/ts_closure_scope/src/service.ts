@@ -1,4 +1,4 @@
-// Corpus for Phase 3 of dev-docs/plans/closure-scoped-definitions.md: the
+// Corpus for the closure-scoped-definitions work (0.1.6), phase 3: the
 // nested scope walk (D1 as amended, D2, D3, D4).
 //
 // Before Phase 3 the TS walk only ever looked at the direct children of the
@@ -74,11 +74,11 @@ export const store = defineStore("entries")(function (seed: string[]) {
 // function literal is the *callee*, and D1-3's chain walk covers curried
 // callees (`f(…)(fn)`) and call-valued arguments only — an immediately
 // invoked literal is neither, so the value has zero literals in its chain.
-// That is the measured criterion: `dev-docs/bench/out/nested-spike/summary.md`
-// counts this shape in the 10 654 opencode "call chain with no function
-// literal" exclusions, and the +3 062-node ceiling assumes it stays out.
+// That is the measured criterion: the Phase 1 spike counted this shape among
+// the 10 654 opencode "call chain with no function literal" exclusions, and
+// the +3 062-node ceiling assumes it stays out.
 // `registry` is a Constant and `register` / `lookup` get no node.
-// Follow-up: dev-docs/plans/iife-module-factory-scope.md.
+// Known follow-up, not implemented: give an IIFE module factory a named scope.
 export const registry = (function () {
   const entries: string[] = [];
 

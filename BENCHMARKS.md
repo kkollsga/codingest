@@ -50,6 +50,23 @@ build-the-directory-as-is behaviour for one-off measurement of a non-git tree
 and prints a NOT-REPRODUCIBLE banner instead of a digest. `make gate`'s
 bench-smoke step fails if the harness does not resolve a tracked-only corpus.
 
+**Machine load is not a precondition for a capture; it is metadata on it.**
+Captures run in release mode under whatever load the machine has. The validity
+lives in the instrument, not in the machine's quietness: a **CONTROL** cell (a
+query or corpus the change cannot have touched) is the drift meter — load moves
+every cell, a real regression moves one, and a control that moves too voids the
+whole capture rather than licensing a choice about which cells to believe — plus
+two agreeing runs and one confirmation retake when a verdict lands near its
+threshold. A stricter "quiet machine only" mandate applied here until 2026-08-09
+and was retired because it cost more in deferred captures and stalled releases
+than the precision it bought. Its corollary stays and is the reason the
+capture-condition notes below are written out rather than smoothed over: **a
+number compared across sessions records the conditions it was taken under.**
+Release-time longitudinal captures therefore state their machine state (load,
+concurrent builds) alongside the `corpus_sha256` — metadata, never a gate on
+taking the capture. An unrecorded hot baseline reads as real drift to the next
+release's comparison.
+
 Consequences for this document:
 
 - The **methodology below is unchanged** — same 11 queries, same alternating
@@ -64,9 +81,12 @@ Consequences for this document:
 - The first tracked-only reading of this workspace, at
   `chore/harden-gate-corpus`, is **1,122 nodes / 3,800 edges**, corpus
   `2d081a2bd90a58e2…` (198 files, 1,687,711 bytes). No timings were captured
-  with it: the machine was not idle, and per the performance protocol a timing
-  baseline is captured in release mode on a quiet machine at release time. The
-  next release capture starts the new comparable series.
+  with it: the machine was not idle, and the performance protocol then in force
+  required a quiet machine for a release-time timing baseline. **That mandate
+  was retired on 2026-08-09** (see the capture-conditions note above) — a
+  present-day capture in this situation runs anyway, under a CONTROL cell and
+  with its machine state recorded. The next release capture starts the new
+  comparable series.
 
 ## Release 0.1.6 — 2026-08-01 (closure-scoped definitions + `.mdx` docs)
 
@@ -122,8 +142,8 @@ is engine-side and has been routed to KGLite rather than absorbed silently here.
 Cross-build query-result parity: **0 mismatches in 330 comparisons** (11 queries
 × 3 repeats × 5 corpora × 2 independent builds).
 
-Full report, including the precision gate and every per-query row:
-`dev-docs/bench/out/phase6-validation.md` (gitignored working state).
+The full report — the precision gate and every per-query row — was written to
+local working state and is not part of this committed record.
 
 ## Release 0.1.5 — 2026-08-01 (Track C: TS/JS import resolution + CALLS metadata)
 
@@ -244,7 +264,7 @@ roughly 2.1x build cost is a known regression from richer per-site semantic
 metadata; the large edge reduction is intentional removal of false
 cross-program references, partly offset by explicit jump, branch, alias, and
 data-point relationships. All 33 Apollo query comparisons matched. A dedicated
-performance follow-up remains tracked in `dev-docs/todos.md`.
+performance follow-up remains tracked in the local backlog.
 
 ## Release 0.1.2 snapshot — 2026-07-22
 

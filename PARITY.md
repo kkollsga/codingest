@@ -62,7 +62,7 @@ moved.
 imports still never produce `IMPORTS` edges, and `py_basic` still pins that
 defect. This release did not touch import resolution — the Python phase was
 explicitly fenced off from it — so the golden that freezes it is untouched.
-Tracked in `dev-docs/plans/python-imports-never-resolve.md`.
+It is tracked in the local backlog, not here.
 
 ## Release 0.1.5 verification — 2026-08-01
 
@@ -95,8 +95,8 @@ freezes a defect. It predates every release and 0.1.5 does not worsen it; the
 fix will move that golden *with* a recorded reason, which is exactly what the
 protocol is for. The consequence for users is documented in the CHANGELOG and
 `docs/cli.md`: the `import_backed AND candidates = 1` filter removes
-essentially all true cross-file Python call edges. Tracked in
-`dev-docs/plans/python-imports-never-resolve.md`.
+essentially all true cross-file Python call edges. The defect is tracked in
+the local backlog, not here.
 
 ## Track C — graph resolution precision — 2026-08-01 (branch `feat/graph-resolution-precision`, shipped in 0.1.5)
 
@@ -178,9 +178,8 @@ runs across two independent builds).
 
 Per the performance protocol the release bench was **skipped deliberately**: no
 perf-sensitive path changed since `v0.1.3`, so there is nothing to re-measure.
-The engine-bump capture is recorded at
-`dev-docs/bench/out/phase1-kglite-0153-engine-bump.md` (verdict: flat; the large
-corpus agrees to 0.1%).
+The engine-bump capture was taken in local working state (verdict: flat; the
+large corpus agrees to 0.1%).
 
 ## Release 0.1.3 verification — 2026-07-22
 

@@ -21,8 +21,8 @@
 //!   cargo run -p codingest --bin codingest_stats --release -- <path> --dump-calls a,b,c
 //!
 //! `--include-docs` turns the docs pass on. It is **off by default**, which is
-//! the configuration every historical row in `dev-docs/bench/results/` was
-//! measured at, so the default is the comparable one; without the flag `:Doc`,
+//! the configuration every historical row in the local bench-results ledger
+//! was measured at, so the default is the comparable one; without the flag `:Doc`,
 //! `:MENTIONS` and `:DOCUMENTS` are structurally absent and no docs-pass
 //! regression — in node counts or in build time — can be seen here. Both the
 //! tests and the docs configuration are echoed into the emitted JSON so a
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn parse_options_defaults_to_the_historical_configuration() {
-        // Every row in dev-docs/bench/results/ predating --include-docs was
+        // Every bench-results row predating --include-docs was
         // measured tests-off/docs-off; the default must stay that way or old
         // and new rows silently stop being comparable.
         let parsed = opts(&[]).expect("empty argv parses");

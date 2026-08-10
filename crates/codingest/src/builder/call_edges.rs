@@ -45,8 +45,7 @@ pub struct CallEdge {
     /// hand-labeled truth set, this accounts for every true edge the property
     /// mis-marks. Treat `import_backed = false` as *unconfirmed*, not as
     /// *refuted*: it is a strong filter for exploration and NOT safe as a
-    /// deletion criterion. See `dev-docs/plans/graph-resolution-precision.md`
-    /// Phase 5 for the numbers.
+    /// deletion criterion.
     pub import_backed: Option<bool>,
 }
 
