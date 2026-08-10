@@ -37,6 +37,23 @@ pub(crate) fn class_node_type(kind: &str) -> &'static str {
     }
 }
 
+/// Whether `[timing]` diagnostics print: the caller's `verbose` flag OR the
+/// `KGLITE_CODE_TREE_VERBOSE` env var, never one alone.
+///
+/// The two switches reach different call sites — `verbose` is a build
+/// parameter the CLI/Python entry points pass, the env var is the only switch
+/// available to code with no flag in scope (`load_into_graph`'s stage timers,
+/// the CLI's `source_fingerprint`, which also runs from `status` and `query`).
+/// Gating each timer on whichever switch happened to be in scope is what made
+/// the env-var route print an incomplete set — a diagnostic that lies by
+/// omission is worse than one that is off. Every `[timing]` line in this module
+/// goes through here; `verbose` alone still gates the *non*-timing narration.
+///
+/// Cheap enough to call per phase (a `getenv` per build phase, not per file).
+pub(crate) fn timing_enabled(verbose: bool) -> bool {
+    verbose || std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some()
+}
+
 /// Public `build()` entry point matching the Python API — returns just the
 /// graph. Thin wrapper over [`run_with_options_stats`]; the stats it drops
 /// are the CALLS-resolution counters consumed by the `code_tree_stats` dev
@@ -106,7 +123,7 @@ pub fn run_with_options_stats(
     } else {
         return Err(format!("Not a file or directory: {}", input.display()));
     };
-    if verbose || std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some() {
+    if timing_enabled(verbose) {
         eprintln!(
             "[timing] manifest discovery: {:.3}s",
             t_manifest.elapsed().as_secs_f64()
@@ -166,7 +183,7 @@ pub fn run_with_options_stats(
                 combined.merge(result);
                 parsed_any = true;
             }
-            if verbose && parsed_any {
+            if timing_enabled(verbose) && parsed_any {
                 eprintln!("[timing] parse: {:.3}s", t_parse.elapsed().as_secs_f64());
             }
         }
@@ -184,7 +201,7 @@ pub fn run_with_options_stats(
             max_loc_per_file,
         );
         combined.merge(result);
-        if verbose {
+        if timing_enabled(verbose) {
             eprintln!("[timing] parse: {:.3}s", t_parse.elapsed().as_secs_f64());
         }
     }
@@ -463,6 +480,8 @@ fn collect_files_by_lang(walk_dir: &Path, verbose: bool) -> BTreeMap<&'static st
         for lang in &langs {
             eprintln!("  Found {} {} files", by_lang[lang].len(), lang);
         }
+    }
+    if timing_enabled(verbose) {
         eprintln!("[timing] walk: {:.3}s", t_walk.elapsed().as_secs_f64());
     }
 
@@ -546,7 +565,7 @@ fn parse_roots(
             .map(|(group_index, file)| groups[*group_index].parser.parse_file(file, project_root))
             .collect()
     });
-    if verbose {
+    if timing_enabled(verbose) {
         eprintln!(
             "[timing] parse dispatch: {:.3}s ({} files)",
             t_dispatch.elapsed().as_secs_f64(),
@@ -681,7 +700,7 @@ fn finalize_and_load(
     combined.reference_sites.dedup();
     combined.symbol_relationships.sort();
     combined.symbol_relationships.dedup();
-    if verbose {
+    if timing_enabled(verbose) {
         eprintln!("[timing] dedup: {:.3}s", t_dedup.elapsed().as_secs_f64());
     }
 
@@ -699,7 +718,7 @@ fn finalize_and_load(
     } else {
         js_workspace::JsWorkspace::default()
     };
-    if verbose || std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some() {
+    if timing_enabled(verbose) {
         eprintln!(
             "[timing] js workspace discovery: {:.3}s",
             t_ws.elapsed().as_secs_f64()
@@ -708,7 +727,7 @@ fn finalize_and_load(
     // `mut` is consumed by the cross-language pass below (and the okf docs pass).
     let (mut graph, call_stats) =
         load::load_into_graph(&combined, project_info.as_ref(), &js_workspace)?;
-    if verbose {
+    if timing_enabled(verbose) {
         eprintln!("[timing] load: {:.3}s", t_load.elapsed().as_secs_f64());
     }
 
@@ -727,7 +746,7 @@ fn finalize_and_load(
                 project_info.as_ref().map(|info| info.name.as_str()),
                 verbose,
             )?;
-            if verbose {
+            if timing_enabled(verbose) {
                 eprintln!("[timing] docs: {:.3}s", t_docs.elapsed().as_secs_f64());
             }
         }
@@ -746,7 +765,7 @@ fn finalize_and_load(
         let g = std::sync::Arc::get_mut(&mut graph).expect("graph is uniquely owned during build");
         let t_xlang = std::time::Instant::now();
         crate::cross_lang::ingest_http_cross_edges(g, project_root, verbose)?;
-        if verbose {
+        if timing_enabled(verbose) {
             eprintln!(
                 "[timing] cross-lang: {:.3}s",
                 t_xlang.elapsed().as_secs_f64()

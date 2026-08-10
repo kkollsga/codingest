@@ -14,10 +14,14 @@ ship time — it's the only place the version bumps.
 - **Permanent `[timing]` diagnostics for the three previously unmeasured
   once-per-build costs**: graph persistence (`save_graph`), source
   fingerprinting (the freshness hash, which runs on `build`, `status` *and*
-  every `query`) and manifest discovery. They join the builder's existing phase
-  timers under the same `KGLITE_CODE_TREE_VERBOSE` switch — one switch for every
-  `[timing]` line, since the fingerprint path is reached from commands that have
-  no `--verbose` flag. **All lines are stderr-only**, so `query --format json`
+  every `query`) and manifest discovery. **Every `[timing]` line now respects
+  `KGLITE_CODE_TREE_VERBOSE`** — the builder's phase timers (`walk`, `parse`,
+  `parse dispatch`, `dedup`, `js workspace discovery`, `load`, `docs`,
+  `cross-lang`) previously answered only to the `--verbose` build flag, so
+  setting the documented env var printed an incomplete set. They now fire on
+  either switch, which matters because the fingerprint path is reached from
+  commands that have no `--verbose` flag at all. **All lines are stderr-only**,
+  so `query --format json`
   and `status --format json` keep emitting a single clean JSON object on stdout
   with the switch set; a CLI test parses that stdout to hold the line.
 - **Repositories without a recognized manifest now get an inferred `:Project`

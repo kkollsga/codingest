@@ -217,8 +217,14 @@ fn query_text_can_come_from_stdin() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "f.name\nalpha\n");
 }
 
-/// The three once-per-build costs report under `KGLITE_CODE_TREE_VERBOSE`, and
-/// only under it. `--verbose` deliberately does not gate the two CLI-side lines:
+/// `KGLITE_CODE_TREE_VERBOSE` alone — with no `--verbose` — yields the WHOLE
+/// timing set, not a subset. The builder's phase timers used to answer only to
+/// the `--verbose` flag while the CLI-side and manifest lines answered only to
+/// the env var, so the documented env-var route printed an incomplete set: a
+/// diagnostic that lied by omission. Asserting the builder phases here is what
+/// keeps the two halves on one switch.
+///
+/// `--verbose` deliberately does not gate the two CLI-side lines:
 /// `source_fingerprint` runs from `status` and from every `query` freshness
 /// check, neither of which has a verbose flag.
 #[test]
@@ -237,6 +243,14 @@ fn timing_diagnostics_appear_on_stderr_under_the_verbose_env_var() {
         "[timing] manifest discovery:",
         "[timing] save graph:",
         "[timing] source fingerprint:",
+        // Builder phase timers — these were gated on the `--verbose` flag only.
+        "[timing] walk:",
+        "[timing] parse dispatch:",
+        "[timing] parse:",
+        "[timing] dedup:",
+        "[timing] js workspace discovery:",
+        "[timing] load:",
+        "[timing] cross-lang:",
     ] {
         assert!(
             stderr.contains(line),
