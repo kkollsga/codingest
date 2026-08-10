@@ -7,8 +7,8 @@
 //! `tempfile::tempdir()` and run the ordinary build pipeline
 //! ([`crate::builder::run_with_options`]) over it unchanged — zero
 //! parser changes, zero walk changes. The existing `manifest::walk_filter`
-//! still runs on the extracted tree, so any *committed* `node_modules` /
-//! vendored build output is dropped on top.
+//! still runs *below* the extracted tree's root, so any *committed*
+//! `node_modules` / vendored build output is dropped on top.
 //!
 //! Reuses the established git-shelling convention from `repo.rs`
 //! (`std::process::Command`, list args, no shell).
@@ -53,10 +53,13 @@ pub fn archive_and_build(
 
     // Materialize the tracked tree at `rev` into a throwaway tempdir. The
     // `TempDir` guard cleans up on drop, including on any `?` bail below.
-    // A *visible* prefix is load-bearing: `tempfile::tempdir()` names dirs
-    // `.tmpXXXX` (leading dot), and the builder's `walk_filter` skips hidden
-    // directories at any depth — including the walk root — which would yield
-    // an empty graph. A non-dot prefix keeps the snapshot root walkable.
+    // The `kglite-rev-` prefix is for humans, not for correctness: bare
+    // `tempfile::tempdir()` names dirs `.tmpXXXX`, which is unidentifiable in
+    // a `ps`/`lsof`/leftover-tempdir hunt, whereas this prefix says at a
+    // glance which tool made the directory and why. (It was once load-bearing
+    // — `walk_filter` rejected the leading dot on the walk ROOT and produced
+    // an empty graph — but the filter now exempts depth 0, so any prefix,
+    // including none, builds correctly.)
     let tmp = tempfile::Builder::new()
         .prefix("kglite-rev-")
         .tempdir()

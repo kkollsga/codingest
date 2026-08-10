@@ -10,6 +10,15 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Fixed
+- **Builds rooted at a dot-named or ignore-listed directory no longer produce a
+  silently empty graph.** `WalkDir::filter_entry` applies its predicate to the
+  walk *root* as well as its descendants, so pointing the builder at a `.`-named
+  path (any bare `tempfile::tempdir()`, `~/.config/thing`), a checked-out
+  `target/`, a `venv/` or a vendored `node_modules/` pruned the walk before it
+  started — the build reported success and wrote a graph with no files in it.
+  The name list now applies only below the root.
+
 ### Changed
 - **The KGLite floor moves to 0.15.8 across Cargo and Python.** The embedded
   MCP server picks up KGLite's mcp-methods 0.4.4 / rmcp 3.1.1 integration

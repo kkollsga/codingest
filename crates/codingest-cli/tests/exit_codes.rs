@@ -207,3 +207,44 @@ fn query_text_can_come_from_stdin() {
     assert_eq!(code(&out), 0, "{out:?}");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "f.name\nalpha\n");
 }
+
+/// `WalkDir::filter_entry` applies its predicate to the walk ROOT, so the
+/// builder's ignore-list filter used to prune its own root: a build pointed at
+/// a `.`-prefixed directory walked nothing and wrote an empty graph while
+/// exiting 0. End-to-end guard through the real binary.
+#[test]
+fn build_rooted_at_a_dot_named_directory_is_not_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join(".hidden-root");
+    std::fs::create_dir(&source).unwrap();
+    // Deliberately NO manifest: with one, the walk is rooted at the declared
+    // source root (`src/`) and never touches the dot-named directory, so the
+    // bug would not be exercised. The fallback scan walks the project root
+    // itself, which is the case that returned an empty graph.
+    std::fs::write(source.join("app.py"), "def alpha():\n    return 1\n").unwrap();
+    let graph = dir.path().join("hidden.kgl");
+    let built = codingest(&[
+        "build",
+        source.to_str().unwrap(),
+        "-o",
+        graph.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&built), 0, "build failed: {built:?}");
+
+    let out = codingest(&[
+        "query",
+        "MATCH (n) RETURN count(n)",
+        "-g",
+        graph.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&out), 0, "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let count: u64 = stdout
+        .lines()
+        .nth(1)
+        .unwrap_or_default()
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("unexpected count output: {stdout:?}"));
+    assert!(count > 0, "graph built at a dot-named root is empty");
+}

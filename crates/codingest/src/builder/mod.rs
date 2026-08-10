@@ -915,6 +915,79 @@ mod tests {
         assert!(nodes.iter().all(|(_, id)| !id.contains("test_app")));
     }
 
+    /// `WalkDir::filter_entry` applies its predicate to the ROOT entry too, so
+    /// a `walk_filter` that pruned ignore-listed names at every depth pruned
+    /// the walk root as well: building *at* `.hidden/`, `target/`, `venv/` or
+    /// `node_modules/` yielded an empty graph that still reported success.
+    /// Every such root must now produce the same graph as an ordinary one.
+    #[test]
+    fn build_rooted_at_an_ignored_dir_name_is_not_empty() {
+        const SOURCE: &str = "def run():\n    return 1\n";
+
+        // With no manifest, the fallback scan derives Python module names from
+        // the root directory's own name, so ids differ by construction between
+        // two differently-named roots. Normalize that one name away; everything
+        // else must match the ordinary root exactly.
+        fn node_set(root: &Path) -> Vec<(String, String)> {
+            std::fs::create_dir_all(root).expect("create root");
+            std::fs::write(root.join("app.py"), SOURCE).expect("write source");
+            let graph =
+                run_with_options(root, false, false, None, None, false).expect("build project");
+            let base = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .expect("root basename");
+            let mut nodes: Vec<(String, String)> = graph
+                .graph
+                .node_indices()
+                .filter_map(|index| graph.graph.node_weight(index))
+                .map(|node| {
+                    (
+                        node.node_type_str(&graph.interner).to_string(),
+                        node.id().to_string().replace(base, "plain"),
+                    )
+                })
+                .collect();
+            nodes.sort();
+            nodes
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let baseline = node_set(&temp.path().join("plain"));
+        assert!(
+            baseline
+                .iter()
+                .any(|(kind, id)| kind == "File" && id.contains("app.py")),
+            "baseline build must see the source file: {baseline:?}"
+        );
+
+        for name in [".hidden", "target", "venv", "node_modules"] {
+            let root = temp.path().join(name);
+            // The probe is only meaningful if we really built at the odd root.
+            assert!(crate::manifest::is_ignored_dir_name(name), "{name}");
+            let nodes = node_set(&root);
+            assert!(
+                !nodes.is_empty(),
+                "build rooted at `{name}` produced an EMPTY graph"
+            );
+            // A dot-prefixed root additionally yields one empty-id `Module`:
+            // the module path is `.hidden.app`, whose leading `.` splits into
+            // an empty first segment. That is a pre-existing naming artifact of
+            // dotted directory names, unrelated to the walk filter, and it is
+            // pinned here rather than filtered out — if the naming is ever
+            // fixed, this assertion is what says so.
+            let mut expected = baseline.clone();
+            if name.starts_with('.') {
+                expected.push(("Module".to_string(), "\"\"".to_string()));
+                expected.sort();
+            }
+            assert_eq!(
+                nodes, expected,
+                "build rooted at `{name}` differs from an ordinary root"
+            );
+        }
+    }
+
     #[test]
     fn malformed_manifest_fails_directory_and_explicit_file_builds() {
         let temp = tempfile::tempdir().expect("tempdir");

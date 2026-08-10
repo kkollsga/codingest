@@ -86,12 +86,7 @@ impl JsWorkspace {
         for entry in WalkDir::new(root)
             .follow_links(false)
             .into_iter()
-            // `walk_filter` is applied to the walk ROOT too, and it rejects any
-            // directory whose name starts with `.` — so pointing it at, say,
-            // `~/.config/thing` prunes the entire walk before it starts (a
-            // known defect of the shared filter, tracked separately). Exempting
-            // depth 0 keeps this new walk from reproducing it.
-            .filter_entry(|entry| entry.depth() == 0 || walk_filter(entry))
+            .filter_entry(walk_filter)
             .filter_map(Result::ok)
         {
             if !entry.file_type().is_file() {

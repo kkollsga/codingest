@@ -589,7 +589,20 @@ pub(crate) fn is_ignored_dir_name(name: &str) -> bool {
 /// `is_ignored_dir_name`. Files always pass through (filtering files
 /// here would prune them entirely; we want to walk them and let the
 /// parser layer decide).
+///
+/// **The walk root (depth 0) is always accepted.** `WalkDir::filter_entry`
+/// applies the predicate to the root entry as well, so without this
+/// exemption a build rooted *at* an ignore-listed directory — a
+/// `.`-prefixed path (any `tempfile::tempdir()`, `~/.config/thing`), a
+/// checked-out `target/`, a `venv/`, a vendored `node_modules/` — pruned
+/// its own walk before it started and produced a silently EMPTY graph
+/// that still reported success. The name list is about what to descend
+/// *into*; pointing the tool at such a directory is an explicit request
+/// to index it.
 pub(crate) fn walk_filter(entry: &walkdir::DirEntry) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
     if !entry.file_type().is_dir() {
         return true;
     }
@@ -603,9 +616,14 @@ pub(crate) fn walk_filter(entry: &walkdir::DirEntry) -> bool {
 /// `declared`. Returns as soon as one is found. Used to keep the safety
 /// net cheap on dirs with no parseable code (docs/, assets/) or with only
 /// already-covered languages. Skips ignored subdirs (`.venv`, `target`,
-/// `node_modules`, …) at any depth — without this filter, a single C
-/// extension source inside a venv attracts the parent dir as a
+/// `node_modules`, …) below the walk root — without this filter, a single
+/// C extension source inside a venv attracts the parent dir as a
 /// supplemental root and floods the graph with site-packages content.
+///
+/// `walk_filter` exempts depth 0, so `dir` itself is always descended into.
+/// That is correct here: the sole caller ([`discover_supplemental_roots`])
+/// already skips any first-level dir whose name `is_ignored_dir_name`
+/// accepts, so an ignored `dir` never reaches this function.
 fn directory_contains_undeclared_language(
     dir: &Path,
     declared: &std::collections::HashSet<String>,
