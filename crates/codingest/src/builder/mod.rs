@@ -83,6 +83,9 @@ pub fn run_with_options_stats(
 ) -> Result<(Arc<DirGraph>, call_edges::CallResolutionStats), String> {
     let input = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
 
+    // Manifest discovery is a once-per-build cost that no other timer covers —
+    // the first phase timer (`t_parse`) starts only after this returns.
+    let t_manifest = std::time::Instant::now();
     let (project_root, mut project_info) = if input.is_file() {
         let project_root = input
             .parent()
@@ -102,6 +105,12 @@ pub fn run_with_options_stats(
     } else {
         return Err(format!("Not a file or directory: {}", input.display()));
     };
+    if verbose || std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some() {
+        eprintln!(
+            "[timing] manifest discovery: {:.3}s",
+            t_manifest.elapsed().as_secs_f64()
+        );
+    }
 
     let mut combined = ParseResult::new();
     let mut parsed_any = false;

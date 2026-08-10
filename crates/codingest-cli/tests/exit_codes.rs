@@ -14,6 +14,15 @@ fn codingest(args: &[&str]) -> Output {
         .expect("failed to run the codingest binary")
 }
 
+/// The same binary with the `[timing]` diagnostics switched on.
+fn codingest_timed(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_codingest"))
+        .args(args)
+        .env("KGLITE_CODE_TREE_VERBOSE", "1")
+        .output()
+        .expect("failed to run the codingest binary")
+}
+
 fn code(output: &Output) -> i32 {
     output
         .status
@@ -206,6 +215,97 @@ fn query_text_can_come_from_stdin() {
     let out = child.wait_with_output().unwrap();
     assert_eq!(code(&out), 0, "{out:?}");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "f.name\nalpha\n");
+}
+
+/// The three once-per-build costs report under `KGLITE_CODE_TREE_VERBOSE`, and
+/// only under it. `--verbose` deliberately does not gate the two CLI-side lines:
+/// `source_fingerprint` runs from `status` and from every `query` freshness
+/// check, neither of which has a verbose flag.
+#[test]
+fn timing_diagnostics_appear_on_stderr_under_the_verbose_env_var() {
+    let (dir, source, _graph) = fixture();
+    let graph = dir.path().join("timed.kgl");
+    let built = codingest_timed(&[
+        "build",
+        source.to_str().unwrap(),
+        "-o",
+        graph.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&built), 0, "{built:?}");
+    let stderr = String::from_utf8_lossy(&built.stderr);
+    for line in [
+        "[timing] manifest discovery:",
+        "[timing] save graph:",
+        "[timing] source fingerprint:",
+    ] {
+        assert!(
+            stderr.contains(line),
+            "missing {line:?} on stderr: {stderr}"
+        );
+    }
+    // The human status line is the whole of stdout; no timing leaked onto it.
+    let stdout = String::from_utf8_lossy(&built.stdout);
+    assert!(
+        !stdout.contains("[timing]"),
+        "timing line contaminated build stdout: {stdout}"
+    );
+
+    // Unset, the binary stays silent — these are diagnostics, not output.
+    let quiet = codingest(&[
+        "build",
+        source.to_str().unwrap(),
+        "-o",
+        graph.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&quiet), 0, "{quiet:?}");
+    assert!(
+        !String::from_utf8_lossy(&quiet.stderr).contains("[timing]"),
+        "timing printed without the env var"
+    );
+}
+
+/// The contamination guard. `query` runs `source_fingerprint` through its
+/// freshness check on EVERY invocation, so a timing line written to stdout
+/// instead of stderr would prepend itself to the JSON payload and break every
+/// machine consumer. Parsing stdout is what makes that failure loud.
+#[test]
+fn json_query_stdout_stays_parseable_with_timing_enabled() {
+    let (_dir, _source, graph) = fixture();
+    let out = codingest_timed(&[
+        "query",
+        "MATCH (f:Function) RETURN f.name",
+        "-g",
+        graph.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code(&out), 0, "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let payload: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("query stdout is not clean JSON ({e}): {stdout:?}"));
+    assert_eq!(payload["columns"][0], "f.name");
+    assert_eq!(payload["rows"][0][0], "alpha");
+    // The fingerprint timer did fire — the guard above is testing a live path,
+    // not an unreachable one.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("[timing] source fingerprint:"),
+        "query did not time its freshness check: {stderr}"
+    );
+}
+
+/// `status --format json` shares the fingerprint path and the same one-object
+/// stdout contract.
+#[test]
+fn json_status_stdout_stays_parseable_with_timing_enabled() {
+    let (_dir, _source, graph) = fixture();
+    let out = codingest_timed(&["status", "-o", graph.to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code(&out), 0, "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let payload: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("status stdout is not clean JSON ({e}): {stdout:?}"));
+    assert_eq!(payload["fresh"], true);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[timing] source fingerprint:"));
 }
 
 /// `WalkDir::filter_entry` applies its predicate to the walk ROOT, so the

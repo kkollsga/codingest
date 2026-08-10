@@ -11,6 +11,15 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **Permanent `[timing]` diagnostics for the three previously unmeasured
+  once-per-build costs**: graph persistence (`save_graph`), source
+  fingerprinting (the freshness hash, which runs on `build`, `status` *and*
+  every `query`) and manifest discovery. They join the builder's existing phase
+  timers under the same `KGLITE_CODE_TREE_VERBOSE` switch — one switch for every
+  `[timing]` line, since the fingerprint path is reached from commands that have
+  no `--verbose` flag. **All lines are stderr-only**, so `query --format json`
+  and `status --format json` keep emitting a single clean JSON object on stdout
+  with the switch set; a CLI test parses that stdout to hold the line.
 - **Repositories without a recognized manifest now get an inferred `:Project`
   node.** Only `pyproject.toml` and `Cargo.toml` are read as manifests, so every
   other repository — `package.json`-only JS/TS, Go, Java, C++, or any plain

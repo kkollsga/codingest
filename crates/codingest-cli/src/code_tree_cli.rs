@@ -190,10 +190,32 @@ fn construct_graph(args: &BuildArgs, plan: &BuildPlan) -> Result<Arc<DirGraph>> 
     Ok(graph)
 }
 
+/// Emit a stderr-only `[timing]` line for a once-per-invocation CLI cost.
+///
+/// Gated on `KGLITE_CODE_TREE_VERBOSE` — the same switch the builder's phase
+/// timers use — rather than on `--verbose`. Two reasons, and they are why one
+/// switch beats plumbing a flag: `source_fingerprint` also runs from `status`
+/// and from every `query`'s freshness check, neither of which has a verbose
+/// flag in scope; and a reader correlating a build's phase timings against its
+/// persist cost should not have to know that the two halves answer to different
+/// switches.
+///
+/// **stderr only, without exception.** `query --format json` and `status
+/// --format json` write a machine-readable payload to stdout; a timing line on
+/// that stream breaks every JSON consumer, and `query` runs this path on every
+/// invocation.
+fn mark(started: std::time::Instant, label: &str) {
+    if std::env::var_os("KGLITE_CODE_TREE_VERBOSE").is_some() {
+        eprintln!("[timing] {label}: {:.3}s", started.elapsed().as_secs_f64());
+    }
+}
+
 fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -> Result<Value> {
     let output_text = plan.output.to_string_lossy().to_string();
+    let t_save = std::time::Instant::now();
     save_graph(&mut graph, &output_text)
         .map_err(|e| anyhow::anyhow!("failed to save {}: {e}", plan.output.display()))?;
+    mark(t_save, "save graph");
 
     let fingerprint = source_fingerprint(&plan.source, plan.repo_root.as_deref(), &plan.revisions)?;
     let (artifact_bytes, artifact_fingerprint) = artifact_fingerprint(&plan.output)?;
@@ -330,6 +352,7 @@ fn source_fingerprint(
     repo_root: Option<&Path>,
     revisions: &[String],
 ) -> Result<String> {
+    let started = std::time::Instant::now();
     let mut hash = Fnv64::new();
     hash.update(source.to_string_lossy().as_bytes());
     if revisions.is_empty() {
@@ -361,6 +384,9 @@ fn source_fingerprint(
             hash.update(&output.stdout);
         }
     }
+    // Success path only: an early bail already prints its own diagnostic, and a
+    // partial walk's duration is not the cost this line exists to report.
+    mark(started, "source fingerprint");
     Ok(format!("fnv1a64:{:016x}", hash.finish()))
 }
 
