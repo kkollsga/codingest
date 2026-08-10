@@ -42,7 +42,7 @@ const PARSER_THREAD_STACK_SIZE: usize = 16 * 1024 * 1024;
 /// Shared rayon pool used by every language parser's `parse_directory`.
 /// Lazily initialised on first use, then reused across languages and across
 /// repeat `build()` calls in the same process.
-fn parser_pool() -> &'static rayon::ThreadPool {
+pub(crate) fn parser_pool() -> &'static rayon::ThreadPool {
     static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
         rayon::ThreadPoolBuilder::new()
@@ -70,20 +70,41 @@ pub trait LanguageParser: Sync {
     /// Parse a single source file at `filepath` (absolute) relative to `src_root`.
     fn parse_file(&self, filepath: &Path, src_root: &Path) -> ParseResult;
 
-    /// Parse a pre-collected slice of file paths in parallel. The hot path
-    /// for `build()`: the orchestrator walks the source tree once and
-    /// dispatches each per-language slice through here, avoiding the N+1
-    /// redundant walks that one-`parse_directory`-per-language would do.
+    /// Combine the per-file results of ONE (source root, language) slice into
+    /// that slice's single result, in the order the files were dispatched.
+    ///
+    /// The default is a plain in-order merge, which is exactly what an
+    /// order-preserving parallel reduce over `merge` produced before this hook
+    /// existed (`ParseResult::merge` only appends, so it is associative).
+    ///
+    /// The hook exists because a parser may need a **cross-file post-pass**
+    /// over its own slice — AGC promotes `role_hint` and synthesises
+    /// ALIAS_OF / POINTS_TO edges by resolving names across the files it just
+    /// parsed (see `agc::AgcParser::finalize`). The build orchestrator
+    /// dispatches every file of every root/language through one flat parallel
+    /// worklist, then hands each slice back here, so such a post-pass keeps
+    /// seeing exactly the files of its own root and language — never a wider
+    /// set, which would change what its cross-file resolution can reach.
+    fn finalize(&self, per_file: Vec<ParseResult>) -> ParseResult {
+        let mut combined = ParseResult::new();
+        for result in per_file {
+            combined.merge(result);
+        }
+        combined
+    }
+
+    /// Parse a pre-collected slice of file paths in parallel, then `finalize`
+    /// it. Kept as the single-language entry point for tests and callers that
+    /// hold one slice; `build()` uses one flat cross-language worklist and
+    /// calls `parse_file` + `finalize` directly.
     fn parse_files(&self, files: &[PathBuf], src_root: &Path) -> ParseResult {
-        parser_pool().install(|| {
+        let per_file: Vec<ParseResult> = parser_pool().install(|| {
             files
                 .par_iter()
                 .map(|fp| self.parse_file(fp, src_root))
-                .reduce(ParseResult::new, |mut acc, r| {
-                    acc.merge(r);
-                    acc
-                })
-        })
+                .collect()
+        });
+        self.finalize(per_file)
     }
 
     /// Parse every matching file under `src_root`. Convenience wrapper that

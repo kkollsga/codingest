@@ -91,6 +91,22 @@ ship time — it's the only place the version bumps.
   each drop is reported with a warning naming both files.
 
 ### Changed
+- **Parsing now dispatches every file through ONE parallel worklist** instead of
+  a separate parallel batch per source root per language. The old shape ended
+  each batch in a join that idled the pool whenever a batch was smaller than the
+  core count or held one slow file — a cost paid once per language per root, and
+  worst on the multi-root polyglot repos that have the most batches. Measured
+  parse-phase wall: **-12.0%** on KGLite (`0.320s → 0.281s`, git-archive of
+  `80a0df52`) and **-18.9%** on mistral.rs (`0.294s → 0.239s`, archive of
+  `1d0884d`); whole-build wall **-9.6%** / **-13.3%** on the same two repos
+  (`codingest_bench` corpora `0882abb4c2b1` / `8c44399b4047`), means over 6
+  alternating samples per side. **Graphs are byte-identical**: results are
+  merged in the unchanged (root, language, path) order, both repos produced
+  identical node/edge counts before and after, and all 15 parity goldens are
+  untouched. Cross-file post-passes (AGC's `role_hint` promotion and
+  ALIAS_OF / POINTS_TO synthesis) keep their per-(root, language) scope through
+  a new `LanguageParser::finalize` hook, so their resolution still cannot reach
+  across source roots.
 - **`Route` nodes now represent registrations, not URLs.** The node id includes
   the declaring file (`{framework}::{method}::{path}::{file_path}`), so the same
   path registered from two files is two distinct nodes, each with truthful

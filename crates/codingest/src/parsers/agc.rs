@@ -6,7 +6,7 @@
 //! does not attempt to decode the interpretive arithmetic language.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::LanguageParser;
 use crate::models::{
@@ -14,7 +14,6 @@ use crate::models::{
     ReferenceAccess, ReferenceSiteInfo, SymbolRelationshipInfo, SymbolRelationshipKind,
     SymbolTargetKind,
 };
-use rayon::prelude::*;
 
 pub const AGC_NOISE_NAMES: &[&str] = &[
     "Q", "A", "L", "Z", "BANKCALL", "POSTJUMP", "ISWCALL", "INTPRET", "PHASCHNG", "TASKOVER",
@@ -447,14 +446,18 @@ impl LanguageParser for AgcParser {
         &["agc"]
     }
 
-    fn parse_files(&self, files: &[PathBuf], src_root: &Path) -> ParseResult {
-        let mut result = files
-            .par_iter()
-            .map(|filepath| self.parse_file(filepath, src_root))
-            .reduce(ParseResult::new, |mut accumulated, parsed| {
-                accumulated.merge(parsed);
-                accumulated
-            });
+    /// Cross-file post-pass over one (source root, language) slice: promote
+    /// `role_hint` on functions that are called from anywhere in the slice,
+    /// and synthesise ALIAS_OF / POINTS_TO relationships whose targets resolve
+    /// within it. Implemented as `finalize` rather than `parse_files` so the
+    /// build orchestrator can dispatch every file through one flat parallel
+    /// worklist and still hand this pass exactly its own slice — resolution
+    /// stays scoped to a single root, as it has always been.
+    fn finalize(&self, per_file: Vec<ParseResult>) -> ParseResult {
+        let mut result = ParseResult::new();
+        for parsed in per_file {
+            result.merge(parsed);
+        }
 
         let known_functions: HashSet<String> = result
             .functions

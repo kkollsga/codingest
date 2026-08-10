@@ -15,6 +15,7 @@ use crate::parsers::{detect_languages, get_parser, language_for_path};
 // The pyapi callsite (`code_tree.build()` pyfunction) wraps the
 // result via `KnowledgeGraph::from_arc`.
 use kglite::api::DirGraph;
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -152,11 +153,16 @@ pub fn run_with_options_stats(
                 eprintln!("Source roots: {}", labels.join(", "));
             }
             let t_parse = std::time::Instant::now();
-            for root in &roots {
-                if !root.path.is_dir() {
-                    continue;
-                }
-                let result = parse_directory(&root.path, &project_root, verbose, max_loc_per_file);
+            // Every root's files go through ONE dispatch, so the parser pool
+            // is never drained between roots. Root order (and, inside a root,
+            // language then path order) is preserved by `parse_roots`.
+            let walk_dirs: Vec<&Path> = roots
+                .iter()
+                .map(|root| root.path.as_path())
+                .filter(|path| path.is_dir())
+                .collect();
+            if !walk_dirs.is_empty() {
+                let result = parse_roots(&walk_dirs, &project_root, verbose, max_loc_per_file);
                 combined.merge(result);
                 parsed_any = true;
             }
@@ -171,7 +177,12 @@ pub fn run_with_options_stats(
             return Err(format!("Not a directory: {}", project_root.display()));
         }
         let t_parse = std::time::Instant::now();
-        let result = parse_directory(&project_root, &project_root, verbose, max_loc_per_file);
+        let result = parse_roots(
+            &[project_root.as_path()],
+            &project_root,
+            verbose,
+            max_loc_per_file,
+        );
         combined.merge(result);
         if verbose {
             eprintln!("[timing] parse: {:.3}s", t_parse.elapsed().as_secs_f64());
@@ -378,17 +389,15 @@ fn reconcile_project_languages(project: &mut ProjectInfo, result: &ParseResult) 
     }
 }
 
-/// Walk `walk_dir` for source files and parse them; resulting File-node
-/// paths are computed relative to `project_root`, not `walk_dir`. This
-/// matters when multiple source roots share a common file name at matching
-/// depths (e.g. Cargo workspace crates each with `src/lib.rs`) — keying
-/// dedup on a `walk_dir`-relative `rel_path` would collapse them.
-fn parse_directory(
-    walk_dir: &Path,
-    project_root: &Path,
-    verbose: bool,
-    max_loc_per_file: Option<usize>,
-) -> ParseResult {
+/// Walk `walk_dir` once and partition every source file it contains by
+/// language, in the order the parse must see them: languages in `BTreeMap`
+/// order, paths sorted within each language.
+///
+/// The `.h` → C++ routing decision is made here, i.e. **per walked root**: it
+/// answers "does *this* root contain definitively-C++ source", and a root of
+/// pure C headers must keep its `.h` files on the C parser even when a sibling
+/// root in the same project is C++.
+fn collect_files_by_lang(walk_dir: &Path, verbose: bool) -> BTreeMap<&'static str, Vec<PathBuf>> {
     // One walk, partition by language. The previous implementation walked
     // `dir` once for `detect_languages` and again per-language inside each
     // parser's `parse_directory` — N+1 traversals of the same tree. On
@@ -457,37 +466,100 @@ fn parse_directory(
         eprintln!("[timing] walk: {:.3}s", t_walk.elapsed().as_secs_f64());
     }
 
+    by_lang
+}
+
+/// One (source root, language) parse group: how many files of the flat
+/// worklist belong to it, the oversized files skipped without parsing, and
+/// the parser that owns both the per-file parse and the slice's `finalize`.
+struct ParseGroup {
+    parser: Box<dyn crate::parsers::LanguageParser + Send + Sync>,
+    file_count: usize,
+    skipped: Vec<crate::models::FileInfo>,
+}
+
+/// Walk every source root, then parse **all** of their files through a single
+/// parallel dispatch; resulting File-node paths are computed relative to
+/// `project_root`, not to the individual walked root. This matters when
+/// multiple source roots share a common file name at matching depths (e.g.
+/// Cargo workspace crates each with `src/lib.rs`) — keying dedup on a
+/// root-relative `rel_path` would collapse them.
+///
+/// Why one dispatch: parsing used to run a separate `par_iter` per (root,
+/// language) batch, so every batch ended in a join that idled the pool
+/// whenever a batch was smaller than the core count or had one slow file —
+/// paid once per language per root, and worst on the many-small-batches shape
+/// that a multi-root polyglot repo has. One flat worklist keeps every core fed
+/// until the last file is done.
+///
+/// Output is byte-identical to the per-batch form because the *merge* order is
+/// unchanged: results are collected in worklist index order, and the worklist
+/// is built in (root order, `BTreeMap` language order, sorted path order) —
+/// exactly the nesting the old loops walked. Per-language cross-file passes
+/// stay scoped to their own (root, language) slice via `finalize`.
+fn parse_roots(
+    walk_dirs: &[&Path],
+    project_root: &Path,
+    verbose: bool,
+    max_loc_per_file: Option<usize>,
+) -> ParseResult {
+    // Flat worklist: (index of the owning group, file to parse).
+    let mut worklist: Vec<(usize, PathBuf)> = Vec::new();
+    let mut groups: Vec<ParseGroup> = Vec::new();
+
+    for walk_dir in walk_dirs {
+        for (lang, files) in collect_files_by_lang(walk_dir, verbose) {
+            let Some(parser) = get_parser(lang) else {
+                continue;
+            };
+            // Optional pre-filter: split files whose newline count exceeds
+            // `max_loc_per_file` into a "skipped" pile that's recorded as
+            // FileInfo without invoking the parser.
+            let (to_parse, skipped) = match max_loc_per_file {
+                Some(threshold) => prefilter_oversized(&files, threshold, project_root, lang),
+                None => (files, Vec::new()),
+            };
+            if verbose && !skipped.is_empty() {
+                eprintln!(
+                    "  Skipped {} {} files over max_loc_per_file (threshold {})",
+                    skipped.len(),
+                    lang,
+                    max_loc_per_file.unwrap_or(0)
+                );
+            }
+            let group_index = groups.len();
+            groups.push(ParseGroup {
+                parser,
+                file_count: to_parse.len(),
+                skipped,
+            });
+            worklist.extend(to_parse.into_iter().map(|file| (group_index, file)));
+        }
+    }
+
+    let t_dispatch = std::time::Instant::now();
+    // `collect` on an indexed parallel iterator preserves worklist order, so
+    // the per-file results line up with the groups' contiguous spans.
+    let per_file: Vec<ParseResult> = crate::parsers::parser_pool().install(|| {
+        worklist
+            .par_iter()
+            .map(|(group_index, file)| groups[*group_index].parser.parse_file(file, project_root))
+            .collect()
+    });
+    if verbose {
+        eprintln!(
+            "[timing] parse dispatch: {:.3}s ({} files)",
+            t_dispatch.elapsed().as_secs_f64(),
+            worklist.len()
+        );
+    }
+
+    let mut results = per_file.into_iter();
     let mut combined = ParseResult::new();
-    for (lang, files) in by_lang {
-        let Some(parser) = get_parser(lang) else {
-            continue;
-        };
-        // Optional pre-filter: split files whose newline count exceeds
-        // `max_loc_per_file` into a "skipped" pile that's recorded as
-        // FileInfo without invoking the parser.
-        let (to_parse, skipped) = match max_loc_per_file {
-            Some(threshold) => prefilter_oversized(&files, threshold, project_root, lang),
-            None => (files.clone(), Vec::new()),
-        };
-        if verbose && !skipped.is_empty() {
-            eprintln!(
-                "  Skipped {} {} files over max_loc_per_file (threshold {})",
-                skipped.len(),
-                lang,
-                max_loc_per_file.unwrap_or(0)
-            );
-        }
-        let t_lang = std::time::Instant::now();
-        let mut result = parser.parse_files(&to_parse, project_root);
-        result.files.extend(skipped);
-        if verbose {
-            eprintln!(
-                "[timing] parse {}: {:.3}s ({} files)",
-                lang,
-                t_lang.elapsed().as_secs_f64(),
-                to_parse.len()
-            );
-        }
+    for group in groups {
+        let slice: Vec<ParseResult> = results.by_ref().take(group.file_count).collect();
+        let mut result = group.parser.finalize(slice);
+        result.files.extend(group.skipped);
         combined.merge(result);
     }
     combined
@@ -855,6 +927,52 @@ mod tests {
     use crate::parsers::get_parser;
     use kglite::api::GraphRead;
     use kglite::datatypes::Value;
+
+    /// `parse_roots` dispatches every root's files through one flat parallel
+    /// worklist, but a parser's cross-file pass must still see only its own
+    /// (root, language) slice — merging the roots before `finalize` would
+    /// widen what that pass can resolve and change the graph.
+    ///
+    /// AGC is the parser that has such a pass. Both files below sit in the
+    /// same AGC *program* (`src`, the first path component under the project
+    /// root), so nothing but the slice boundary stops `HELPER` from resolving
+    /// across the two roots: under a single merged finalize it would be
+    /// promoted to `role_hint = routine` by the call in the other root.
+    #[test]
+    fn agc_cross_file_pass_stays_scoped_to_one_source_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("project");
+        let root_a = project.join("src/a");
+        let root_b = project.join("src/b");
+        std::fs::create_dir_all(&root_a).expect("create root a");
+        std::fs::create_dir_all(&root_b).expect("create root b");
+        std::fs::write(root_a.join("MAIN.agc"), "CALLER TC HELPER\n").expect("write caller");
+        std::fs::write(root_b.join("HELP.agc"), "HELPER TC Q\n").expect("write helper");
+
+        let split = parse_roots(&[root_a.as_path(), root_b.as_path()], &project, false, None);
+        let helper = split
+            .functions
+            .iter()
+            .find(|function| function.qualified_name == "src.HELPER")
+            .expect("helper parsed");
+        assert!(
+            !helper.metadata.contains_key("role_hint"),
+            "AGC finalize resolved a call across two source roots: {:?}",
+            helper.metadata
+        );
+
+        // Positive control: with both files in ONE root, the same pass does
+        // promote the callee — so the assertion above pins the scope, not a
+        // pass that stopped working.
+        std::fs::rename(root_b.join("HELP.agc"), root_a.join("HELP.agc")).expect("move helper");
+        let single = parse_roots(&[root_a.as_path()], &project, false, None);
+        let helper = single
+            .functions
+            .iter()
+            .find(|function| function.qualified_name == "src.HELPER")
+            .expect("helper parsed");
+        assert_eq!(helper.metadata["role_hint"], "routine");
+    }
 
     #[test]
     fn overlapping_roots_collapse_to_the_covering_ancestor() {
