@@ -123,6 +123,18 @@ const CORPORA: &[&str] = &[
     // carries the declaring file, deliberately not the line). Its golden is
     // captured additively (see `tests/goldens/README.md`).
     "py_routes_dup",
+    // Added 2026-08-10. The `lang_group` CALLS tier had NO golden coverage:
+    // `cross_ts_py` shares no bare name between its TS and Python halves
+    // (`createSession` vs `create_session`), and `dup_minified_assets`'s
+    // `index.html` contains no `<script>` at all, so no corpus ever reached
+    // tier 3 with candidates from two different language families — the whole
+    // grouping could be changed, or deleted, with every digest staying green.
+    // It pins the case that motivated declaring groups in the registry: an
+    // HTML-embedded script (rescoped to `index.html:script_N.<name>`, a qname
+    // whose punctuation looks Python-ish) calling a name defined BOTH in a
+    // `.js` and in a `.py`, which must resolve to the JavaScript definition.
+    // Its golden is captured additively (see `tests/goldens/README.md`).
+    "html_js_lang_group",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

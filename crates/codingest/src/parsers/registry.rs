@@ -7,23 +7,57 @@
 //!    `language_name()`, `file_extensions()`, and emitted
 //!    [`FileInfo::language`](crate::models::FileInfo::language).
 //! 2. Add one entry to `language_registry!` below: canonical id, extensions,
-//!    both separators, noise names, and parser factory. Separators may differ
-//!    when a language uses distinct file-path and namespace grammars (C++ is
-//!    the canonical example).
+//!    both separators, call-resolution group, noise names, and parser factory.
+//!    Separators may differ when a language uses distinct file-path and
+//!    namespace grammars (C++ is the canonical example).
 //! 3. Add focused parser/edge tests and a representative parity corpus. Capture
 //!    a new golden only for that additive corpus; never regenerate an existing
 //!    golden to silence an unexplained digest change.
 //!
-//! Three behavior-sensitive seams deliberately remain outside the registry:
+//! Two behavior-sensitive seams deliberately remain outside the registry:
 //! `.h` files are rerouted from C to C++ when C++ sources are present in
-//! `builder/mod.rs`; call resolution infers broad language groups from qualified
-//! name separators in `builder/call_edges.rs`; and manifests describe project
-//! languages independently in `manifest/mod.rs`.
+//! `builder/mod.rs`, and manifests describe project languages independently in
+//! `manifest/mod.rs`.
 
 use super::{
     agc, cpp, csharp, css, dart, go, html, java, php, python, rust_lang, swift, typescript,
     LanguageParser,
 };
+
+/// The language family a call may resolve within — tier 3 of
+/// `builder/call_edges.rs`, which narrows a call's surviving candidates to
+/// those defined in the caller's own group.
+///
+/// Membership is DECLARED per language here. It was previously guessed by
+/// sniffing a qualified name for separators (`::` → rust/cpp, `/` → go/ts/js,
+/// otherwise python/java), which read the wrong answer whenever a qname's
+/// punctuation did not match its language: HTML-embedded JavaScript is
+/// rescoped to `index.html:script_N.<name>` and so grouped with Python, and a
+/// TypeScript file at the repository root has no `/` to sniff at all.
+///
+/// The three groups are the ones the sniff approximated; they are coarse on
+/// purpose, because tier 3 only runs after same-owner, same-file and
+/// namespace-import have all failed to narrow, and a group that is too narrow
+/// there just falls through to the global fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LangGroup {
+    /// Systems languages that link directly against one another. C sits here
+    /// with C++ despite its `/` module separator: the two share headers (see
+    /// the `.h` reroute in `builder/mod.rs`) and call each other's symbols
+    /// without ceremony, which is exactly what tier 3 asks about.
+    RustCpp,
+    /// Path-addressed web and service languages. HTML and CSS belong here
+    /// because their embedded content *is* JavaScript — the HTML parser hands
+    /// `<script>` bodies to the JS parser and keeps the resulting functions
+    /// under the host file. (CSS emits selectors and custom properties but
+    /// never a `FunctionInfo`, so it never actually reaches tier 3; it is
+    /// grouped with the other web assets for want of a truer answer.)
+    GoTsJs,
+    /// Dotted-namespace languages. AGC is here on the evidence of its qnames:
+    /// its registry separator is `/`, but the parser emits `Program.LABEL`, so
+    /// this is also where the old sniff put it.
+    PythonJava,
+}
 
 /// Parser construction and language metadata shared by builder consumers.
 pub struct LanguageSpec {
@@ -31,6 +65,10 @@ pub struct LanguageSpec {
     pub extensions: &'static [&'static str],
     pub module_sep: &'static str,
     pub edge_sep: &'static str,
+    /// Call-resolution family — see [`LangGroup`]. Not optional: a new
+    /// language cannot be registered without choosing one, so the compiler is
+    /// the completeness gate.
+    pub group: LangGroup,
     pub noise_names: &'static [&'static str],
     pub make_parser: fn() -> Box<dyn LanguageParser + Send + Sync>,
 }
@@ -102,6 +140,7 @@ macro_rules! language_registry {
                 extensions: [$($extension:literal),+ $(,)?],
                 module_sep: $module_sep:literal,
                 edge_sep: $edge_sep:literal,
+                group: $group:expr,
                 noise_names: $noise_names:expr,
                 make_parser: $make_parser:path $(,)?
             }
@@ -114,6 +153,7 @@ macro_rules! language_registry {
                 extensions: &[$($extension),+],
                 module_sep: $module_sep,
                 edge_sep: $edge_sep,
+                group: $group,
                 noise_names: $noise_names,
                 make_parser: $make_parser,
             }),+
@@ -131,6 +171,7 @@ language_registry! {
         extensions: ["rs"],
         module_sep: "::",
         edge_sep: "::",
+        group: LangGroup::RustCpp,
         noise_names: rust_lang::RUST_NOISE_NAMES,
         make_parser: rust_parser,
     },
@@ -138,6 +179,7 @@ language_registry! {
         extensions: ["py", "pyi"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::PythonJava,
         noise_names: python::PYTHON_NOISE_NAMES,
         make_parser: python_parser,
     },
@@ -145,6 +187,7 @@ language_registry! {
         extensions: ["ts", "tsx"],
         module_sep: "/",
         edge_sep: "/",
+        group: LangGroup::GoTsJs,
         noise_names: typescript::JSTS_NOISE_NAMES,
         make_parser: typescript_parser,
     },
@@ -152,6 +195,7 @@ language_registry! {
         extensions: ["js", "jsx", "mjs"],
         module_sep: "/",
         edge_sep: "/",
+        group: LangGroup::GoTsJs,
         noise_names: typescript::JSTS_NOISE_NAMES,
         make_parser: javascript_parser,
     },
@@ -159,6 +203,7 @@ language_registry! {
         extensions: ["go"],
         module_sep: "/",
         edge_sep: "/",
+        group: LangGroup::GoTsJs,
         noise_names: go::GO_NOISE_NAMES,
         make_parser: go_parser,
     },
@@ -166,6 +211,7 @@ language_registry! {
         extensions: ["java"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::PythonJava,
         noise_names: java::JAVA_NOISE_NAMES,
         make_parser: java_parser,
     },
@@ -173,6 +219,7 @@ language_registry! {
         extensions: ["cs"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::PythonJava,
         noise_names: csharp::CSHARP_NOISE_NAMES,
         make_parser: csharp_parser,
     },
@@ -180,6 +227,7 @@ language_registry! {
         extensions: ["c", "h"],
         module_sep: "/",
         edge_sep: "/",
+        group: LangGroup::RustCpp,
         noise_names: cpp::C_NOISE_NAMES,
         make_parser: c_parser,
     },
@@ -187,6 +235,7 @@ language_registry! {
         extensions: ["cpp", "cc", "cxx", "hpp", "hh", "hxx"],
         module_sep: "/",
         edge_sep: "::",
+        group: LangGroup::RustCpp,
         noise_names: cpp::CPP_NOISE_NAMES,
         make_parser: cpp_parser,
     },
@@ -194,6 +243,7 @@ language_registry! {
         extensions: ["swift"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::PythonJava,
         noise_names: swift::SWIFT_NOISE_NAMES,
         make_parser: swift_parser,
     },
@@ -201,6 +251,7 @@ language_registry! {
         extensions: ["php"],
         module_sep: "\\",
         edge_sep: "\\",
+        group: LangGroup::PythonJava,
         noise_names: php::PHP_NOISE_NAMES,
         make_parser: php_parser,
     },
@@ -208,6 +259,7 @@ language_registry! {
         extensions: ["html", "htm"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::GoTsJs,
         noise_names: &[],
         make_parser: html_parser,
     },
@@ -215,6 +267,7 @@ language_registry! {
         extensions: ["css"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::GoTsJs,
         noise_names: &[],
         make_parser: css_parser,
     },
@@ -222,6 +275,7 @@ language_registry! {
         extensions: ["dart"],
         module_sep: ".",
         edge_sep: ".",
+        group: LangGroup::PythonJava,
         noise_names: &[],
         make_parser: dart_parser,
     },
@@ -229,6 +283,7 @@ language_registry! {
         extensions: ["agc"],
         module_sep: "/",
         edge_sep: "/",
+        group: LangGroup::PythonJava,
         noise_names: agc::AGC_NOISE_NAMES,
         make_parser: agc_parser,
     },

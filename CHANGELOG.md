@@ -95,6 +95,22 @@ ship time — it's the only place the version bumps.
   except that a path with N registrations now links to all N. One golden digest
   moved deliberately (`cross_ts_py`, id shape only — node and edge counts
   unchanged).
+- **Call-resolution language groups are now declared per language in the parser
+  registry instead of inferred from qualified-name separators.** The
+  `lang_group` CALLS tier previously guessed a symbol's language family by
+  sniffing its qualified name — `::` meant Rust/C++, `/` meant Go/TS/JS, and
+  anything else meant Python/Java — which read the wrong answer whenever a
+  qname's punctuation did not match its language. **HTML-embedded JavaScript is
+  the case that shows it:** a `<script>` body is rescoped to
+  `index.html:script_N.<name>`, all dots, so an ambiguous call inside it
+  narrowed to a *Python* candidate over the JavaScript one. Each
+  `LanguageSpec` now carries a `group`, resolved through the file a symbol is
+  defined in, so HTML and CSS group with Go/TS/JS and C groups with Rust/C++
+  (it previously sniffed into the Go/TS/JS group on its `/` separator). A
+  qualified name with no file mapping still falls back to the old sniff, so
+  unmapped names do not change behavior. No pre-existing golden digest moved —
+  no corpus could reach this tier — and the new `html_js_lang_group` corpus
+  closes that gap.
 - **The KGLite floor moves to 0.15.8 across Cargo and Python.** The embedded
   MCP server picks up KGLite's mcp-methods 0.4.4 / rmcp 3.1.1 integration
   (0.15.7), workspace-graph producers now receive deduplicated changed-path

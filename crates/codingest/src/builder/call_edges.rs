@@ -62,7 +62,8 @@ pub struct CallEdge {
 /// same-owner / namespace-import / same-file are scope constraints of
 /// decreasing tightness; `UniqueName` is only "no other symbol in the project
 /// has this name" (which is exactly how a project `fetch` absorbs every call
-/// to the web global); `LangGroup` narrows by separator convention alone; and
+/// to the web global); `LangGroup` narrows only to the caller's language
+/// family (see [`registry::LangGroup`]); and
 /// `GlobalFallback` means no tier narrowed anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Resolution {
@@ -281,14 +282,38 @@ pub(super) fn merge_candidates<'a, 'b>(
     }
 }
 
-fn infer_lang_group(qname: &str) -> &'static str {
+/// Last-resort group for a qualified name we cannot trace back to a parsed
+/// file: the pre-2026-08 separator sniff, kept verbatim.
+///
+/// It is wrong often enough to have been replaced as the primary route (see
+/// [`registry::LangGroup`]), but it is *deterministic* and it is what every
+/// unmapped qname was already being judged by, so keeping it here means the
+/// registry lookup changes the answer only where it actually knows better.
+/// Every qname reaching tier 3 in a real build comes from `functions` and so
+/// has a file; the fallback covers callers that pass no `FileInfo` (most of
+/// this module's own unit tests) and files whose language is outside the
+/// registry (docs).
+fn sniff_lang_group(qname: &str) -> registry::LangGroup {
     if qname.contains("::") {
-        "rust_cpp"
+        registry::LangGroup::RustCpp
     } else if qname.contains('/') {
-        "go_ts_js"
+        registry::LangGroup::GoTsJs
     } else {
-        "python_java"
+        registry::LangGroup::PythonJava
     }
+}
+
+/// The call-resolution group of a *target* qname: the language declared for
+/// the file that defines it, mapped through the registry.
+fn lang_group_of(
+    qname: &str,
+    qname_to_file: &HashMap<&str, &str>,
+    file_groups: &HashMap<&str, registry::LangGroup>,
+) -> registry::LangGroup {
+    qname_to_file
+        .get(qname)
+        .and_then(|path| file_groups.get(path).copied())
+        .unwrap_or_else(|| sniff_lang_group(qname))
 }
 
 /// Run the 5-tier resolution over every parsed function's call sites.
@@ -298,7 +323,7 @@ fn infer_lang_group(qname: &str) -> &'static str {
 ///   0b. Inheritance: a self-call to a method defined on an ancestor (EXTENDS/IMPLEMENTS, not the caller's own type) resolves to the unique inherited definition
 ///   1. Same owner: caller and target share qualified prefix
 ///   2. Same file
-///   3. Same language group (separator convention)
+///   3. Same language group (declared per language in `parsers::registry`)
 ///   4. Global fallback (all targets with matching bare name)
 ///
 /// Calls whose bare name appears in `excluded_names` are skipped (stdlib noise).
@@ -391,6 +416,14 @@ pub fn build_call_edges(
         .map(|f| (f.qualified_name.as_str(), f.file_path.as_str()))
         .collect();
 
+    // file_path → call-resolution group, via the language the file was parsed
+    // as. Files whose language has no registry entry (docs) are absent, and
+    // fall back to the separator sniff.
+    let file_groups: HashMap<&str, registry::LangGroup> = files
+        .iter()
+        .filter_map(|f| registry::spec(&f.language).map(|spec| (f.path.as_str(), spec.group)))
+        .collect();
+
     // file_path → imported namespace prefixes. Empty for files whose
     // language doesn't track imports as namespace names.
     let file_imports: HashMap<&str, &Vec<String>> = files
@@ -417,7 +450,12 @@ pub fn build_call_edges(
         .par_iter()
         .map(|fn_info| {
             let caller_qn = fn_info.qualified_name.as_str();
-            let caller_lang = infer_lang_group(caller_qn);
+            // The caller's own `FileInfo` is authoritative — no need to route
+            // back through `qname_to_file`, which collapses duplicate qnames.
+            let caller_lang = file_groups
+                .get(fn_info.file_path.as_str())
+                .copied()
+                .unwrap_or_else(|| sniff_lang_group(caller_qn));
             let caller_prefix = qname_to_prefix.get(caller_qn).copied();
             let caller_owner = qname_to_owner.get(caller_qn).copied();
             let caller_file = fn_info.file_path.as_str();
@@ -608,7 +646,7 @@ pub fn build_call_edges(
                     let narrowed: Vec<&str> = targets
                         .iter()
                         .copied()
-                        .filter(|t| infer_lang_group(t) == caller_lang)
+                        .filter(|t| lang_group_of(t, &qname_to_file, &file_groups) == caller_lang)
                         .collect();
                     if !narrowed.is_empty() {
                         filtered = narrowed;
@@ -1324,6 +1362,84 @@ mod stats_tests {
 
         let (_edges, stats) = build_call_edges(&functions, &files, &noise, 5, &[], &no_imports());
         assert_eq!(stats.resolved_via_inheritance, 0);
+    }
+
+    /// Tier 3 groups by the language DECLARED for the defining file, not by
+    /// the separators that happen to appear in a qualified name.
+    ///
+    /// HTML-embedded JavaScript is the case that proves it: the HTML parser
+    /// rescopes the extracted functions to `index.html:script_N.<name>`, a
+    /// qname with dots and no `/`, so the old separator sniff filed it under
+    /// the dotted-namespace group and narrowed a call to the *Python*
+    /// candidate. The script block is JavaScript; it must narrow to the JS
+    /// candidate.
+    #[test]
+    fn html_embedded_js_narrows_to_the_js_candidate_not_the_python_one() {
+        let files = vec![
+            FileInfo {
+                path: "index.html".into(),
+                language: "html".into(),
+                ..Default::default()
+            },
+            FileInfo {
+                path: "src/app.js".into(),
+                language: "javascript".into(),
+                ..Default::default()
+            },
+            FileInfo {
+                path: "pkg.py".into(),
+                language: "python".into(),
+                ..Default::default()
+            },
+        ];
+        let functions = vec![
+            func("index.html:script_0.main", "index.html", &[("render", 4)]),
+            func("src/app.render", "src/app.js", &[]),
+            func("pkg.render", "pkg.py", &[]),
+        ];
+
+        let (edges, _) = build_call_edges(
+            &functions,
+            &files,
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+
+        assert_eq!(
+            meta(&edges),
+            vec![("src/app.render", "lang_group", 1, false)],
+            "the inline script is JavaScript — it must not be grouped with Python"
+        );
+    }
+
+    /// The registry lookup is keyed on the defining file, so a caller whose
+    /// file the builder never recorded still gets a deterministic group: the
+    /// historical separator sniff. Callers pass `files: &[]` all over this
+    /// module, and their expectations must not move.
+    #[test]
+    fn an_unmapped_qname_falls_back_to_the_separator_sniff() {
+        let functions = vec![
+            func("app::web.main", "a.rs", &[("render", 4)]),
+            func("other::lib.render", "b.rs", &[]),
+            func("pkg.render", "c.py", &[]),
+        ];
+
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+
+        assert_eq!(
+            meta(&edges),
+            vec![("other::lib.render", "lang_group", 1, false)],
+            "with no FileInfo to key on, `::` still means the rust/cpp group"
+        );
     }
 
     #[test]

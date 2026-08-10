@@ -143,6 +143,25 @@ with N registrations now links to all N). Verified additive the strict way:
 reported exactly `py_routes_dup.sha256` as new and `cross_ts_py.sha256` as
 modified, so the twelve untouched pre-existing digests came back byte-identical.
 
+The additive `html_js_lang_group` digest was captured on 2026-08-10 with the
+corpus itself. It guards the `lang_group` CALLS tier, which had **no golden
+coverage at all**: reaching tier 3 needs one bare name defined in two different
+language families that survives the same-owner, namespace-import and same-file
+tiers, and no corpus had that shape — `cross_ts_py` shares no bare name across
+its halves (`createSession` vs `create_session`) and `dup_minified_assets`'s
+`index.html` contains no `<script>`. The whole grouping could therefore be
+changed, or deleted outright, with every digest staying green. The corpus pins
+the case that motivated declaring groups in `parsers::registry`: `index.html`'s
+inline script is rescoped to `index.html:script_N.main` — a qname whose
+punctuation is dots, so the old separator sniff filed it with Python — and its
+`render()` call must resolve to `web/widgets.render`, NOT to the equally-named
+`server/app.py` definition. Verified additive the strict way: `capture_goldens`
+rewrote all fifteen files, and afterwards `git status` reported only
+`html_js_lang_group.sha256` as new, so the fourteen pre-existing digests came
+back byte-identical. The gate was then mutation-tested: restoring the separator
+sniff in `infer_lang_group`'s place turned it red (the call re-resolved to the
+Python definition) and the registry lookup turned it back green.
+
 ## The 2026-08-10 bulk regeneration (13 of 14 digests)
 
 **This is the first bulk regeneration since the extraction**, and the only one
