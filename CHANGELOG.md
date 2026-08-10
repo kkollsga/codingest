@@ -95,6 +95,14 @@ ship time — it's the only place the version bumps.
   each drop is reported with a warning naming both files.
 
 ### Changed
+- **AGC control-edge property frames omit all-empty columns**, trimming per-edge
+  load cost on sparse graphs (no output change). `JUMPS_TO`/`BRANCHES_TO` frames
+  emitted `raw_targets`, `offsets`, `via` and `address_lines` unconditionally,
+  even when no edge in the frame carried them; they now use the same
+  `if edges.iter().any(...)` conditional-column pattern the `CALLS` and
+  `REFERENCES` frames already use. An all-`None` column stores nothing
+  engine-side, so the graph is byte-identical — the frozen parity goldens,
+  including the `agc_basic` corpus, are unchanged.
 - **The freshness fingerprint now hashes only ingestible inputs, in parallel.**
   It used to hash nearly every file under the source root — on a KGLite checkout
   that is 232 MB across 3250 files, of which 169 MB is `.so`/`.dylib`/`.jar`

@@ -155,7 +155,7 @@ pub(super) fn call_edges_df(edges: &[super::super::call_edges::CallEdge]) -> Dat
 }
 
 pub(super) fn control_edges_df(edges: &[super::super::semantic_edges::ControlEdge]) -> DataFrame {
-    build_df(vec![
+    let mut columns = vec![
         (
             "caller",
             ColumnType::String,
@@ -181,22 +181,37 @@ pub(super) fn control_edges_df(edges: &[super::super::semantic_edges::ControlEdg
             ColumnType::Int64,
             int_col(edges.iter().map(|edge| Some(edge.transfer_count)).collect()),
         ),
-        (
+    ];
+    // Optional transfer metadata, emitted only when some edge in the frame
+    // carries it — the same conditional-column pattern `call_edges_df` and
+    // `references_edges_df` use. An all-`None` column is not a graph property:
+    // `add_connections` skips `Value::Null` cells, so a frame-wide-empty column
+    // stores nothing and only costs the materialization + per-edge null probe.
+    // Both frames this feeds are routinely sparse — a BRANCHES_TO frame never
+    // carries `via`/`address_lines`, since only trampoline transfers have them.
+    if edges.iter().any(|edge| edge.raw_targets.is_some()) {
+        columns.push((
             "raw_targets",
             ColumnType::String,
             str_col(edges.iter().map(|edge| edge.raw_targets.clone()).collect()),
-        ),
-        (
+        ));
+    }
+    if edges.iter().any(|edge| edge.offsets.is_some()) {
+        columns.push((
             "offsets",
             ColumnType::String,
             str_col(edges.iter().map(|edge| edge.offsets.clone()).collect()),
-        ),
-        (
+        ));
+    }
+    if edges.iter().any(|edge| edge.via.is_some()) {
+        columns.push((
             "via",
             ColumnType::String,
             str_col(edges.iter().map(|edge| edge.via.clone()).collect()),
-        ),
-        (
+        ));
+    }
+    if edges.iter().any(|edge| edge.address_lines.is_some()) {
+        columns.push((
             "address_lines",
             ColumnType::String,
             str_col(
@@ -205,8 +220,9 @@ pub(super) fn control_edges_df(edges: &[super::super::semantic_edges::ControlEdg
                     .map(|edge| edge.address_lines.clone())
                     .collect(),
             ),
-        ),
-    ])
+        ));
+    }
+    build_df(columns)
 }
 
 pub(super) fn implements_edges_df(edges: &[super::super::type_edges::ImplementsEdge]) -> DataFrame {
