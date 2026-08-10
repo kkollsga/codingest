@@ -10,6 +10,18 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **The KGLite floor moves to 0.15.8 across Cargo and Python.** The embedded
+  MCP server picks up KGLite's mcp-methods 0.4.4 / rmcp 3.1.1 integration
+  (0.15.7), workspace-graph producers now receive deduplicated changed-path
+  hints alongside full-build requests, and a query-plan cache fix stops a write
+  loop evicting unrelated graphs' cached read plans. Graph APIs, builder
+  output, property encoding, and `.kgl` persistence are unchanged.
+- **CI installs the engine it declares.** The Python job pinned
+  `kglite==0.15.5` while the wheel required `>=0.15.6`, so the job's own
+  `pip check` step was validating a dependency set the release never ships.
+  The pin now tracks the floor.
+
 ## [0.1.7] - 2026-08-06
 
 ### Changed

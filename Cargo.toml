@@ -17,8 +17,19 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.15.6
-# floor fixes mixed-selection vector dispatch, mixed-metric exact search,
+# kglite engine + MCP server — imported as crates.io libraries. The 0.15.8
+# floor adds recorded storage modes, `--storage` conversion on an existing
+# graph, and boot-validated Cypher recipe catalogs — none of which codingest
+# consumes — plus two changes that do reach us: workspace-graph producers now
+# receive deduplicated changed-path hints alongside full-build requests (our
+# `with_workspace_graph` producer lives in codingest-mcp), and the optimized-
+# plan cache no longer lets a write loop evict other graphs' cached read plans.
+# `OpenGraphResult` gained a `converted_from` field — a documented struct-
+# literal break we are not exposed to, as codingest constructs no
+# `OpenGraphResult`. 0.15.7 aligned the embedded server on mcp-methods 0.4.4
+# and rmcp 3.1.1; dynamic handlers use rmcp's response envelope while
+# preserving their payloads and MCP behavior. The 0.15.6 engine fixes
+# mixed-selection vector dispatch, mixed-metric exact search,
 # community-detection modularity scoring, sampled-centrality validation, and
 # persisted HNSW validation, while adding the bulk node-degree primitive and
 # graph-algorithm/vector-search performance improvements. It builds on the two
@@ -31,11 +42,11 @@ sha2 = "0.11"
 # deterministic Postcard persistence stack inherited from 0.14.5/0.15.0-0.15.3.
 # 0.15.4 is deliberately skipped: it was WAL/durability and mapped-graph work
 # we consume none of — codingest uses no `durable=` level, no `MappedGraph`,
-# and no disk storage. Neither patch changes `kglite::api`, graph output,
-# property encoding, or `.kgl` serialization.
+# and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
+# call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.15.6", default-features = false }
-kglite-mcp-server = { version = "0.15.6", default-features = false }
+kglite = { version = "0.15.8", default-features = false }
+kglite-mcp-server = { version = "0.15.8", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite
