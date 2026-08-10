@@ -11,6 +11,24 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **A release perf anchor — committed per-release bench baselines (docs-on and
+  docs-off) and `scripts/bench_anchor.sh`, which refuses cross-corpus
+  comparison, voids on control movement, and blocks the release tag at +30 %
+  per-row drift.** Release 0.1.6 published two perf breaches nothing caught —
+  opencode nodes +13.03 % against a ≤12 % budget and build +20.16 % against
+  ≤15 % — because those budgets lived in prose and were read by a human against
+  the wrong denominator. Four verdicts, each a distinct exit code because
+  "re-measure" and "you have a regression" are opposite instructions: PASS (0),
+  FAIL (1, blocks the tag), REFUSE (3, corpus digest or docs mode differs — no
+  delta is computed at all), VOID (4, the designated control query moved, so
+  the capture reports no per-row verdicts). Queries are judged **per row
+  returned**, never raw: 0.1.6 was 6 of 11 queries over a raw +10 % ceiling and
+  every one was correct, the call graph having gotten denser on purpose. The
+  anchor runs on the frozen `tests/corpus` fixture tree rather than this repo's
+  own sources — those *are* the code under test, so their digest moves nearly
+  every release, which would make the gate REFUSE every time. Baselines carry
+  their own noise floors and their own control query, both derived from
+  measured run-to-run spread. `tests/benchmarks/README.md` is the record.
 - **`codingest_bench` gains `--no-docs`, and the JSON labels the mode.** The
   harness previously hardcoded the docs pass ON in both of its builds, so a
   recorded row's `"include_docs": true` was a literal, not a reading. It is now

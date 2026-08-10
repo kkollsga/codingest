@@ -172,6 +172,61 @@ named blocker.
      numbers and date (the us-vs-in-tree tables are a frozen historical
      snapshot). If no perf-sensitive path changed, skip the bench and note it —
      an unchanged hot path doesn't need re-measuring every release.
+   - **Perf anchor** (`tests/benchmarks/baselines/`) — **runs every release,
+     unconditionally.** Unlike the `BENCHMARKS.md` refresh above, this one has
+     no "only if perf-sensitive paths changed" escape: the whole point is
+     cumulative drift that no single release looked responsible for. 0.1.6
+     shipped nodes +13.03 % against a ≤12 % budget and build +20.16 % against
+     ≤15 % because the budgets lived in prose and were read by a human against
+     the wrong denominator. Full rationale: `tests/benchmarks/README.md`.
+     1. Capture, from step 3's **release** build, in **both** docs modes.
+        Redirect the streams separately — `codingest_bench` writes warnings to
+        stderr before the JSON, so `2>&1` yields a file that is not JSON:
+        ```sh
+        cargo build --release -p codingest --bin codingest_bench
+        ./target/release/codingest_bench tests/corpus --json           > /tmp/on.json  2>/dev/null
+        ./target/release/codingest_bench tests/corpus --no-docs --json > /tmp/off.json 2>/dev/null
+        ```
+     2. Pick the anchor and compare **both** modes against it:
+        ```sh
+        anchor=$(scripts/bench_anchor.sh select-baseline tests/benchmarks/baselines --window 3)
+        scripts/bench_anchor.sh compare --current /tmp/on.json  --baseline "$anchor"
+        scripts/bench_anchor.sh compare --current /tmp/off.json --baseline "$anchor"
+        ```
+        `select-baseline` returns the **oldest** baseline within the last 3
+        releases — anchoring to the previous release only ever sees one step
+        of drift, which is how 0.1.6's slide went unnoticed.
+     3. **Read the exit code, and do not put either command in a pipeline.** A
+        pipeline reports its last stage, so `… | tail` turns every verdict
+        into 0 — the exact mask that made release.yml's version extraction
+        unfailable. The four codes mean different things and one of them is
+        not a failure to fix:
+        - **1 FAIL — this BLOCKS the tag.** Either the regression is real and
+          gets fixed, or the growth is intended, gets argued in
+          `BENCHMARKS.md`, and is re-baselined in the same commit. Never
+          re-baseline to silence an unexplained diff — that is the golden-file
+          rule from the parity gate, applied here.
+        - **3 REFUSE** — corpus digest or docs mode differs. No delta was
+          computed. Someone changed a `tests/corpus` fixture; recapture the
+          baseline for the new corpus, and say so in the release notes.
+        - **4 VOID** — the control query moved; the instrument moved, not
+          necessarily the code. Re-measure on a settled machine. Do **not**
+          bisect and do not read the other rows.
+        - **0 PASS** — proceed.
+     4. **After the release is green** (step 11 verified publication), capture
+        the new baseline as `tests/benchmarks/baselines/<x.y.z>.json` with a
+        full `captured_at_commit`, then
+        `scripts/bench_anchor.sh prune tests/benchmarks/baselines --keep 4
+        --delete`. Commit both together. The capture procedure — three runs
+        per mode, min per query, mean for `build_secs`, floors at ~2.5x the
+        observed spread — is in `tests/benchmarks/README.md`; follow it rather
+        than reconstructing it.
+     **Live but degraded until three baselines exist.** As of 0.1.7 there is
+     exactly one, so `select-baseline` anchors to it and prints a DEGRADED
+     notice on stderr: the gate works, it just spans one release of history
+     instead of three. It tightens on its own as baselines accumulate — no
+     action needed, but do not read a PASS as three releases of evidence until
+     `ls tests/benchmarks/baselines/` shows three files.
    Only touch these files when they actually moved — a no-op release leaves
    them as-is.
 5. **Binaries:** already built by step 3's workspace `--release` build at the

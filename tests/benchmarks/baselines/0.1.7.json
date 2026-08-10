@@ -1,0 +1,207 @@
+{
+  "schema": 1,
+  "version": "0.1.7",
+  "captured_at_commit": "8dc3089e9cb7fb0546af32856296624ed03441db",
+  "captured_at": "2026-08-10",
+  "target": "tests/corpus",
+  "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
+  "control_query": "anchored_callers (anchored 1-hop, in-hub)",
+  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
+  "build_gating": "recorded, not enforced: at 27 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here.",
+  "stability_across_3_runs": {
+    "docs-on": {
+      "runs": 3,
+      "worst_query": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+      "worst_spread_ms": 0.004,
+      "control_spread_pct": 0.0,
+      "build_secs_runs": [
+        0.0135,
+        0.007,
+        0.0065
+      ]
+    },
+    "docs-off": {
+      "runs": 3,
+      "worst_query": "two_hop_into_hot (2-hop traversal + count)",
+      "worst_spread_ms": 0.002,
+      "control_spread_pct": 0.0,
+      "build_secs_runs": [
+        0.0055,
+        0.0055,
+        0.0055
+      ]
+    }
+  },
+  "corpora": [
+    {
+      "target": "tests/corpus",
+      "mode": "docs-on",
+      "include_docs": true,
+      "corpus_sha256": "3db4e79058341d803434f7e10c51f4ab583c28bb17cdfa3c176a5e673b96c099",
+      "corpus_files": 60,
+      "corpus_bytes": 27288,
+      "nodes": 279,
+      "edges": 394,
+      "build_secs": 0.009,
+      "build_gates": false,
+      "floors": {
+        "query_abs_ms": 0.01,
+        "build_abs_secs": 0.05
+      },
+      "queries": [
+        {
+          "name": "count_functions (full-label scan + count)",
+          "rows": 1,
+          "median_ms": 0.0,
+          "min_ms": 0.0
+        },
+        {
+          "name": "eq_filter_pub (equality property filter)",
+          "rows": 1,
+          "median_ms": 0.003,
+          "min_ms": 0.003
+        },
+        {
+          "name": "contains_new (CONTAINS string filter)",
+          "rows": 1,
+          "median_ms": 0.003,
+          "min_ms": 0.003
+        },
+        {
+          "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+          "rows": 20,
+          "median_ms": 0.048,
+          "min_ms": 0.043
+        },
+        {
+          "name": "defs_per_file (grouped aggregation)",
+          "rows": 20,
+          "median_ms": 0.013,
+          "min_ms": 0.012
+        },
+        {
+          "name": "calls_edge_scan (1-hop edge scan + count)",
+          "rows": 1,
+          "median_ms": 0.007,
+          "min_ms": 0.007
+        },
+        {
+          "name": "anchored_callers (anchored 1-hop, in-hub)",
+          "rows": 7,
+          "median_ms": 0.013,
+          "min_ms": 0.011,
+          "control": true
+        },
+        {
+          "name": "two_hop_into_hot (2-hop traversal + count)",
+          "rows": 1,
+          "median_ms": 0.022,
+          "min_ms": 0.022
+        },
+        {
+          "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+          "rows": 1,
+          "median_ms": 0.026,
+          "min_ms": 0.024
+        },
+        {
+          "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+          "rows": 4,
+          "median_ms": 0.011,
+          "min_ms": 0.011
+        },
+        {
+          "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+          "rows": 1,
+          "median_ms": 0.0,
+          "min_ms": 0.0
+        }
+      ]
+    },
+    {
+      "target": "tests/corpus",
+      "mode": "docs-off",
+      "include_docs": false,
+      "corpus_sha256": "3db4e79058341d803434f7e10c51f4ab583c28bb17cdfa3c176a5e673b96c099",
+      "corpus_files": 60,
+      "corpus_bytes": 27288,
+      "nodes": 272,
+      "edges": 374,
+      "build_secs": 0.0055,
+      "build_gates": false,
+      "floors": {
+        "query_abs_ms": 0.01,
+        "build_abs_secs": 0.05
+      },
+      "queries": [
+        {
+          "name": "count_functions (full-label scan + count)",
+          "rows": 1,
+          "median_ms": 0.0,
+          "min_ms": 0.0
+        },
+        {
+          "name": "eq_filter_pub (equality property filter)",
+          "rows": 1,
+          "median_ms": 0.003,
+          "min_ms": 0.003
+        },
+        {
+          "name": "contains_new (CONTAINS string filter)",
+          "rows": 1,
+          "median_ms": 0.003,
+          "min_ms": 0.003
+        },
+        {
+          "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+          "rows": 20,
+          "median_ms": 0.05,
+          "min_ms": 0.045
+        },
+        {
+          "name": "defs_per_file (grouped aggregation)",
+          "rows": 20,
+          "median_ms": 0.014,
+          "min_ms": 0.013
+        },
+        {
+          "name": "calls_edge_scan (1-hop edge scan + count)",
+          "rows": 1,
+          "median_ms": 0.008,
+          "min_ms": 0.008
+        },
+        {
+          "name": "anchored_callers (anchored 1-hop, in-hub)",
+          "rows": 7,
+          "median_ms": 0.014,
+          "min_ms": 0.013,
+          "control": true
+        },
+        {
+          "name": "two_hop_into_hot (2-hop traversal + count)",
+          "rows": 1,
+          "median_ms": 0.024,
+          "min_ms": 0.024
+        },
+        {
+          "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+          "rows": 1,
+          "median_ms": 0.028,
+          "min_ms": 0.027
+        },
+        {
+          "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+          "rows": 4,
+          "median_ms": 0.012,
+          "min_ms": 0.012
+        },
+        {
+          "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+          "rows": 1,
+          "median_ms": 0.0,
+          "min_ms": 0.0
+        }
+      ]
+    }
+  ]
+}
