@@ -174,6 +174,11 @@ pub fn run_with_options_stats(
     }
     if let Some(info) = &mut project_info {
         reconcile_project_languages(info, &combined);
+    } else {
+        // No supported manifest — infer the project from the root itself, so
+        // the graph still has an owner for its files and docs. Runs AFTER the
+        // parse so the inferred languages are the ones actually found.
+        project_info = infer_project_info(&project_root, &combined);
     }
 
     finalize_and_load(
@@ -314,6 +319,36 @@ fn retain_non_test_entities(result: &mut ParseResult) {
 
 /// Manifest-declared languages are useful intent, but the graph metadata must
 /// also describe every language actually retained in the parsed file set.
+/// Synthesize a [`ProjectInfo`] for a repository with no supported manifest.
+///
+/// Only `pyproject.toml` and `Cargo.toml` are recognised manifests, so without
+/// this every other repository — every JS/TS, Go, Java or C++ tree, and any
+/// plain directory — built with no `:Project` node at all: no owner for its
+/// files, and docs floating unattached to anything structural. The inferred
+/// project fills that hole with the two facts the directory can actually
+/// supply: its own name, and the languages the parse found. Everything else
+/// (version, license, dependencies, source roots) stays empty — inference does
+/// not guess metadata it has no source for.
+///
+/// It writes [`INFERRED_MANIFEST`] into `manifest_path` instead of adding an
+/// `inferred` flag: see that constant for why the property set must not grow.
+///
+/// Returns `None` only when the root has no usable directory name (a
+/// filesystem root), where there is nothing to name the project after.
+fn infer_project_info(project_root: &Path, result: &ParseResult) -> Option<ProjectInfo> {
+    let name = project_root.file_name().and_then(|name| name.to_str())?;
+    if name.is_empty() {
+        return None;
+    }
+    let mut info = ProjectInfo {
+        name: name.to_string(),
+        manifest_path: crate::models::INFERRED_MANIFEST.to_string(),
+        ..ProjectInfo::default()
+    };
+    reconcile_project_languages(&mut info, result);
+    Some(info)
+}
+
 fn reconcile_project_languages(project: &mut ProjectInfo, result: &ParseResult) {
     let present: BTreeSet<&str> = result
         .files
@@ -605,7 +640,12 @@ fn finalize_and_load(
         {
             let g =
                 std::sync::Arc::get_mut(&mut graph).expect("graph is uniquely owned during build");
-            crate::docs::ingest_and_link(g, project_root, verbose)?;
+            crate::docs::ingest_and_link(
+                g,
+                project_root,
+                project_info.as_ref().map(|info| info.name.as_str()),
+                verbose,
+            )?;
             if verbose {
                 eprintln!("[timing] docs: {:.3}s", t_docs.elapsed().as_secs_f64());
             }
@@ -1337,6 +1377,204 @@ public:
                 })
                 .count();
             assert_eq!(calls_to_overloads, 2, "{language}");
+        }
+    }
+
+    // ── inferred Project anchoring (manifestless repositories) ──────────────
+
+    fn count_label(graph: &DirGraph, label: &str) -> usize {
+        graph
+            .graph
+            .node_indices()
+            .filter_map(|index| graph.graph.node_weight(index))
+            .filter(|node| node.node_type_str(&graph.interner) == label)
+            .count()
+    }
+
+    fn count_conn(graph: &DirGraph, conn: &str) -> usize {
+        graph
+            .graph
+            .edge_indices()
+            .filter_map(|index| graph.graph.edge_weight(index))
+            .filter(|edge| edge.connection_type_str(&graph.interner) == conn)
+            .count()
+    }
+
+    /// The single `:Project` node's id plus its property map. Panics unless
+    /// exactly one exists — "exactly one" is part of every assertion here.
+    fn sole_project(graph: &DirGraph) -> (String, BTreeMap<String, Value>) {
+        let mut found: Vec<(String, BTreeMap<String, Value>)> = graph
+            .graph
+            .node_indices()
+            .filter_map(|index| graph.graph.node_weight(index))
+            .filter(|node| node.node_type_str(&graph.interner) == "Project")
+            .map(|node| {
+                let id = match &*node.id() {
+                    Value::String(name) => name.clone(),
+                    other => panic!("unexpected :Project id {other:?}"),
+                };
+                (
+                    id,
+                    node.properties_cloned(&graph.interner)
+                        .into_iter()
+                        .collect(),
+                )
+            })
+            .collect();
+        assert_eq!(found.len(), 1, "expected exactly one :Project node");
+        found.pop().expect("one project")
+    }
+
+    /// A manifestless repository (the common case: JS/TS, Go, Java, C++, or a
+    /// plain directory) must still get a `:Project` anchor — named after the
+    /// project root — owning every source file via HAS_SOURCE and every doc
+    /// via HAS_DOC. Before the inferred-project fix this graph had ZERO
+    /// `:Project` nodes and no ownership edges at all.
+    #[test]
+    fn manifestless_repository_gets_an_inferred_project_anchor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("plainrepo");
+        std::fs::create_dir_all(&project).expect("create project dir");
+        std::fs::write(project.join("app.py"), "def compute():\n    return 1\n")
+            .expect("write source");
+        std::fs::write(
+            project.join("README.md"),
+            "# Plain repo\nCalls `compute` on start.\n",
+        )
+        .expect("write doc");
+
+        let include_docs = cfg!(feature = "docs");
+        let graph = run_with_options(&project, false, true, None, None, include_docs)
+            .expect("build manifestless project");
+
+        let (id, props) = sole_project(&graph);
+        assert_eq!(id, "plainrepo", "project is named after the project root");
+        assert_eq!(
+            props.get("manifest"),
+            Some(&Value::String(crate::models::INFERRED_MANIFEST.to_string())),
+            "inferred projects carry the sentinel in `manifest`: {props:?}"
+        );
+        assert_eq!(
+            props.get("languages"),
+            Some(&Value::String("python".to_string())),
+            "languages are reconciled from the parsed files: {props:?}"
+        );
+
+        let files = count_label(&graph, "File");
+        assert!(files >= 1, "the source file was parsed");
+        assert_eq!(
+            count_conn(&graph, "HAS_SOURCE"),
+            files,
+            "every File is owned by the inferred Project"
+        );
+
+        #[cfg(feature = "docs")]
+        {
+            let docs = count_label(&graph, "Doc");
+            assert!(docs >= 1, "the README became a :Doc node");
+            assert_eq!(
+                count_conn(&graph, "HAS_DOC"),
+                docs,
+                "every Doc is anchored to the Project"
+            );
+        }
+    }
+
+    /// Every property column the `:Project` dataframe emits, except `name`
+    /// (which becomes the node's id and title rather than a property).
+    /// Inference must not grow this list — a new column would change the
+    /// shape of manifest-backed Project nodes too, and the point of the
+    /// inferred project is to be additive for them.
+    const PROJECT_PROPERTY_COLUMNS: &[&str] = &[
+        "version",
+        "description",
+        "languages",
+        "authors",
+        "license",
+        "repository",
+        "build_system",
+        "crate_type",
+        "manifest",
+    ];
+
+    /// The manifest-backed twin of the fixture above. Three invariants:
+    /// the manifest path is real (not the sentinel); neither build emits a
+    /// property outside the fixed Project column vocabulary; and the inferred
+    /// build's keys are a subset of a fully-populated manifest-backed build's
+    /// — i.e. inference introduces no property of its own. (The two key sets
+    /// are compared by subset, not equality, because a null property is
+    /// dropped from the node rather than stored: an inferred project has no
+    /// `build_system`, so equality would be measuring metadata richness
+    /// rather than the column set.) HAS_DOC is asserted here too, because no
+    /// corpus covers a manifest-backed repository that also has docs.
+    #[test]
+    fn manifest_backed_project_keeps_the_same_property_columns() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let include_docs = cfg!(feature = "docs");
+
+        let inferred_root = temp.path().join("inferred");
+        std::fs::create_dir_all(&inferred_root).expect("create dir");
+        std::fs::write(
+            inferred_root.join("app.py"),
+            "def compute():\n    return 1\n",
+        )
+        .expect("write source");
+        std::fs::write(inferred_root.join("README.md"), "# Demo\nRuns `compute`.\n")
+            .expect("write doc");
+        let inferred = run_with_options(&inferred_root, false, true, None, None, include_docs)
+            .expect("build manifestless project");
+
+        let backed_root = temp.path().join("backed");
+        std::fs::create_dir_all(&backed_root).expect("create dir");
+        std::fs::write(backed_root.join("app.py"), "def compute():\n    return 1\n")
+            .expect("write source");
+        std::fs::write(backed_root.join("README.md"), "# Demo\nRuns `compute`.\n")
+            .expect("write doc");
+        std::fs::write(
+            backed_root.join("pyproject.toml"),
+            // Populate every column a pyproject can reach, so the subset
+            // assertion below is a real constraint and not an artifact of a
+            // sparse manifest.
+            "[project]\nname = \"demo\"\nversion = \"1.2.3\"\ndescription = \"demo project\"\n\
+             license = \"MIT\"\nauthors = [{ name = \"A. Dev\" }]\ndependencies = [\"requests\"]\n\
+             [project.urls]\nRepository = \"https://example.invalid/demo\"\n\
+             [build-system]\nbuild-backend = \"setuptools.build_meta\"\n",
+        )
+        .expect("write manifest");
+        let backed = run_with_options(&backed_root, false, true, None, None, include_docs)
+            .expect("build manifest-backed project");
+
+        let (inferred_id, inferred_props) = sole_project(&inferred);
+        let (backed_id, backed_props) = sole_project(&backed);
+        assert_eq!(inferred_id, "inferred");
+        assert_eq!(backed_id, "demo", "manifest-declared name wins");
+        assert_eq!(
+            backed_props.get("manifest"),
+            Some(&Value::String("pyproject.toml".to_string())),
+            "manifest-backed projects keep the real manifest path: {backed_props:?}"
+        );
+
+        let vocabulary: BTreeSet<&str> = PROJECT_PROPERTY_COLUMNS.iter().copied().collect();
+        let inferred_keys: BTreeSet<&str> = inferred_props.keys().map(|key| key.as_str()).collect();
+        let backed_keys: BTreeSet<&str> = backed_props.keys().map(|key| key.as_str()).collect();
+        assert!(
+            inferred_keys.is_subset(&vocabulary) && backed_keys.is_subset(&vocabulary),
+            "a Project property outside the fixed column set: inferred={inferred_keys:?} backed={backed_keys:?}"
+        );
+        assert!(
+            inferred_keys.is_subset(&backed_keys),
+            "inference must not introduce a Project property column: inferred={inferred_keys:?} backed={backed_keys:?}"
+        );
+
+        #[cfg(feature = "docs")]
+        {
+            let docs = count_label(&backed, "Doc");
+            assert!(docs >= 1, "the README became a :Doc node");
+            assert_eq!(
+                count_conn(&backed, "HAS_DOC"),
+                docs,
+                "manifest-backed projects anchor their docs too"
+            );
         }
     }
 }

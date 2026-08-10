@@ -143,6 +143,44 @@ with N registrations now links to all N). Verified additive the strict way:
 reported exactly `py_routes_dup.sha256` as new and `cross_ts_py.sha256` as
 modified, so the twelve untouched pre-existing digests came back byte-identical.
 
+## The 2026-08-10 bulk regeneration (13 of 14 digests)
+
+**This is the first bulk regeneration since the extraction**, and the only one
+so far in which most digests moved at once. Every capture described above was
+additive by construction — one new corpus, pre-existing digests byte-identical
+— and the single earlier pre-existing movement (`cross_ts_py`) was one file.
+
+**Reason.** Only `pyproject.toml` and `Cargo.toml` were ever recognised as
+project manifests, so every other repository — all JS/TS, Go, Java and C++
+trees, and any plain directory — built with **no `:Project` node at all**: no
+owner for its files, and docs attached to nothing structural. Manifestless
+repositories now get an *inferred* project: named after the project root,
+languages reconciled from the files actually parsed, `manifest` set to the
+sentinel `(inferred)`, owning every source file via `HAS_SOURCE` and every doc
+via the new `Project HAS_DOC Doc` edge. Thirteen of the fourteen corpora are
+manifestless, so thirteen digests gained a `Project` node plus its ownership
+edges. `docs_mdx` and `docs_ext_collide` gained `HAS_DOC` edges as well.
+
+**The frozen exception is the proof.** `rust_xfile` is the only corpus with a
+manifest (`Cargo.toml`), and its digest came back **byte-identical** — that is
+what demonstrates the change is purely additive for manifest-backed graphs. The
+constraint that makes this hold is that the inferred project adds **no new
+property column** to the `:Project` dataframe: "inferred" is encoded in the
+existing `manifest` property rather than in a new one, precisely because the
+per-node property sweep above would otherwise move every manifest-backed digest
+too. Verified the strict way: `capture_goldens` rewrote all fourteen files, and
+afterwards `git status` reported exactly thirteen `.sha256` files modified,
+with `rust_xfile.sha256` absent from the list.
+
+`HAS_DOC` on a *manifest-backed* project is corpus-uncovered — no corpus has
+both a manifest and docs — so it is pinned by a unit test instead
+(`manifest_backed_project_keeps_the_same_property_columns` in
+`builder/mod.rs`), alongside the no-new-column invariant.
+
+Regeneration rationale for a change of this size belongs in the commit message;
+see the `feat(builder): anchor manifestless repositories with an inferred
+Project` commit, per the convention stated under *Regenerating* below.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

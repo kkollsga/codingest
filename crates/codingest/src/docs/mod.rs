@@ -43,7 +43,7 @@ use kglite::api::DirGraph;
 use kglite::datatypes::values::{DataFrame, Value};
 use kglite::okf;
 use regex::Regex;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 // Copied verbatim from kglite's `okf::build::column_value`
@@ -98,6 +98,12 @@ const MENTIONS_CONN: &str = "MENTIONS";
 const DOCUMENTS_CONN: &str = "DOCUMENTS";
 /// File node label (id = `path`).
 const FILE_LABEL: &str = "File";
+/// Project node label (id = `name`).
+const PROJECT_LABEL: &str = "Project";
+/// Project → doc ownership edge. Structural, not semantic: one per `:Doc`
+/// node, emitted whether or not the doc mentions any code. MENTIONS and
+/// DOCUMENTS remain the semantic links and are untouched by it.
+const HAS_DOC_CONN: &str = "HAS_DOC";
 /// Heading-outline cap (keeps the `headings` property bounded).
 const MAX_HEADINGS: usize = 64;
 
@@ -154,7 +160,18 @@ enum LinkTarget {
 
 /// Ingest the repo's docs as `:Doc` nodes and link them to code + each other.
 /// `graph` already contains the code nodes.
-pub fn ingest_and_link(graph: &mut DirGraph, root: &Path, verbose: bool) -> Result<(), String> {
+///
+/// `project` is the `:Project` node's id (its name) when the build has one —
+/// from a manifest or inferred from the root. Every ingested doc is anchored
+/// to it with [`HAS_DOC_CONN`], which is what keeps docs attached to the graph
+/// structurally even when they mention no code. `None` (no project could be
+/// identified at all) simply skips the anchoring.
+pub fn ingest_and_link(
+    graph: &mut DirGraph,
+    root: &Path,
+    project: Option<&str>,
+    verbose: bool,
+) -> Result<(), String> {
     let docs = discover_and_parse(root)?;
     if docs.is_empty() {
         return Ok(());
@@ -162,6 +179,10 @@ pub fn ingest_and_link(graph: &mut DirGraph, root: &Path, verbose: bool) -> Resu
     add_doc_nodes(graph, &docs)?;
     let mentions = link_docs_to_code(graph, &docs)?;
     let documents = link_docs_to_docs_and_files(graph, &docs)?;
+    let owned = match project {
+        Some(project) => link_project_to_docs(graph, project, &docs)?,
+        None => 0,
+    };
     if verbose {
         let md = docs
             .iter()
@@ -169,11 +190,43 @@ pub fn ingest_and_link(graph: &mut DirGraph, root: &Path, verbose: bool) -> Resu
             .count();
         let rst = docs.len() - md;
         eprintln!(
-            "[docs] ingested {} doc(s) ({md} md/mdx, {rst} rst); {mentions} MENTIONS, {documents} DOCUMENTS edge(s)",
+            "[docs] ingested {} doc(s) ({md} md/mdx, {rst} rst); {mentions} MENTIONS, {documents} DOCUMENTS, {owned} HAS_DOC edge(s)",
             docs.len()
         );
     }
     Ok(())
+}
+
+/// Anchor every ingested doc to the project that owns it: `Project HAS_DOC Doc`,
+/// one edge per `:Doc` node, in discovery order. Doc identity is the
+/// `concept_id`, and two docs can collapse onto one (a `.md`/`.mdx` pair
+/// resolves to a single node), so ids are de-duplicated first — one node must
+/// not receive two ownership edges.
+fn link_project_to_docs(
+    graph: &mut DirGraph,
+    project: &str,
+    docs: &[DocEntry],
+) -> Result<usize, String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut pairs: Vec<(String, String)> = Vec::with_capacity(docs.len());
+    for d in docs {
+        if seen.insert(d.concept_id.as_str()) {
+            pairs.push((project.to_string(), d.concept_id.clone()));
+        }
+    }
+    if pairs.is_empty() {
+        return Ok(0);
+    }
+    let mut groups: EdgeGroups = EdgeGroups::new();
+    groups.insert(
+        (
+            PROJECT_LABEL.to_string(),
+            DOC_LABEL.to_string(),
+            HAS_DOC_CONN.to_string(),
+        ),
+        pairs,
+    );
+    emit_groups(graph, groups)
 }
 
 // ── discovery + parsing ─────────────────────────────────────────────────────

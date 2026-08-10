@@ -7,6 +7,46 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Inferred `:Project` for manifestless repositories — 2026-08-10 (branch `feat/backlog-2026-08`)
+
+**The first bulk golden regeneration since the extraction: 13 of 14 digests
+moved.** Every prior capture was additive by construction (a new corpus, with
+the pre-existing digests byte-identical); the largest earlier movement of a
+pre-existing digest was one file.
+
+Only `pyproject.toml` and `Cargo.toml` were recognised as manifests, so every
+other repository — all JS/TS, Go, Java and C++ trees, and any plain directory —
+built with **no `:Project` node at all**: no `HAS_SOURCE` owner for its files,
+and docs anchored to nothing structural. Manifestless repositories now get an
+inferred project (name = the project root's directory name, languages
+reconciled from the files actually parsed, `manifest` = the sentinel
+`(inferred)`), which flows through the two existing `Some(info)` guards
+unchanged and so emits the `:Project` node and one `HAS_SOURCE` per source
+file. A new `Project HAS_DOC Doc` edge anchors every ingested doc; the semantic
+`MENTIONS` / `DOCUMENTS` edges are untouched.
+
+Thirteen of the fourteen corpora are manifestless, so thirteen digests moved.
+**`rust_xfile` — the only manifest-backed corpus — came back byte-identical,
+and that is the proof the change is additive for manifest-backed graphs.** It
+holds because the inferred project adds **no new property column** to the
+`:Project` dataframe: "inferred" is carried by the existing `manifest`
+property, since the per-node property sweep would otherwise move every
+manifest-backed digest too. Verified exclusive by `git status` after
+`capture_goldens`: exactly thirteen `.sha256` files modified, `rust_xfile`
+absent. `HAS_DOC` on a manifest-backed project is corpus-uncovered (no corpus
+has both a manifest and docs) and is pinned by a unit test instead. Determinism
+of the new node and edges is covered by `golden_parity`'s three builds per
+corpus.
+
+One defect was found and fixed alongside it: the single-rev path extracted into
+its randomly-named tempdir, so the build root's basename — which is
+user-visible, as Python fallback module names derive from it — differed per
+build (`kglite-rev-xiPP2N.app.compute`). Two builds of the same revision
+therefore disagreed on ids; the inferred project would have inherited the same
+randomness in its name. Single-rev now extracts into the same fixed `snapshot`
+basename the multi-rev path already used, which also aligns single-rev ids with
+multi-rev ids. Regression test: `single_rev_builds_of_one_revision_agree_on_ids`.
+
 ## Track D — Python absolute imports — 2026-08-10 (branch `feat/backlog-2026-08`)
 
 **Deliberate digest movement, two corpora.** The Python parser prefixes every

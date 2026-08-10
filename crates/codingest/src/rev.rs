@@ -65,11 +65,24 @@ pub fn archive_and_build(
         .tempdir()
         .map_err(|e| format!("could not create tempdir: {}", e))?;
 
+    // Extract into a FIXED-basename subdir, not into the randomly-named
+    // tempdir itself. When the build target is the repo root, the build
+    // root's own directory name is user-visible output: the fallback scan
+    // derives Python module names from it (`<root>.app.compute`) and the
+    // inferred `:Project` is named after it. Building at `tmp.path()`
+    // therefore stamped a fresh random `kglite-rev-XXXXXX` into every such id,
+    // so two builds of the *same* revision disagreed. `snapshot` is the same
+    // basename the multi-rev path fixes (Decision 4), so single-rev and
+    // multi-rev builds of one revision also now agree with each other.
+    let snapshot = tmp.path().join("snapshot");
+    std::fs::create_dir_all(&snapshot)
+        .map_err(|e| format!("could not create snapshot dir: {}", e))?;
+
     let graph = archive_and_build_into(
         &repo_root,
         rev,
         src_dir,
-        tmp.path(),
+        &snapshot,
         verbose,
         include_tests,
         None,
@@ -1009,6 +1022,67 @@ mod tests {
             false,
         )
         .expect("multi-rev manifest build");
+    }
+
+    /// Two single-rev builds of the SAME revision must produce the same ids.
+    /// The build root's directory name is user-visible — the manifestless
+    /// fallback derives Python module names from it, and the inferred
+    /// `:Project` is named after it — so extracting into the randomly-named
+    /// tempdir itself stamped a different `kglite-rev-XXXXXX` into every such
+    /// id on every build (`kglite-rev-xiPP2N.app.compute`). A manifestless
+    /// fixture is what exposes it; a manifest supplies the name instead.
+    #[test]
+    fn single_rev_builds_of_one_revision_agree_on_ids() {
+        let (tmp, sha) = commit_files(&[("app.py", "def compute():\n    return 1\n")]);
+
+        let ids = |graph: &DirGraph| {
+            let mut out: Vec<(String, String)> = graph
+                .graph
+                .node_indices()
+                .filter_map(|index| graph.graph.node_weight(index))
+                .map(|node| {
+                    (
+                        node.node_type_str(&graph.interner).to_string(),
+                        node.id().to_string(),
+                    )
+                })
+                .collect();
+            out.sort();
+            out
+        };
+
+        let build = || {
+            archive_and_build(
+                tmp.path(),
+                &sha,
+                Some(tmp.path()),
+                false,
+                true,
+                None,
+                None,
+                false,
+            )
+            .expect("single-rev build")
+        };
+        let first = build();
+        let second = build();
+
+        let first_ids = ids(&first);
+        assert_eq!(
+            first_ids,
+            ids(&second),
+            "single-rev build ids must be stable"
+        );
+        assert!(
+            first_ids.iter().all(|(_, id)| !id.contains("kglite-rev-")),
+            "no temp-dir name may leak into an id: {first_ids:?}"
+        );
+        assert!(
+            first_ids
+                .iter()
+                .any(|(kind, id)| kind == "Project" && id.contains("snapshot")),
+            "the manifestless rev build is anchored by an inferred project: {first_ids:?}"
+        );
     }
 
     #[test]

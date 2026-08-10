@@ -10,7 +10,32 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- **Repositories without a recognized manifest now get an inferred `:Project`
+  node.** Only `pyproject.toml` and `Cargo.toml` are read as manifests, so every
+  other repository — `package.json`-only JS/TS, Go, Java, C++, or any plain
+  directory — built with no `:Project` node at all: nothing owned its files, and
+  docs were attached to nothing structural. Such a build now synthesizes a
+  project named after the project root, with `languages` taken from the files
+  actually parsed, anchoring every source file via `HAS_SOURCE` and every doc
+  via the new **`HAS_DOC`** edge (`Project`→`Doc`, one per doc node, structural;
+  the semantic `MENTIONS` / `DOCUMENTS` edges are unchanged). The Project's
+  `manifest` property carries the sentinel `(inferred)` to mark it — so
+  `MATCH (p:Project) WHERE p.manifest = '(inferred)'` finds these, and no new
+  property was added to the node. Manifest-backed graphs are unchanged except
+  for gaining `HAS_DOC`; the `rust_xfile` golden digest is byte-identical, which
+  is the proof. Thirteen of the fourteen corpus goldens moved deliberately.
+
 ### Fixed
+- **Two builds of the same git revision now agree on node ids.** The single-rev
+  build path (`build(..., rev=…)`) extracted the revision into a randomly-named
+  tempdir and built from it, and the build root's directory name is user-visible
+  output — the manifestless fallback derives Python module names from it — so
+  each build stamped a fresh `kglite-rev-XXXXXX` into every such id
+  (`kglite-rev-xiPP2N.app.compute`). It now extracts into the same fixed
+  `snapshot` basename the multi-rev path already used, so single-rev builds are
+  reproducible and their ids also match the multi-rev builds of the same
+  revision.
 - **Python absolute imports now resolve for standard project layouts**
   (root-relative and `src/` layouts): `IMPORTS` `File→Module` and `File→File`
   edges are emitted, and `import_backed` becomes meaningful on Python `CALLS`

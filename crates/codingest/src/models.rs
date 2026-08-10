@@ -424,7 +424,22 @@ pub struct DependencyInfo {
     pub group: Option<String>,
 }
 
-/// Project metadata extracted from a manifest file.
+/// Sentinel written to the `:Project` node's `manifest` property when no
+/// supported manifest was found and the project was *inferred* from the
+/// directory being built (name = the project root's own directory name,
+/// languages = the languages actually parsed).
+///
+/// It deliberately reuses the existing `manifest` column rather than adding an
+/// `inferred` one: the parity sweep compares every property column of every
+/// node, so a new column would move the golden of every manifest-backed graph
+/// too, and the whole point of the inference is to be additive for them. The
+/// parenthesised spelling cannot collide with a real manifest path (no
+/// manifest is named `(inferred)`), and it reads as a value rather than an
+/// absence in a query: `MATCH (p:Project) WHERE p.manifest = '(inferred)'`.
+pub const INFERRED_MANIFEST: &str = "(inferred)";
+
+/// Project metadata extracted from a manifest file — or, when no supported
+/// manifest exists, inferred from the project root (see [`INFERRED_MANIFEST`]).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectInfo {
     pub name: String,
