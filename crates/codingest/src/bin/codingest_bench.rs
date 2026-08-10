@@ -42,6 +42,7 @@
 //!   cargo run -p codingest --bin codingest_bench --release -- <path>
 //!   cargo run -p codingest --bin codingest_bench --release -- <path> --json
 //!   cargo run -p codingest --bin codingest_bench --release -- <path> --include-untracked
+//!   cargo run -p codingest --bin codingest_bench --release -- <path> --no-docs
 
 use kglite::api::session::{execute_read, ExecuteOptions, ExecuteOutcome};
 use kglite::api::{DirGraph, GraphRead, Value};
@@ -264,6 +265,69 @@ fn resolve_corpus(target: &Path, include_untracked: bool) -> Corpus {
     }
 }
 
+// ── command line ─────────────────────────────────────────────────────────
+
+const USAGE: &str = "usage: codingest_bench <path> [--json] [--include-untracked] [--no-docs]";
+
+/// Everything the command line can say after `<path>`, parsed once so the
+/// configuration a run was taken under is a value that can be echoed and
+/// tested rather than a scatter of `any(|a| a == …)` predicates — the shape
+/// `codingest_stats` already uses.
+#[derive(Debug, PartialEq, Eq)]
+struct Options {
+    json: bool,
+    include_untracked: bool,
+    /// DECISION (2026-08-10): this default points the OPPOSITE way to
+    /// `codingest_stats`' `--include-docs`, deliberately.
+    ///
+    /// Both binaries obey the same rule — a binary's default must reproduce
+    /// that binary's own historical rows, or old and new numbers silently stop
+    /// being comparable — and they have mirror-image histories. Every
+    /// `codingest_stats` row predating its flag was captured docs-OFF, so it
+    /// defaults off and opts in. This harness hardcoded docs-ON from the day it
+    /// was written, so every bench row ever filed (`BENCHMARKS.md`, the ad-hoc
+    /// results log) is a docs-ON measurement: it keeps docs-ON as the default
+    /// and gains an explicit `--no-docs` opt-OUT.
+    ///
+    /// The asymmetry is therefore not an inconsistency to be tidied away; it is
+    /// what keeps each binary's own series continuous. Neither default is
+    /// self-describing, which is why the effective value is echoed in the JSON
+    /// (`include_docs`) and in the human header either way — no row can be
+    /// filed without stating the mode it was taken under.
+    include_docs: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            json: false,
+            include_untracked: false,
+            include_docs: true,
+        }
+    }
+}
+
+/// Parse the arguments after `<path>`.
+///
+/// Rejects anything unrecognised rather than silently ignoring it: a typo'd
+/// `--include-untraked` or `--nodocs` would otherwise change nothing and the
+/// run would be reported as a measurement taken under a mode it never ran in.
+/// That includes `--include-docs`: it is `codingest_stats`' spelling, it is not
+/// this binary's, and accepting it as a no-op would teach the wrong muscle
+/// memory for the one flag whose two binaries disagree.
+fn parse_options(args: &[String]) -> Result<Options, String> {
+    let mut out = Options::default();
+    for arg in args {
+        match arg.as_str() {
+            "--json" => out.json = true,
+            "--include-untracked" => out.include_untracked = true,
+            "--no-docs" => out.include_docs = false,
+            other => return Err(format!("unknown argument `{other}`")),
+        }
+    }
+    Ok(out)
+}
+
 struct QueryResult {
     name: String,
     rows: usize,
@@ -280,24 +344,20 @@ fn main() {
     let path = match args.next() {
         Some(p) => p,
         None => {
-            eprintln!("usage: code_tree_bench <path> [--json]");
+            eprintln!("{USAGE}");
             std::process::exit(2);
         }
     };
     let rest: Vec<String> = args.collect();
-    let json = rest.iter().any(|a| a == "--json");
-    let include_untracked = rest.iter().any(|a| a == "--include-untracked");
-    // Reject unknown flags rather than silently ignoring them: a typo'd
-    // `--include-untraked` would otherwise change nothing and be reported as a
-    // measurement taken under a mode it never ran in.
-    if let Some(bad) = rest
-        .iter()
-        .find(|a| !matches!(a.as_str(), "--json" | "--include-untracked"))
-    {
-        eprintln!("unknown argument `{bad}`");
-        eprintln!("usage: codingest_bench <path> [--json] [--include-untracked]");
+    let Options {
+        json,
+        include_untracked,
+        include_docs,
+    } = parse_options(&rest).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        eprintln!("{USAGE}");
         std::process::exit(2);
-    }
+    });
     let target = Path::new(&path);
 
     // Resolve the corpus BEFORE any timing: by default this copies the
@@ -306,22 +366,27 @@ fn main() {
     let corpus = resolve_corpus(target, include_untracked);
     let build_dir = corpus.build_dir.as_path();
 
-    // Two independent codingest builds with identical arguments:
-    // verbose=false, include_tests=false, save_to=None, max_loc=None, docs=true.
+    // Two independent codingest builds with identical arguments: verbose=false,
+    // include_tests=false, save_to=None, max_loc=None, docs=`include_docs`
+    // (ON unless `--no-docs`). Both sides MUST take the same value — the A/B
+    // comparison is a determinism check, so a configuration difference between
+    // them would surface as a MISMATCH and be read as a builder regression.
     let t = Instant::now();
-    let graph_a = codingest::builder::run_with_options(build_dir, false, false, None, None, true)
-        .unwrap_or_else(|e| {
-            eprintln!("build A failed: {e}");
-            std::process::exit(1);
-        });
+    let graph_a =
+        codingest::builder::run_with_options(build_dir, false, false, None, None, include_docs)
+            .unwrap_or_else(|e| {
+                eprintln!("build A failed: {e}");
+                std::process::exit(1);
+            });
     let build_a_secs = t.elapsed().as_secs_f64();
 
     let t = Instant::now();
-    let graph_b = codingest::builder::run_with_options(build_dir, false, false, None, None, true)
-        .unwrap_or_else(|e| {
-            eprintln!("build B failed: {e}");
-            std::process::exit(1);
-        });
+    let graph_b =
+        codingest::builder::run_with_options(build_dir, false, false, None, None, include_docs)
+            .unwrap_or_else(|e| {
+                eprintln!("build B failed: {e}");
+                std::process::exit(1);
+            });
     let build_b_secs = t.elapsed().as_secs_f64();
 
     let a: &DirGraph = &graph_a;
@@ -486,11 +551,15 @@ fn main() {
             "corpus_files": corpus.sha256.as_ref().map(|_| corpus.files),
             "corpus_bytes": corpus.sha256.as_ref().map(|_| corpus.bytes),
             "corpus_sha256": corpus.sha256,
-            // Fixed build configuration, echoed so a recorded row states it.
-            // Unlike codingest_stats, this harness has always built docs-ON,
-            // so the docs pass IS in its build times and node counts.
+            // Build configuration, echoed so a recorded row states it rather
+            // than inheriting it from whoever reads the row. `include_docs` is
+            // the EFFECTIVE value, not the default: docs are ON unless
+            // `--no-docs` was passed, and when they are on the docs pass is in
+            // these build times and node counts. Every historical bench row was
+            // taken docs-ON — see `Options::include_docs` for why that is this
+            // binary's default and the opposite of codingest_stats'.
             "include_tests": false,
-            "include_docs": true,
+            "include_docs": include_docs,
             "nodes": nodes,
             "edges": edges,
             "build_a_secs": (build_a_secs * 1000.0).round() / 1000.0,
@@ -532,6 +601,9 @@ fn main() {
             corpus.reason,
         ),
     }
+    // The effective build configuration, printed for the same reason the JSON
+    // echoes it: a pasted bench table must carry the mode it was taken under.
+    println!("config : include_tests=false include_docs={include_docs}");
     println!("graph  : {nodes} nodes / {edges} edges  (identical across both builds)");
     println!("build  : A {build_a_secs:.3}s | B {build_b_secs:.3}s  (one-off, context)");
     println!("anchor : in-hub  = {hot_in}");
@@ -567,4 +639,64 @@ fn main() {
         results.len() - mismatches,
         mismatches
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts(args: &[&str]) -> Result<Options, String> {
+        parse_options(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn parse_options_defaults_to_the_historical_docs_on_configuration() {
+        // Every bench row ever filed was measured docs-ON, because this harness
+        // hardcoded docs-ON before the flag existed. The default must stay that
+        // way or old and new rows silently stop being comparable. This is the
+        // MIRROR of codingest_stats' equivalent test, which asserts docs-OFF —
+        // same rule, opposite history. See `Options::include_docs`.
+        let parsed = opts(&[]).expect("empty argv parses");
+        assert_eq!(parsed, Options::default());
+        assert!(parsed.include_docs, "bench must default to docs-ON");
+        assert!(!parsed.json);
+        assert!(!parsed.include_untracked);
+    }
+
+    #[test]
+    fn parse_options_reads_every_flag() {
+        let parsed =
+            opts(&["--json", "--include-untracked", "--no-docs"]).expect("all flags parse");
+        assert!(parsed.json);
+        assert!(parsed.include_untracked);
+        assert!(!parsed.include_docs);
+    }
+
+    #[test]
+    fn no_docs_turns_docs_off_on_its_own() {
+        // The one flag whose absence is not the interesting case: assert it
+        // flips the value rather than merely parsing.
+        assert!(!opts(&["--no-docs"]).expect("parses").include_docs);
+        assert!(opts(&["--json"]).expect("parses").include_docs);
+    }
+
+    #[test]
+    fn parse_options_rejects_an_unknown_flag() {
+        // A silently-ignored typo would report a measurement taken under a mode
+        // the run never used — the reason this parser is strict at all.
+        let err = opts(&["--include-untraked"]).expect_err("typo must not parse");
+        assert!(err.contains("--include-untraked"), "unhelpful error: {err}");
+        assert!(opts(&["--nodocs"]).is_err(), "`--nodocs` must not parse");
+    }
+
+    #[test]
+    fn parse_options_rejects_the_stats_spelling_of_the_docs_flag() {
+        // `--include-docs` is codingest_stats' flag. Accepting it here as a
+        // harmless no-op (docs are already on) would teach that the two
+        // binaries share a spelling for the one flag on which they disagree —
+        // and would then silently accept `--include-docs` from a user who meant
+        // to CHANGE the mode. Rejecting it is what makes the asymmetry visible
+        // at the moment it matters.
+        assert!(opts(&["--include-docs"]).is_err());
+    }
 }

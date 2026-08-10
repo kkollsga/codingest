@@ -136,6 +136,61 @@ jobs:
         with:
           args: -color
 
+  bench-smoke:
+    name: Bench determinism smoke (codingest_bench)
+    runs-on: ubuntu-latest
+    # A release build under `lto = "thin"` + `codegen-units = 1` (root
+    # Cargo.toml) is the slow part; the bench run itself is sub-second on this
+    # corpus. 30 minutes covers a fully cold cache with room to spare, and is a
+    # ceiling rather than a budget — a run that approaches it means the cache
+    # stopped working, which is worth surfacing as a failure.
+    timeout-minutes: 30
+    steps:
+      # `fetch-depth` is left at the default 1 ON PURPOSE. The harness resolves
+      # its corpus with `git ls-files --cached`, which reads the INDEX — history
+      # depth is irrelevant to it, and a shallow clone still yields the complete
+      # tracked file set at this revision.
+      - uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # pyo3's build script probes for an interpreter; the bin target pulls the
+      # workspace in far enough to need it.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Deliberately NOT the `rust-checks-ubuntu-latest` key. That job
+          # builds the dev profile; this one builds `--release` with thin-LTO
+          # and CGU=1. They share no artifacts, so pointing both at one key
+          # would have each evict the other's cache on every run and neither
+          # would ever hit — the opposite of the intent.
+          shared-key: bench-smoke
+          workspaces: ". -> target"
+
+      - name: Run the bench determinism smoke
+        # `cargo test --workspace` (rust-checks) proves the BUILDER is
+        # deterministic via parity.rs's three-build digest comparison. This
+        # proves the same thing one layer up, through the read path: two
+        # independent builds must return byte-identical results for all 11
+        # Cypher queries, executed via `kglite::api::session::execute_read` —
+        # the pipeline an MCP/CLI user actually hits. A determinism bug that
+        # lives in query evaluation rather than in graph construction is
+        # invisible to a digest-of-the-graph check and visible here.
+        #
+        # The make target also asserts the harness resolved a `tracked-only`
+        # corpus, so a silent fall back to building the working tree as-is
+        # fails rather than quietly measuring untracked content.
+        #
+        # Until now this ran only in `make gate` on a developer's machine,
+        # which means it ran when someone remembered to run it.
+        run: make bench-smoke
+
   release-gates:
     name: Release-gate script unit tests
     runs-on: ubuntu-latest
@@ -231,3 +286,29 @@ jobs:
         # pyproject `testpaths = ["tests/python"]` scopes collection — the
         # dormant tests/python-legacy/ tree is never swept in.
         run: .venv/bin/python -m pytest tests/python -v --tb=short
+
+      - name: Verify the wheel's pip-installation contract
+        # ONE matrix leg, not four. What this checks — console-script entry
+        # points, the payload shims, the native extension, the kglite
+        # requirement — is declared in pyproject/Cargo and is identical on
+        # every OS and interpreter, so the other three legs would re-prove the
+        # same metadata at several minutes each. The leg is pinned by value
+        # rather than left to `matrix.os == runner.os` guesswork so a matrix
+        # edit that renames a leg turns this into a NEVER-RUN step loudly (the
+        # step disappears from the run) rather than silently.
+        #
+        # Why it exists: scripts/verify_wheel.py ran ONLY in release.yml, which
+        # triggers on a `v*` tag push — i.e. a broken entry point was first
+        # observed AFTER the crates.io publish in the same workflow, at the one
+        # moment nothing can be un-shipped.
+        #
+        # `maturin build`, not `develop`: develop installs into the venv and
+        # leaves no wheel on disk, and this script's whole subject is the wheel
+        # ARCHIVE's contents. `--release` matches release.yml and, more
+        # practically, reuses the artifacts the `maturin develop --release`
+        # step above already built — a debug build here would be a second full
+        # compile, not a saving.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
+        run: |
+          .venv/bin/maturin build --release --out dist
+          .venv/bin/python scripts/verify_wheel.py "dist/*.whl"

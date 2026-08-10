@@ -11,6 +11,31 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **`codingest_bench` gains `--no-docs`, and the JSON labels the mode.** The
+  harness previously hardcoded the docs pass ON in both of its builds, so a
+  recorded row's `"include_docs": true` was a literal, not a reading. It is now
+  the *effective* value and is echoed in the JSON and in the human header either
+  way, so no bench row can be filed without stating the mode it was taken under.
+  The default stays docs-**ON** — the opposite of `codingest_stats`'
+  `--include-docs`, and deliberately so: each binary's default must reproduce
+  that binary's own historical rows, and the two have mirror-image histories.
+  Unknown flags are still rejected, now including `--include-docs`: it is
+  `codingest_stats`' spelling, and silently accepting it as a no-op would
+  swallow a request to *change* the mode.
+- **CI now runs the bench determinism smoke and verifies the wheel's pip
+  contract before anything can publish.** A new `bench-smoke` job runs
+  `make bench-smoke`, which builds `codingest_bench` `--release` and requires
+  all 11 Cypher queries to return identical results across two independent
+  builds *through the read path* (`execute_read`) — a determinism bug living in
+  query evaluation rather than graph construction is invisible to `parity.rs`'s
+  digest-of-the-graph check and visible here. It also fails if the harness falls
+  back to a `working-tree` corpus. Until now it ran only in `make gate`, i.e.
+  when someone remembered. Separately, `scripts/verify_wheel.py` ran **only** in
+  `release.yml`, which triggers on a `v*` tag push — a broken console-script
+  entry point was therefore first observed *after* the crates.io publish in the
+  same workflow. One matrix leg of the `python` job (ubuntu + 3.14) now builds a
+  real wheel with `maturin build` and verifies its entry points, payload shims,
+  native extension and KGLite requirement on every push.
 - **CI now lints its own workflows**, and the release-gate suite pins the CI
   KGLite install to the Cargo floor. A new `actionlint` job (pinned
   `rhysd/actionlint:1.7.12`) statically checks every file in
