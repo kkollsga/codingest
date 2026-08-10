@@ -67,6 +67,21 @@ codingest-mcp = "codingest.mcp_server:main"
 # imports the removed `kglite.code_tree` module and must NOT be collected.
 testpaths = ["tests/python"]
 
+# Every test gets a 120s wall-clock ceiling (pytest-timeout). These suites drive
+# a native extension, subprocess CLIs and an MCP server over stdio — all shapes
+# that can BLOCK rather than fail. Without a ceiling a hung test burns the whole
+# job timeout (CI: 45 min) and reports as a timeout of the runner, hiding which
+# test hung; with it, the hang is a normal test failure naming the test and a
+# stack of where it was stuck. 120s is ~100x the slowest test observed here, so
+# it fires only on a genuine hang, never on a slow machine.
+#
+# EXEMPTION: a test legitimately slower than the default declares it per-test —
+#   @pytest.mark.timeout(600)  # a larger explicit ceiling, still bounded
+#   @pytest.mark.timeout(0)    # no ceiling at all; use only if truly unbounded
+# Prefer an explicit larger number over 0: `timeout(0)` restores exactly the
+# hang-forever behaviour this option exists to prevent.
+timeout = 120
+
 [tool.maturin]
 manifest-path = "crates/codingest-py/Cargo.toml"
 # Rename the wheel's extension so the package's `from .codingest import *`

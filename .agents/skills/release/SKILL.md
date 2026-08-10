@@ -175,9 +175,29 @@ named blocker.
    Only touch these files when they actually moved — a no-op release leaves
    them as-is.
 5. **Binaries:** already built by step 3's workspace `--release` build at the
-   new version. Just confirm `target/release/codingest` and
-   `target/release/codingest-mcp` exist with fresh timestamps — rebuild only if
-   something changed after step 3. **The CLI binary is `codingest`, not
+   new version. Confirm `target/release/codingest` and
+   `target/release/codingest-mcp` are actually newer than everything they are
+   built from — **run this, don't eyeball it.** "Fresh timestamps" is not a
+   judgement call: a binary left over from before the version bump looks
+   entirely plausible in `ls -l`, and shipping it means shipping the previous
+   release's code under the new version number.
+
+   ```sh
+   for b in target/release/codingest target/release/codingest-mcp; do
+     [ -x "$b" ] || { echo "ABSENT:  $b"; continue; }
+     n=$( { find crates -name '*.rs' -newer "$b" -print -quit
+            find Cargo.lock -newer "$b" -print -quit; } | head -1 )
+     [ -z "$n" ] && echo "FRESH:   $b" || echo "STALE:   $b (newer: $n)"
+   done
+   ```
+
+   **Rule: anything but `FRESH` on both lines means STOP and rebuild** —
+   `cargo build --workspace --release` — then re-run the check until both read
+   `FRESH`. Do not continue to step 6 on a `STALE` or `ABSENT` line, and do not
+   reason about *why* a file is newer; rebuilding is cheaper than being wrong.
+   `Cargo.lock` is in the comparison alongside `crates/**/*.rs` because a
+   dependency bump changes the shipped binary without touching a single line of
+   our own source. **The CLI binary is `codingest`, not
    `codingest-cli`:** `codingest-cli` is the *crate* name, and its
    `Cargo.toml` declares `[[bin]] name = "codingest"`. There has never been a
    `target/release/codingest-cli`; release.yml packages `codingest` +

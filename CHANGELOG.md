@@ -55,6 +55,22 @@ ship time — it's the only place the version bumps.
   property was added to the node. Manifest-backed graphs are unchanged except
   for gaining `HAS_DOC`; the `rust_xfile` golden digest is byte-identical, which
   is the proof. Thirteen of the fourteen corpus goldens moved deliberately.
+- **The Python acceptance suite now fails fast on hangs and refuses to run
+  against a stale build.** Two independent false-green shapes are closed.
+  (1) `pytest-timeout` is pinned in both CI pip-install sites and `pyproject.toml`
+  sets `timeout = 120`, so a test that *blocks* — on the native extension, a
+  subprocess CLI, or the MCP server's stdio loop — now fails as a named test
+  after 120s instead of consuming the 45-minute job budget and reporting as a
+  runner timeout that names nothing. A genuinely slow test opts out per-test with
+  `@pytest.mark.timeout(<n>)`. (2) `tests/python/conftest.py` compares the mtime
+  of the installed `codingest` extension against the newest `crates/**/*.rs`: if
+  the extension is **older**, the suite hard-errors (exit 4) naming
+  `.venv/bin/maturin develop --release`, because otherwise it would return a
+  confident verdict about code that is no longer in the working tree. If the
+  extension is **absent** it cleanly skips instead — nothing was built, so there
+  is no false verdict to prevent. The distinction is the point: a guard that
+  skipped on staleness would be disarmed by the exact condition it guards. The
+  guard caught a real stale extension on its first run.
 
 ### Fixed
 - **Two builds of the same git revision now agree on node ids.** The single-rev
