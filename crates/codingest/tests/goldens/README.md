@@ -114,6 +114,35 @@ and afterwards `git status` reported only `docs_ext_collide.sha256` as new, so
 the twelve pre-existing digests came back byte-identical. The gate was then
 mutation-tested — see the commit message.
 
+The additive `py_routes_dup` digest was captured on 2026-08-10 with the corpus
+itself, alongside the ONE deliberate movement of a pre-existing digest described
+below. No pre-existing corpus registers the same route path from two different
+files, so Route identity — `{framework}::{method}::{path}` at the time — could
+collapse every methodless `@app.route('/')` in a repo into a single node, whose
+`file_path`/`line_number` described whichever file the sorted walk reached first
+and mislocated all the rest, with every digest staying green. The digest pins
+both sides of the registration model: `public/views.py` and `admin/views.py`
+each register `/` and are TWO Route nodes, each carrying its own truthful source
+location, while the two `/dup` registrations inside `admin/views.py` remain ONE
+node with parallel HANDLES edges (the id carries the declaring file,
+deliberately not the line — a line-bearing id would churn whenever an unrelated
+line is inserted above a decorator, and would not disambiguate Django at all,
+whose urlpattern entries all share the constant's line).
+
+**`cross_ts_py` was deliberately regenerated in that same commit** — the only
+pre-existing digest that moved. Route ids gained the declaring file, so its four
+Route ids (`/api/session` and `/api/unused`, each emitted under both the `flask`
+and `fastapi` labels) changed shape, together with the HANDLES and CALLS_SERVICE
+endpoints naming them. Verified section-by-section with `dump_canonical` before
+and after: `node_type_counts` and `edge_type_counts` are byte-identical and the
+only lines that differ are id strings gaining the `::server/app.py` suffix.
+Cross-language linking matches on the `path` PROPERTY, never by parsing the id,
+so the change is inert for `CALLS_SERVICE` except for honest fan-out (a path
+with N registrations now links to all N). Verified additive the strict way:
+`capture_goldens` rewrote all fourteen files, and afterwards `git status`
+reported exactly `py_routes_dup.sha256` as new and `cross_ts_py.sha256` as
+modified, so the twelve untouched pre-existing digests came back byte-identical.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

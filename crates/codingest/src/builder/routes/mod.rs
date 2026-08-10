@@ -35,13 +35,26 @@ mod django;
 mod fastapi;
 mod flask;
 
-/// A discovered URL endpoint. The graph stores one Route node per
-/// `(framework, method, path)` triple; conflicts (two handlers for the
-/// same triple) are kept as parallel edges, since they often indicate
-/// legitimate stacked decorators (`@app.get @app.post` on the same fn).
+/// A discovered route **registration** — not a URL. The graph stores one
+/// Route node per `(framework, method, path, declaring file)`, so the same
+/// path registered from two files is two nodes, each reporting its own
+/// truthful `file_path`/`line_number`. (Keying on the `(framework, method,
+/// path)` triple alone made every methodless `@app.route('/')` in a repo one
+/// node, whose source location described whichever file the sorted walk
+/// reached first and mislocated all the rest.)
+///
+/// Within one file the triple is still the identity: two handlers registering
+/// the same method+path there are one registration site with parallel HANDLES
+/// edges, which is also the shape of legitimate stacked decorators
+/// (`@app.get @app.post` on the same fn — those already differ by method).
+///
+/// Consumers match routes by the `path` PROPERTY, never by parsing the id —
+/// cross-language `CALLS_SERVICE` linking does exactly that (`cross_lang.rs`),
+/// so a client call to a path with N registrations now links to all N.
 #[derive(Debug)]
 pub struct RouteNode {
-    /// Stable id — `"{FRAMEWORK}::{METHOD}::{PATH}"` (e.g. `"flask::GET::/users/{id}"`).
+    /// Stable id — `"{FRAMEWORK}::{METHOD}::{PATH}::{FILE_PATH}"`
+    /// (e.g. `"flask::GET::/users/{id}::app/views.py"`).
     pub id: String,
     /// Display name — the URL path (e.g. `"/users/{id}"`).
     pub name: String,
@@ -69,9 +82,11 @@ pub struct RouteEdge {
 
 /// Run every registered framework detector over the parse result and
 /// concatenate their outputs. One node is retained per route id while distinct
-/// handler edges survive, matching the `(framework, method, path)` identity
-/// contract above. Exact duplicate decorators collapse to one edge as well.
-/// The first declaration supplies the shared Route node's source location.
+/// handler edges survive, matching the registration identity contract above.
+/// Since the id now carries the declaring file, this dedup collapses only true
+/// duplicates — two registrations of the same method+path in the same file, and
+/// exact duplicate decorators (which collapse to one edge as well). Cross-file
+/// registrations of one path each keep their own node and source location.
 pub fn build_routes(
     functions: &[FunctionInfo],
     constants: &[ConstantInfo],
@@ -220,13 +235,139 @@ pub(super) fn parse_methods_list(raw: &str) -> Vec<String> {
 
 /// Stable Route id used as both the node id and the source side of the
 /// HANDLES edge. Keeps a parsable shape if anyone wants to split it.
-pub(super) fn make_route_id(framework: &str, method: &str, path: &str) -> String {
-    format!("{framework}::{method}::{path}")
+///
+/// The declaring file is part of the identity — a Route node is a
+/// *registration*, not a URL (see `RouteNode`). Without it, every methodless
+/// `@app.route('/')` in a repo collapsed into one node.
+///
+/// The file, and deliberately not the line: two registrations of the same
+/// method+path within one file are one registration-site family, while a
+/// line-bearing id would churn whenever an unrelated line is inserted above
+/// the decorator. (Line would not even disambiguate Django, whose entries all
+/// share the `urlpatterns` constant's line.)
+pub(super) fn make_route_id(framework: &str, method: &str, path: &str, file_path: &str) -> String {
+    format!("{framework}::{method}::{path}::{file_path}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_methods_list;
+    use super::{build_routes, parse_methods_list};
+    use crate::models::FunctionInfo;
+
+    /// A Python function carrying one Flask decorator.
+    fn handler(qname: &str, file: &str, line: u32, decorator: &str) -> FunctionInfo {
+        FunctionInfo {
+            name: qname.rsplit('.').next().unwrap_or(qname).to_string(),
+            qualified_name: qname.to_string(),
+            file_path: file.to_string(),
+            line_number: line,
+            decorators: vec![decorator.to_string()],
+            ..FunctionInfo::default()
+        }
+    }
+
+    /// The registration model. Two files each registering a methodless
+    /// `@app.route('/')` are two registrations, so they are two Route nodes —
+    /// under the old `(framework, method, path)` identity they collapsed into
+    /// one node whose `file_path`/`line_number` described whichever file the
+    /// walk reached first, silently mislocating every other registration.
+    #[test]
+    fn same_path_in_two_files_is_two_registrations() {
+        let functions = vec![
+            handler("a.index", "a.py", 3, "app.route('/')"),
+            handler("b.index", "b.py", 7, "app.route('/')"),
+        ];
+        let (nodes, edges) = build_routes(&functions, &[]);
+
+        assert_eq!(
+            nodes.len(),
+            2,
+            "one Route node per registration, got {:?}",
+            nodes.iter().map(|n| &n.id).collect::<Vec<_>>()
+        );
+        assert_ne!(nodes[0].id, nodes[1].id, "registrations need distinct ids");
+
+        // Every node reports its OWN declaration site.
+        let mut located: Vec<(String, u32)> = nodes
+            .iter()
+            .map(|n| (n.file_path.clone(), n.line_number))
+            .collect();
+        located.sort();
+        assert_eq!(
+            located,
+            vec![("a.py".to_string(), 3), ("b.py".to_string(), 7)],
+            "each Route must carry its own truthful source location"
+        );
+
+        // Both keep the path/method they share — only identity is per-file.
+        for n in &nodes {
+            assert_eq!(n.path, "/");
+            assert_eq!(n.method, "ANY");
+            assert_eq!(n.framework, "flask");
+        }
+
+        // HANDLES lands on the handler declared in that node's own file.
+        let mut handled: Vec<(String, String)> = edges
+            .iter()
+            .map(|e| {
+                let node = nodes
+                    .iter()
+                    .find(|n| n.id == e.route_id)
+                    .expect("edge references a retained node");
+                (node.file_path.clone(), e.function_qname.clone())
+            })
+            .collect();
+        handled.sort();
+        assert_eq!(
+            handled,
+            vec![
+                ("a.py".to_string(), "a.index".to_string()),
+                ("b.py".to_string(), "b.index".to_string()),
+            ]
+        );
+    }
+
+    /// The id carries the declaring FILE, not the line: two registrations of
+    /// the same method+path inside one file are one registration-site family,
+    /// so they stay one node with parallel HANDLES edges. Line-level identity
+    /// was rejected deliberately — it would make every Route id churn whenever
+    /// an unrelated line is inserted above it.
+    #[test]
+    fn duplicate_registrations_within_one_file_stay_one_node() {
+        let functions = vec![
+            handler("a.index", "a.py", 3, "app.route('/')"),
+            handler("a.alias", "a.py", 9, "app.route('/')"),
+        ];
+        let (nodes, edges) = build_routes(&functions, &[]);
+        assert_eq!(nodes.len(), 1, "same file + method + path = one node");
+        assert_eq!(edges.len(), 2, "both handlers keep a HANDLES edge");
+    }
+
+    /// Stacked decorators still split by method, and distinct paths in one
+    /// file stay distinct — the file suffix must not merge anything.
+    #[test]
+    fn method_and_path_still_separate_registrations_in_one_file() {
+        let functions = vec![
+            handler(
+                "a.get_it",
+                "a.py",
+                3,
+                "app.route('/x', methods=['GET','POST'])",
+            ),
+            handler("a.other", "a.py", 9, "app.route('/y')"),
+        ];
+        let (nodes, _) = build_routes(&functions, &[]);
+        let mut ids: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "flask::ANY::/y::a.py",
+                "flask::GET::/x::a.py",
+                "flask::POST::/x::a.py",
+            ]
+        );
+    }
 
     #[test]
     fn list_form() {

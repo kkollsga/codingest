@@ -75,7 +75,7 @@ pub(super) fn detect(
         // `urls.py` — Django also accepts `routing.py` etc.) but the
         // parsed file path is preserved on the constant.
         for entry in iter_path_calls(preview) {
-            let id = make_route_id(FRAMEWORK, &entry.method, &entry.path);
+            let id = make_route_id(FRAMEWORK, &entry.method, &entry.path, &c.file_path);
             nodes.push(RouteNode {
                 id: id.clone(),
                 name: entry.path.clone(),
@@ -348,7 +348,7 @@ mod nested_visibility_tests {
         assert_eq!(
             handled(&constants, &functions),
             vec![(
-                make_route_id(FRAMEWORK, "ANY", "p/"),
+                make_route_id(FRAMEWORK, "ANY", "p/", "app/urls.py"),
                 "app.views.detail".to_string()
             )],
             "an unrelated closure-scoped `detail` must not shadow the real view"
@@ -368,7 +368,7 @@ mod nested_visibility_tests {
         assert_eq!(
             handled(&constants, &functions),
             vec![(
-                make_route_id(FRAMEWORK, "ANY", "p/"),
+                make_route_id(FRAMEWORK, "ANY", "p/", "app/urls.py"),
                 "app.urls.make.local_view".to_string()
             )]
         );

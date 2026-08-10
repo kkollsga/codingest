@@ -8,8 +8,8 @@
 //! with their respective framework label. We can't statically know
 //! whether `app` is a Flask Flask or a FastAPI FastAPI without type
 //! info, so deduplication happens at the graph level (the schema keys
-//! Route by `(framework, method, path)`, so the same id from two
-//! detectors merges into one node by upsert semantics).
+//! Route by `(framework, method, path, declaring file)`, so the same id
+//! from two detectors merges into one node by upsert semantics).
 
 use super::{first_string_literal, make_route_id, split_decorator, RouteEdge, RouteNode};
 use crate::models::FunctionInfo;
@@ -42,7 +42,7 @@ pub(super) fn detect(functions: &[FunctionInfo]) -> (Vec<RouteNode>, Vec<RouteEd
                 continue;
             };
             let method = suffix.to_ascii_uppercase();
-            let id = make_route_id(FRAMEWORK, &method, &path);
+            let id = make_route_id(FRAMEWORK, &method, &path, &fn_info.file_path);
             nodes.push(RouteNode {
                 id: id.clone(),
                 name: path.clone(),

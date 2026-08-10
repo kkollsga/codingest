@@ -57,6 +57,19 @@ ship time — it's the only place the version bumps.
   each drop is reported with a warning naming both files.
 
 ### Changed
+- **`Route` nodes now represent registrations, not URLs.** The node id includes
+  the declaring file (`{framework}::{method}::{path}::{file_path}`), so the same
+  path registered from two files is two distinct nodes, each with truthful
+  `file_path` and `line_number`. Previously the id was
+  `{framework}::{method}::{path}`, so every methodless `@app.route('/')` in a
+  repo collapsed into ONE node whose source location described whichever file
+  the sorted walk reached first — wrong for every other registration. Within a
+  single file the identity is unchanged: two registrations of the same
+  method+path there remain one node with parallel `HANDLES` edges. Cross-language
+  `CALLS_SERVICE` linking matches on the `path` property and is unaffected,
+  except that a path with N registrations now links to all N. One golden digest
+  moved deliberately (`cross_ts_py`, id shape only — node and edge counts
+  unchanged).
 - **The KGLite floor moves to 0.15.8 across Cargo and Python.** The embedded
   MCP server picks up KGLite's mcp-methods 0.4.4 / rmcp 3.1.1 integration
   (0.15.7), workspace-graph producers now receive deduplicated changed-path

@@ -1,0 +1,19 @@
+{
+  "_comment": "Route identity is the registration, not the URL. Two files each register a methodless '/' — they must be TWO Route nodes, each reporting its own file_path/line_number, rather than one node mislocated to whichever file the sorted walk reached first. The pair of '/dup' registrations inside admin/views.py pins the other side of the decision: same file + method + path is ONE registration site with parallel HANDLES edges.",
+  "family": "routes-python",
+  "route_registration": [
+    { "path": "/", "method": "ANY", "file": "public/views.py", "handler": "public/views.py::index" },
+    { "path": "/", "method": "ANY", "file": "admin/views.py", "handler": "admin/views.py::index" },
+    { "path": "/about", "method": "ANY", "file": "public/views.py", "handler": "public/views.py::about" },
+    { "path": "/health", "method": "GET", "file": "admin/views.py", "handler": "admin/views.py::health" }
+  ],
+  "route_same_file_duplicate": [
+    {
+      "path": "/dup",
+      "method": "ANY",
+      "file": "admin/views.py",
+      "nodes": 1,
+      "handlers": ["admin/views.py::dup_first", "admin/views.py::dup_second"]
+    }
+  ]
+}

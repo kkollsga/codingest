@@ -255,6 +255,92 @@ mod tests {
         assert_eq!(normalize_path("relative/x"), None);
     }
 
+    /// Linking is by the `path` PROPERTY, never by parsing the Route id — so
+    /// the registration-model id (which now carries the declaring file) does
+    /// not change what a client call matches. What it does change is honest
+    /// fan-out: a path registered in two files is two Route nodes, and one
+    /// `fetch()` of that path links to both.
+    #[test]
+    fn a_client_call_links_to_every_registration_of_the_path() {
+        let tmp = tempfile::Builder::new()
+            .prefix("codingest-crosslang-fanout-")
+            .tempdir()
+            .unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("srv")).unwrap();
+        std::fs::create_dir_all(root.join("web")).unwrap();
+        std::fs::write(
+            root.join("srv/a.py"),
+            "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\"/api/thing\")\ndef thing_a():\n    return {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("srv/b.py"),
+            "from flask import Flask\n\napp = Flask(__name__)\n\n\n@app.route(\"/api/thing\")\ndef thing_b():\n    return {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("web/client.ts"),
+            "export function loadThing(): Promise<Response> {\n  return fetch(\"/api/thing\");\n}\n",
+        )
+        .unwrap();
+
+        let g = crate::builder::run_with_options(root, false, true, None, None, true)
+            .expect("codingest build");
+
+        // Two registrations of one path → two Route nodes, distinct files.
+        let mut route_files: Vec<String> = g
+            .graph
+            .node_indices()
+            .filter_map(|i| g.graph.node_weight(i))
+            .filter(|n| n.node_type_str(&g.interner) == "Route")
+            .filter_map(|n| match n.get_property("file_path").as_deref() {
+                Some(Value::String(p)) => Some(p.clone()),
+                _ => None,
+            })
+            .collect();
+        route_files.sort();
+        assert_eq!(
+            route_files,
+            vec!["srv/a.py".to_string(), "srv/b.py".to_string()],
+            "one Route per registration, each at its own file"
+        );
+
+        // One client call → one CALLS_SERVICE edge per registration.
+        let mut targets: Vec<String> = g
+            .graph
+            .edge_indices()
+            .filter_map(|e| {
+                let edge = g.graph.edge_weight(e)?;
+                if edge.connection_type_str(&g.interner) != "CALLS_SERVICE" {
+                    return None;
+                }
+                let (s, t) = g.graph.edge_endpoints(e)?;
+                let sn = g.graph.node_weight(s)?;
+                let tn = g.graph.node_weight(t)?;
+                assert!(
+                    sn.id().to_string().contains("loadThing"),
+                    "unexpected CALLS_SERVICE source {}",
+                    sn.id()
+                );
+                Some(tn.id().to_string())
+            })
+            .collect();
+        targets.sort();
+        assert_eq!(
+            targets.len(),
+            2,
+            "a path with 2 registrations links to both, got {targets:?}"
+        );
+        for id in &targets {
+            assert!(
+                id.contains("/api/thing"),
+                "matching is by path property: {id}"
+            );
+        }
+        assert_ne!(targets[0], targets[1], "the two Route ids must differ");
+    }
+
     #[test]
     fn parameterized_route_matches_concrete_path() {
         assert!(path_matches(

@@ -85,7 +85,7 @@ fn emit(
     path: &str,
     method: &str,
 ) {
-    let id = make_route_id(FRAMEWORK, method, path);
+    let id = make_route_id(FRAMEWORK, method, path, &fn_info.file_path);
     nodes.push(RouteNode {
         id: id.clone(),
         name: path.to_string(),

@@ -112,6 +112,17 @@ const CORPORA: &[&str] = &[
     // mixed-case `Notes.MD` stripping to `Notes`. Its golden is captured
     // additively (see `tests/goldens/README.md`).
     "docs_ext_collide",
+    // Added 2026-08-10. No other corpus registers the same route path from two
+    // different files, so Route identity could collapse every methodless
+    // `@app.route('/')` in a repo into one node — reporting whichever file the
+    // sorted walk reached first as the source location of all of them — with
+    // zero golden movement. It pins both sides of the registration model: two
+    // files registering `/` are two Route nodes each carrying its own truthful
+    // `file_path`/`line_number`, while two registrations of `/dup` inside one
+    // file are one registration site with parallel HANDLES edges (the id
+    // carries the declaring file, deliberately not the line). Its golden is
+    // captured additively (see `tests/goldens/README.md`).
+    "py_routes_dup",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.
