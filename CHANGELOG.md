@@ -91,6 +91,28 @@ ship time — it's the only place the version bumps.
   each drop is reported with a warning naming both files.
 
 ### Changed
+- **The freshness fingerprint now hashes only ingestible inputs, in parallel.**
+  It used to hash nearly every file under the source root — on a KGLite checkout
+  that is 232 MB across 3250 files, of which 169 MB is `.so`/`.dylib`/`.jar`
+  that can never reach the graph — and it did so on `build`, on `status`, and on
+  every `query` (via the freshness check). The scope is now derived from what
+  the builder actually ingests: the parser registry's extension map, the docs
+  extensions (`.md`/`.mdx`/`.rst`, matched case-insensitively), and the
+  manifests that shape the graph (`pyproject.toml`, `Cargo.toml`,
+  `package.json`, `tsconfig.json`); directory pruning calls the builder's own
+  `is_ignored_dir_name` instead of a narrower copied list, so `_build`, `venv`,
+  `env` and `site-packages` are no longer hashed. **Scoping is by ingestibility,
+  never by gitignore** — the docs pass ingests gitignored markdown, so a
+  gitignore-scoped fingerprint would report an edited repo as fresh. The
+  surviving files are hashed across up to 8 threads and folded together in
+  sorted path order, so the value stays deterministic. Measured on a KGLite
+  checkout (`80a0df52`, live working tree): fingerprint wall **0.299s → 0.013s**
+  warm (min of 5), **1.440s → 0.105s** on the first run of the process; the
+  hashed set drops from 232 MB / 3250 files to 17 MB / 1150 files. This also
+  **fixes a live false-stale**: rebuilding a shared library no longer flips
+  `status` to stale. **The fingerprint value itself changes**, so every existing
+  `.kgl.meta.json` reads stale exactly once after upgrading; one rebuild
+  restores it. Graph bytes are untouched — all parity goldens are unchanged.
 - **Parsing now dispatches every file through ONE parallel worklist** instead of
   a separate parallel batch per source root per language. The old shape ended
   each batch in a join that idled the pool whenever a batch was smaller than the

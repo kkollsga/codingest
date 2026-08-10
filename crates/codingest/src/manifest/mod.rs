@@ -9,6 +9,23 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use toml::Value;
 
+/// File names whose *contents* shape the built graph even though no parser
+/// claims them: the two project manifests this module reads (`pyproject.toml`,
+/// `Cargo.toml` — they decide source roots, test roots, project name and
+/// dependencies) plus the two files
+/// [`crate::builder::js_workspace`] reads to resolve TS/JS imports
+/// (`tsconfig.json` `paths` aliases, `package.json` `name`).
+///
+/// Exists so a consumer deciding "can this file change the graph?" — the CLI's
+/// freshness fingerprint — asks this crate instead of hard-coding a list that
+/// goes stale the next time a manifest format is added.
+pub const GRAPH_SHAPING_MANIFESTS: &[&str] = &[
+    "pyproject.toml",
+    "Cargo.toml",
+    "package.json",
+    "tsconfig.json",
+];
+
 pub fn read_manifest(project_root: &Path) -> Option<ProjectInfo> {
     try_read_manifest(project_root).ok().flatten()
 }
@@ -575,7 +592,14 @@ fn discover_supplemental_roots(project_root: &Path, info: &ProjectInfo) -> Vec<S
 /// `tests/test_code_tree_skip.py::test_single_huge_line_skipped`).
 /// `max_loc_per_file` handles oversized build artifacts without
 /// name-based filtering.
-pub(crate) fn is_ignored_dir_name(name: &str) -> bool {
+///
+/// **Public** because it is the single authority on what the source walk
+/// descends into, and out-of-crate consumers must not fork it: the CLI's
+/// freshness fingerprint scopes itself to what the builder actually ingests,
+/// and a copied list drifts silently — the copy it replaced was narrower than
+/// this one (missing `_build`/`venv`/`env`/`site-packages`), so those trees were
+/// hashed on every `status` and every `query` without ever reaching the graph.
+pub fn is_ignored_dir_name(name: &str) -> bool {
     if name.starts_with('.') {
         return true;
     }

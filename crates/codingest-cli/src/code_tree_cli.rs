@@ -358,9 +358,9 @@ fn source_fingerprint(
     if revisions.is_empty() {
         if source.is_file() {
             let root = source.parent().unwrap_or(source);
-            hash_tree(root, root, &mut hash)?;
+            hash_source_tree(root, &mut hash)?;
         } else {
-            hash_tree(source, source, &mut hash)?;
+            hash_source_tree(source, &mut hash)?;
         }
     } else {
         let root = repo_root.unwrap_or(source);
@@ -390,37 +390,149 @@ fn source_fingerprint(
     Ok(format!("fnv1a64:{:016x}", hash.finish()))
 }
 
-fn hash_tree(root: &Path, dir: &Path, hash: &mut Fnv64) -> Result<()> {
-    let mut entries: Vec<_> = fs::read_dir(dir)
+/// Upper bound on fingerprint hashing threads.
+///
+/// This is IO-bound work over many small files, not tree-sitter recursion, so
+/// it deliberately does **not** use the builder's `parser_pool` — those threads
+/// carry 16 MB stacks for deep parse recursion, which is the wrong tool and the
+/// wrong cost for reading files. A small fixed cap keeps a 128-core machine from
+/// spawning 128 threads to read a repo that has 40 source files.
+const MAX_FINGERPRINT_THREADS: usize = 8;
+
+/// Whether `path`'s bytes can change the built graph — i.e. whether it belongs
+/// in the freshness fingerprint.
+///
+/// Three sources, all **derived from the builder** rather than restated here,
+/// because a restated list drifts the moment a language is added and drift in
+/// this direction is invisible: a file the builder ingests but the fingerprint
+/// ignores makes an edited repo report **fresh**, and the user gets stale query
+/// answers with no error anywhere. `fingerprint_accepts_every_ingestible_input`
+/// is the guard that fails when the derivation is broken.
+///
+/// **Not scoped by gitignore, deliberately.** The docs pass ingests every
+/// `.md`/`.mdx`/`.rst` under the root whether or not git tracks it, so scoping
+/// the fingerprint by gitignore would silently drop gitignored docs out of it —
+/// the same false-fresh failure by another route.
+///
+/// Matching is case-insensitive even though `parsers::language_for_extension`
+/// is case-sensitive: over-hashing a `FOO.RS` the builder would skip costs one
+/// file read, while under-hashing costs correctness.
+fn is_fingerprint_input(path: &Path) -> bool {
+    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+        if codingest::manifest::GRAPH_SHAPING_MANIFESTS
+            .iter()
+            .any(|manifest| name.eq_ignore_ascii_case(manifest))
+        {
+            return true;
+        }
+    }
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return false;
+    };
+    codingest::parsers::EXTENSION_MAP
+        .iter()
+        .any(|(candidate, _)| extension.eq_ignore_ascii_case(candidate))
+        || codingest::DOC_EXTENSIONS
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+}
+
+/// Fold every ingestible file under `root` into `hash`.
+///
+/// The walk is sequential (directory listing is cheap); the file reads are
+/// spread across up to [`MAX_FINGERPRINT_THREADS`] threads. **Order is fixed
+/// before any thread starts**: each file is reduced to its own digest, and the
+/// digests are folded into `hash` in sorted relative-path order, so the result
+/// does not depend on which thread finished first.
+fn hash_source_tree(root: &Path, hash: &mut Fnv64) -> Result<()> {
+    let mut files = Vec::new();
+    collect_fingerprint_inputs(root, root, &mut files)?;
+    files.sort_by(|(left, _), (right, _)| left.cmp(right));
+    for digest in file_digests(&files)? {
+        hash.update(&digest.to_le_bytes());
+    }
+    Ok(())
+}
+
+/// Recursive half of [`hash_source_tree`]: collect `(relative, absolute)` pairs
+/// for the ingestible files under `dir`.
+///
+/// Directory pruning calls `codingest`'s own
+/// [`codingest::manifest::is_ignored_dir_name`] rather than a local list, so
+/// the fingerprint descends exactly where the builder's walk descends. As
+/// there, the walk **root itself is never filtered** — pointing the tool at a
+/// `target/` or a `.`-prefixed tempdir is an explicit request to read it.
+fn collect_fingerprint_inputs(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<()> {
+    let entries = fs::read_dir(dir)
         .with_context(|| format!("could not read source directory {}", dir.display()))?
         .collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if entry.file_type()?.is_dir() {
-            if name.starts_with('.')
-                || matches!(name.as_ref(), "target" | "node_modules" | "__pycache__")
-            {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            if codingest::manifest::is_ignored_dir_name(&name.to_string_lossy()) {
                 continue;
             }
-            hash_tree(root, &path, hash)?;
-        } else if entry.file_type()?.is_file() {
-            if path.extension().is_some_and(|ext| ext == "kgl") || name.ends_with(".kgl.meta.json")
-            {
-                continue;
-            }
-            let rel = path.strip_prefix(root).unwrap_or(&path);
-            hash_file(&path, rel, hash)?;
+            collect_fingerprint_inputs(root, &path, out)?;
+        } else if file_type.is_file() && is_fingerprint_input(&path) {
+            let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+            out.push((relative, path));
         }
     }
     Ok(())
 }
 
-fn hash_file(path: &Path, relative: &Path, hash: &mut Fnv64) -> Result<()> {
+/// Digest each file in `files`, preserving input order in the output.
+fn file_digests(files: &[(PathBuf, PathBuf)]) -> Result<Vec<u64>> {
+    let mut digests = vec![0_u64; files.len()];
+    if files.is_empty() {
+        return Ok(digests);
+    }
+    let threads = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .clamp(1, MAX_FINGERPRINT_THREADS)
+        .min(files.len());
+    let chunk = files.len().div_ceil(threads);
+    std::thread::scope(|scope| -> Result<()> {
+        let handles: Vec<_> = files
+            .chunks(chunk)
+            .zip(digests.chunks_mut(chunk))
+            .map(|(inputs, slots)| {
+                scope.spawn(move || -> Result<()> {
+                    for ((relative, path), slot) in inputs.iter().zip(slots.iter_mut()) {
+                        *slot = file_digest(path, relative)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        for handle in handles {
+            match handle.join() {
+                Ok(result) => result?,
+                // A panic in a worker is a bug, not a fingerprint outcome:
+                // re-raise it rather than reporting a digest computed from
+                // partial reads.
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        }
+        Ok(())
+    })?;
+    Ok(digests)
+}
+
+/// One file's contribution: its path *and* its bytes, so a rename with
+/// identical content still moves the fingerprint.
+fn file_digest(path: &Path, relative: &Path) -> Result<u64> {
+    let mut hash = Fnv64::new();
     hash.update(relative.to_string_lossy().as_bytes());
-    let mut file = fs::File::open(path)?;
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("could not read source file {}", path.display()))?;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = file.read(&mut buffer)?;
@@ -429,7 +541,7 @@ fn hash_file(path: &Path, relative: &Path, hash: &mut Fnv64) -> Result<()> {
         }
         hash.update(&buffer[..read]);
     }
-    Ok(())
+    Ok(hash.finish())
 }
 
 fn artifact_fingerprint(path: &Path) -> Result<(u64, String)> {
@@ -479,6 +591,126 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "git {:?} failed", args);
+    }
+
+    /// The phase's real gate. Enumerate every input the builder can ingest —
+    /// each parser extension, each docs extension, each graph-shaping manifest
+    /// name — and assert the fingerprint accepts it.
+    ///
+    /// This is what makes "add a language" safe: a new entry in
+    /// `EXTENSION_MAP` that the fingerprint does not see would otherwise ship a
+    /// silent false-fresh (edit a `.foo`, `status` still says fresh), which no
+    /// end-to-end test would catch because the graph itself is correct — only
+    /// the *decision to rebuild it* is wrong.
+    #[test]
+    fn fingerprint_accepts_every_ingestible_input() {
+        for (extension, language) in codingest::parsers::EXTENSION_MAP {
+            let path = PathBuf::from(format!("src/file.{extension}"));
+            assert!(
+                is_fingerprint_input(&path),
+                "parser extension .{extension} ({language}) is ingested but not fingerprinted"
+            );
+            let shouted = PathBuf::from(format!("src/file.{}", extension.to_uppercase()));
+            assert!(
+                is_fingerprint_input(&shouted),
+                "extension matching must be case-insensitive: .{extension}"
+            );
+        }
+        for extension in codingest::DOC_EXTENSIONS {
+            assert!(
+                is_fingerprint_input(&PathBuf::from(format!("docs/page.{extension}"))),
+                "doc extension .{extension} is ingested but not fingerprinted"
+            );
+            assert!(
+                is_fingerprint_input(&PathBuf::from(format!(
+                    "docs/page.{}",
+                    extension.to_uppercase()
+                ))),
+                "doc extension matching must be case-insensitive: .{extension}"
+            );
+        }
+        for manifest in codingest::manifest::GRAPH_SHAPING_MANIFESTS {
+            assert!(
+                is_fingerprint_input(&PathBuf::from(format!("pkg/{manifest}"))),
+                "manifest {manifest} shapes the graph but is not fingerprinted"
+            );
+        }
+    }
+
+    /// The reverse guard — the whole point of scoping. These are the bytes that
+    /// dominated the old fingerprint (169 MB of 243 MB on the KGLite checkout)
+    /// and can never reach the graph; hashing them made every rebuilt binary
+    /// flip `status` to stale.
+    #[test]
+    fn fingerprint_rejects_never_ingested_files() {
+        for name in [
+            "target/debug/libdemo.so",
+            "target/release/libdemo.dylib",
+            "vendor/tool.jar",
+            "docs/diagram.png",
+            "notes.txt",
+            "data.bin",
+            "Makefile",
+        ] {
+            assert!(
+                !is_fingerprint_input(&PathBuf::from(name)),
+                "{name} cannot affect the graph and must not be fingerprinted"
+            );
+        }
+    }
+
+    /// Scoped by **ingestibility, not gitignore**. The docs pass reads every
+    /// `.md` under the root regardless of git, so a gitignored one must still
+    /// move the fingerprint — and a rebuilt `.so`, which no pass reads, must
+    /// not.
+    #[test]
+    fn fingerprint_tracks_gitignored_docs_but_not_binaries() {
+        let source = tempfile::tempdir().unwrap();
+        let root = source.path();
+        fs::write(root.join(".gitignore"), "notes.md\nlib.so\n").unwrap();
+        fs::write(root.join("demo.rs"), "pub fn demo() {}\n").unwrap();
+        fs::write(root.join("notes.md"), "# first\n").unwrap();
+        fs::write(root.join("lib.so"), b"\x7fELF-one").unwrap();
+
+        let baseline = source_fingerprint(root, None, &[]).unwrap();
+        assert_eq!(
+            source_fingerprint(root, None, &[]).unwrap(),
+            baseline,
+            "fingerprint must be stable across runs"
+        );
+
+        fs::write(root.join("lib.so"), b"\x7fELF-two-longer").unwrap();
+        assert_eq!(
+            source_fingerprint(root, None, &[]).unwrap(),
+            baseline,
+            "rebuilding a shared library must not report the source as stale"
+        );
+
+        fs::write(root.join("notes.md"), "# second\n").unwrap();
+        assert_ne!(
+            source_fingerprint(root, None, &[]).unwrap(),
+            baseline,
+            "a gitignored doc is still ingested, so editing it must flip the fingerprint"
+        );
+    }
+
+    /// Digests are folded in sorted path order, so a repo big enough to be
+    /// split across worker threads still fingerprints identically every time.
+    #[test]
+    fn fingerprint_is_order_independent_across_threads() {
+        let source = tempfile::tempdir().unwrap();
+        let root = source.path();
+        for index in 0..200 {
+            fs::write(
+                root.join(format!("mod{index}.rs")),
+                format!("pub fn f{index}() {{}}\n"),
+            )
+            .unwrap();
+        }
+        let first = source_fingerprint(root, None, &[]).unwrap();
+        for _ in 0..4 {
+            assert_eq!(source_fingerprint(root, None, &[]).unwrap(), first);
+        }
     }
 
     fn fixture() -> tempfile::TempDir {

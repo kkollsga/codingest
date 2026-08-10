@@ -1044,6 +1044,19 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// The crate-root [`crate::DOC_EXTENSIONS`] exists so consumers compiled
+    /// without the `docs` feature still know which files this pass would
+    /// ingest. It is a second spelling of the same fact, so it is pinned to
+    /// this module's table: adding `.adoc` here without adding it there would
+    /// leave the CLI's freshness fingerprint blind to every AsciiDoc file —
+    /// editing one would not flip the fingerprint, and the graph would read
+    /// fresh with stale docs in it.
+    #[test]
+    fn doc_extensions_match_crate_root() {
+        let from_table: Vec<&str> = DOC_EXTENSIONS.iter().map(|(ext, _)| *ext).collect();
+        assert_eq!(from_table, crate::DOC_EXTENSIONS);
+    }
+
     fn count_label(g: &DirGraph, label: &str) -> usize {
         g.graph
             .node_indices()

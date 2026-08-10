@@ -37,6 +37,18 @@ pub mod rev;
 // from this crate; the entity-handle helpers + source-location types are
 // graph-handle capabilities that stay in kglite's `code_entities` module (they
 // operate on any `DirGraph`).
+/// Markup extensions the docs pass ingests as `:Doc` nodes, lower-case and
+/// without the dot. Matching is **case-insensitive** at every use site
+/// (`docs::doc_format_for_ext`), so `README.MD` is a doc too.
+///
+/// Declared at the crate root rather than in [`docs`] because the module is
+/// behind the `docs` feature while this fact is not: the CLI's freshness
+/// fingerprint must cover the same files whichever way the crate was compiled,
+/// or a `--no-default-features` build and a default build would disagree about
+/// whether a repo is stale. `docs::doc_extensions_match_crate_root` keeps the
+/// two lists in step.
+pub const DOC_EXTENSIONS: &[&str] = &["md", "mdx", "rst"];
+
 pub use builder::run_with_options as build_code_tree;
 pub use parsers::language_for_path;
 pub use rev::{archive_and_build, build_code_tree_revs, dedup_revs};
