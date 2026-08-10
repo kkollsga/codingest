@@ -156,19 +156,37 @@ pub(crate) fn noise_names_for_files(files: &[FileInfo]) -> HashSet<&'static str>
         .collect()
 }
 
-/// Terminal segment of a `::` / `.` / `/`-separated type name — the form
-/// stored in `qname_to_owner`, so ancestor lookups match call candidates.
-fn short_type_name(name: &str) -> &str {
-    let mut cut = 0usize;
+/// Split `name` at its LAST separator among `::`, `.` and `/` — the one whose
+/// end position is greatest, so a longer match wins over a shorter one ending
+/// earlier. Returns `(before, after)`, or `None` when there is no separator.
+///
+/// The single source of truth for "where does a qualified name end and its
+/// terminal segment begin": every site that cuts a qname goes through here, so
+/// they cannot drift apart the way the owner split and `short_type_name` did.
+fn split_at_last_separator(name: &str) -> Option<(&str, &str)> {
+    let mut split: Option<(usize, usize)> = None;
     for sep in ["::", ".", "/"] {
-        if let Some(i) = name.rfind(sep) {
-            let after = i + sep.len();
-            if after > cut {
-                cut = after;
+        if let Some(idx) = name.rfind(sep) {
+            let end = idx + sep.len();
+            if split.is_none_or(|(_, best_end)| end > best_end) {
+                split = Some((idx, end));
             }
         }
     }
-    &name[cut..]
+    split.map(|(idx, end)| (&name[..idx], &name[end..]))
+}
+
+/// Terminal segment of a `::` / `.` / `/`-separated type name — the form
+/// stored in `qname_to_owner`, so ancestor lookups match call candidates.
+fn short_type_name(name: &str) -> &str {
+    split_at_last_separator(name).map_or(name, |(_, tail)| tail)
+}
+
+/// `(owner prefix, owner short name)` for a qualified name — the pair stored in
+/// `qname_to_prefix` / `qname_to_owner`. `None` when the name has no separator.
+fn qname_owner_split(qname: &str) -> Option<(&str, &str)> {
+    let (prefix, _) = split_at_last_separator(qname)?;
+    Some((prefix, short_type_name(prefix)))
 }
 
 /// type short-name → transitive ancestor short-names, derived from the
@@ -361,21 +379,9 @@ pub fn build_call_edges(
     let mut qname_to_prefix: HashMap<&str, &str> = HashMap::new();
     for fn_info in functions {
         let qn = fn_info.qualified_name.as_str();
-        for sep in ["::", ".", "/"] {
-            if let Some(idx) = qn.rfind(sep) {
-                let owner_path = &qn[..idx];
-                qname_to_prefix.insert(qn, owner_path);
-                // Find the last separator inside owner_path (any of ::, ., /).
-                let mut short = owner_path;
-                for sep2 in ["::", ".", "/"] {
-                    if let Some(i2) = owner_path.rfind(sep2) {
-                        short = &owner_path[i2 + sep2.len()..];
-                        break;
-                    }
-                }
-                qname_to_owner.insert(qn, short);
-                break;
-            }
+        if let Some((prefix, owner)) = qname_owner_split(qn) {
+            qname_to_prefix.insert(qn, prefix);
+            qname_to_owner.insert(qn, owner);
         }
     }
 
@@ -726,6 +732,87 @@ pub fn build_call_edges(
     (result, stats)
 }
 
+/// The owner/prefix split and `short_type_name` must cut a qualified name at
+/// the SAME separator. They disagreed until 2026-08-10: the owner split took
+/// the first separator present in list order (`::`, then `.`, then `/`) while
+/// `short_type_name` took the last one by position, so a mixed-separator qname
+/// (`pkg/api/v1.2/handlers.Run`) produced an owner the inheritance tier — whose
+/// ancestor keys are built with `short_type_name` — could never match.
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    /// Asserts the two split sites agree on `qname`, and returns
+    /// `(prefix, owner)`. Agreement means the bytes between the end of the
+    /// owner prefix and the start of `short_type_name`'s tail are exactly one
+    /// separator — i.e. both sites cut at the same byte position.
+    fn agreeing_split(qname: &str) -> (&str, &str) {
+        let tail = short_type_name(qname);
+        let Some((prefix, owner)) = qname_owner_split(qname) else {
+            assert_eq!(tail, qname, "no owner split, so no separator to cut at");
+            return (qname, qname);
+        };
+        let gap = &qname[prefix.len()..qname.len() - tail.len()];
+        assert!(
+            matches!(gap, "::" | "." | "/"),
+            "split sites disagree on {qname:?}: owner prefix {prefix:?} vs \
+             short_type_name tail {tail:?} leaves gap {gap:?}"
+        );
+        // The owner short name is itself the tail of the prefix.
+        assert_eq!(owner, short_type_name(prefix), "owner of {qname:?}");
+        (prefix, owner)
+    }
+
+    #[test]
+    fn mixed_separators_split_at_the_last_one() {
+        // Last separator is `/`, not the earlier `::`.
+        assert_eq!(agreeing_split("foo::bar/baz"), ("foo::bar", "bar"));
+        // Dotted directory: the final `.` cuts, and the owner is the segment
+        // after the last separator *inside* the prefix (`/`, not the `.` in
+        // `v1.2`).
+        assert_eq!(
+            agreeing_split("pkg/api/v1.2/handlers.Run"),
+            ("pkg/api/v1.2/handlers", "handlers")
+        );
+        assert_eq!(
+            agreeing_split("packages/app.v2/src/main.fn"),
+            ("packages/app.v2/src/main", "main")
+        );
+        assert_eq!(agreeing_split("a/b.c"), ("a/b", "b"));
+        assert_eq!(
+            agreeing_split("pkg/api::Type::method"),
+            ("pkg/api::Type", "Type")
+        );
+    }
+
+    #[test]
+    fn single_separator_qnames_are_unchanged() {
+        assert_eq!(agreeing_split("a::b::c"), ("a::b", "b"));
+        assert_eq!(agreeing_split("a.b.c"), ("a.b", "b"));
+        assert_eq!(agreeing_split("a/b/c"), ("a/b", "b"));
+        assert_eq!(agreeing_split("a::b"), ("a", "a"));
+        assert_eq!(agreeing_split("a.b"), ("a", "a"));
+        assert_eq!(agreeing_split("a/b"), ("a", "a"));
+    }
+
+    #[test]
+    fn a_qname_without_a_separator_has_no_owner() {
+        assert_eq!(qname_owner_split("main"), None);
+        assert_eq!(short_type_name("main"), "main");
+        assert_eq!(qname_owner_split(""), None);
+    }
+
+    /// Overlapping candidates: `::` and `.` cannot start at the same byte, but
+    /// a `.` may follow a `::` immediately. The later end position wins in both
+    /// sites, which is what keeps them in step.
+    #[test]
+    fn adjacent_separators_cut_at_the_later_one() {
+        assert_eq!(agreeing_split("a::.b"), ("a::", ""));
+        assert_eq!(agreeing_split("a/.b"), ("a/", ""));
+        assert_eq!(agreeing_split("/a"), ("", ""));
+    }
+}
+
 #[cfg(test)]
 mod stats_tests {
     use super::*;
@@ -770,6 +857,29 @@ mod stats_tests {
         f.metadata
             .insert("nesting_depth".into(), serde_json::json!(depth));
         f
+    }
+
+    /// The receiver tier reads the caller's owner out of `qname_to_owner`, so a
+    /// mixed-separator caller qname must yield the same owner `short_type_name`
+    /// would: `app::web/routes.Run` is owned by `routes`, not by `app`. With
+    /// the owner taken at the first-listed separator this call stayed ambiguous
+    /// and emitted both candidates.
+    #[test]
+    fn a_mixed_separator_caller_resolves_by_its_real_owner() {
+        let functions = vec![
+            func("app::web/routes.Run", "a.go", &[("helper", 3)]),
+            func("routes.helper", "b.go", &[]),
+            func("other.helper", "c.go", &[]),
+        ];
+        let (edges, _) = build_call_edges(
+            &functions,
+            &[],
+            &std::collections::HashSet::new(),
+            5,
+            &[],
+            &no_imports(),
+        );
+        assert_eq!(meta(&edges), vec![("routes.helper", "receiver", 1, false)]);
     }
 
     /// D3 — a `nesting_depth > 0` definition never joins the global bare-name

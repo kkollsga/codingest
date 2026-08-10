@@ -18,6 +18,13 @@ ship time — it's the only place the version bumps.
   `target/`, a `venv/` or a vendored `node_modules/` pruned the walk before it
   started — the build reported success and wrote a graph with no files in it.
   The name list now applies only below the root.
+- **Cross-file call resolution now splits owner qualified-names at the last
+  separator, matching the type-name derivation.** The owner/prefix split took
+  the first separator present in list order (`::`, then `.`, then `/`) while
+  `short_type_name` took the last one by position, so mixed-separator names
+  (dotted directories in path-style qnames, e.g. `pkg/api/v1.2/handlers.Run`)
+  previously narrowed the receiver and same-owner resolution tiers on a wrong
+  owner, and could never match the inheritance tier at all.
 
 ### Changed
 - **The KGLite floor moves to 0.15.8 across Cargo and Python.** The embedded
