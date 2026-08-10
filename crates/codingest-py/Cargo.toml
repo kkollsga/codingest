@@ -47,7 +47,7 @@ codingest = { version = "0.1.7", path = "../codingest", default-features = false
 # the build-then-load handoff, plus the `DirGraph` type the builder returns.
 kglite = { workspace = true }
 # Temp `.kgl` path for the handoff when the caller passes no `save_to`.
-tempfile = "3"
+tempfile = "3.27.0"
 # Shared CLI implementation. The standalone `codingest-cli` package builds the
 # same crate as a libpython-free binary; this wheel calls its Rust library
 # through `_run_cli`, so `pip install codingest` also installs the `codingest`

@@ -54,6 +54,64 @@ jobs:
         # the test is offline and needs no sibling checkout.
         run: cargo test --workspace
 
+  minimal-versions:
+    name: Declared dependency floors resolve and compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # The ONLY nightly consumer in this repo — there is no
+      # rust-toolchain.toml, so every other job takes @stable and is unaffected
+      # by nightly drift. `-Z direct-minimal-versions` is nightly-gated with no
+      # stable equivalent; that gating is the entire reason this job is split
+      # out rather than folded into rust-checks.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      # pyo3's build script probes for an interpreter even under abi3.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: minimal-versions
+          workspaces: ". -> target"
+
+      - name: Resolve every direct dependency at its declared floor
+        # A version requirement like `anyhow = "1"` claims the code builds
+        # against anyhow 1.0.0. Normal CI never tests that claim: the committed
+        # Cargo.lock pins 1.0.104, so the floor is decoration and drifts
+        # silently as the code starts using newer APIs. This step rewrites the
+        # lock so each DIRECT dependency sits at the oldest version its own
+        # declaration permits, making the next step test the claim for real.
+        #
+        # `direct-minimal-versions`, NOT `-Z minimal-versions`: the latter
+        # applies the same floor-seeking to all ~350 transitive entries, whose
+        # requirements are third-party and largely understated in exactly the
+        # way this job exists to prevent. That would be structurally red
+        # through no fault of ours and could never be made green. We are
+        # answerable for what THIS workspace declares, and nothing else.
+        #
+        # The rewritten Cargo.lock is throwaway. Nothing commits it — this job
+        # has no write step, and the runner's checkout is discarded when the
+        # job ends, so the committed lock is untouched by construction.
+        run: cargo update -Z direct-minimal-versions
+
+      - name: Check the workspace against those floors
+        # `check`, not `build` or `test`. The failure this job hunts is a
+        # declared floor that cannot satisfy the code — which surfaces during
+        # resolution (the step above) or type-checking, both fully covered
+        # here. Codegen and test execution add minutes without adding a
+        # distinct failure mode: a floor old enough to break at runtime but
+        # new enough to type-check is not a shape we have seen, and the real
+        # lock is what rust-checks builds and tests. `check` also avoids
+        # linking libpython for the codingest-py cdylib.
+        run: cargo check --workspace --all-targets
+
   actionlint:
     name: Lint GitHub Actions workflows
     runs-on: ubuntu-latest

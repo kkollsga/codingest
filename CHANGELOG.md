@@ -112,6 +112,23 @@ ship time — it's the only place the version bumps.
   each drop is reported with a warning naming both files.
 
 ### Changed
+- **Declared external dependency floors now match what the code needs**, and a
+  nightly `direct-minimal-versions` CI job keeps them honest. `anyhow = "1"`,
+  `clap = "4"`, `regex = "1"` and `tempfile = "3"` each claimed the code built
+  against that major's `.0.0` release; none of them did, and nothing tested the
+  claim, because the committed `Cargo.lock` always pinned something far newer.
+  `serde_json` was worse than understated — it was **inconsistent**, declared
+  `1.0.151` by `codingest` and `1` by `codingest-cli`, a split that has no
+  solution at all once floors are actually resolved. The floors now name the
+  versions the workspace is built and tested against (`anyhow 1.0.104`,
+  `clap 4.6.4`, `serde_json 1.0.151` in both manifests, `regex 1.13.1`,
+  `tempfile 3.27.0` across all four sites). The new `minimal-versions` job
+  resolves every direct dependency down to its declared floor and type-checks
+  the workspace there, so a floor that stops being true fails CI instead of
+  failing a downstream consumer. It is this repo's only nightly consumer.
+  `base64` was audited and left at `0.22`: that floor resolves to 0.22.0 and
+  compiles, and the second `base64 0.23.1` in the lock is transitive-only, via
+  `rmcp`/`mcp-methods` behind `kglite-mcp-server`.
 - **AGC control-edge property frames omit all-empty columns**, trimming per-edge
   load cost on sparse graphs (no output change). `JUMPS_TO`/`BRANCHES_TO` frames
   emitted `raw_targets`, `offsets`, `via` and `address_lines` unconditionally,

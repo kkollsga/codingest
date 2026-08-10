@@ -16,4 +16,4 @@ path = "src/main.rs"
 [dependencies]
 codingest = { version = "0.1.7", path = "../codingest" }
 kglite-mcp-server = { workspace = true }
-anyhow = "1"
+anyhow = "1.0.104"
