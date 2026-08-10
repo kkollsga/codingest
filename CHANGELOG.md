@@ -25,6 +25,19 @@ ship time — it's the only place the version bumps.
   (dotted directories in path-style qnames, e.g. `pkg/api/v1.2/handlers.Run`)
   previously narrowed the receiver and same-owner resolution tiers on a wrong
   owner, and could never match the inheritance tier at all.
+- **Doc concept-ids now strip their extension case-insensitively.** The docs
+  walk accepted `.md` / `.mdx` / `.rst` in any case while the id-stripper
+  matched six literal suffixes, so a `Guide.Mdx` became a `:Doc` with the
+  extension welded into its id — and since doc→doc links resolve against
+  extension-stripped ids, nothing could ever link to it. Admission and
+  stripping now derive from one table.
+- **Same-name docs with different extensions in one directory no longer
+  silently collapse.** `guide.md` beside `guide.mdx` (or `guide.rst`) mapped to
+  one concept id and overwrote each other in the node DataFrame, so the
+  surviving node's title, path and frontmatter came from whichever file the
+  walk happened to reach second. Precedence is now explicit — `.mdx` > `.md` >
+  `.rst` — the winner keeps the id, the losers are dropped from the graph, and
+  each drop is reported with a warning naming both files.
 
 ### Changed
 - **The KGLite floor moves to 0.15.8 across Cargo and Python.** The embedded

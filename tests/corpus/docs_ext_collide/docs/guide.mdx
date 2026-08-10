@@ -1,0 +1,19 @@
+---
+title: Retry Guide (mdx)
+audience: operators
+---
+
+import { Tabs } from "@astrojs/starlight/components"
+
+This file and its `guide.md` sibling collapse to the same `concept_id`
+(`docs/guide`). The `.mdx` outranks the `.md`, so THIS file is the one that
+keeps the id — its frontmatter title, its `file_path` and its mentions are the
+ones on the node.
+
+<Tabs>
+  Call `build_retry_plan` before `drain_backlog`.
+</Tabs>
+
+## Tuning attempts
+
+Raise the attempt count when the sink is remote.

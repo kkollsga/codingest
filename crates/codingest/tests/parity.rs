@@ -99,6 +99,19 @@ const CORPORA: &[&str] = &[
     // contribute nothing. Its golden is captured additively (see
     // `tests/goldens/README.md`).
     "docs_mdx",
+    // Added 2026-08-10. No other corpus contains two docs in one directory
+    // whose names differ only by markup extension, so the concept-id collision
+    // policy (`.mdx` > `.md` > `.rst`; the loser is dropped from doc-node
+    // emission entirely) could be changed — or regress to the old silent
+    // last-write-wins overwrite — with zero golden movement. It pins the
+    // survivor's identity (the `.mdx` file's title, `file_path` and mentions),
+    // the loser's total absence (a symbol and a link that exist ONLY in
+    // `docs/guide.md` must contribute no edge), a link written against the
+    // DROPPED spelling (`docs/guide.md`) still resolving to the surviving
+    // `docs/guide` node, an uncolliding `.rst` surviving untouched, and a
+    // mixed-case `Notes.MD` stripping to `Notes`. Its golden is captured
+    // additively (see `tests/goldens/README.md`).
+    "docs_ext_collide",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

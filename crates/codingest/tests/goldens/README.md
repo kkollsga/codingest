@@ -95,6 +95,25 @@ rewrote all twelve files, and afterwards `git status` reported only
 byte-identical. The gate was then mutation-tested — see the Phase 5 commit
 message.
 
+The additive `docs_ext_collide` digest was captured on 2026-08-10 with the
+corpus itself. It guards the other half of the docs pass's identity rules: no
+pre-existing corpus contains two docs in one directory whose names differ only
+by markup extension, so the concept-id collision policy could be changed — or
+regress to the silent last-write-wins overwrite it replaced — with every digest
+staying green. `docs/guide.md` and `docs/guide.mdx` both strip to `docs/guide`;
+precedence is `.mdx` > `.md` > `.rst`, the winner keeps the id and the losers
+are dropped from doc-node emission entirely. The digest pins the survivor's
+identity (the `.mdx` file's `file_path`, frontmatter and MENTIONS), the loser's
+total absence (`shadowed_only_symbol` is mentioned ONLY by `docs/guide.md`, so
+a MENTIONS edge to it means a dropped doc still reached the graph), a link
+written against the DROPPED spelling (`Notes.MD` links to `docs/guide.md`)
+still resolving to the surviving `docs/guide` node, an uncolliding `intro.rst`
+surviving untouched, and the mixed-case `Notes.MD` stripping to `Notes`.
+Verified additive the strict way: `capture_goldens` rewrote all thirteen files,
+and afterwards `git status` reported only `docs_ext_collide.sha256` as new, so
+the twelve pre-existing digests came back byte-identical. The gate was then
+mutation-tested — see the commit message.
+
 KGLite deleted its in-tree builder on 2026-07-16, so `corpus_parity` (the live
 in-tree vs codingest check) is gone. `golden_parity` — which builds each corpus
 with only the `codingest` builder and compares to these frozen digests — is now

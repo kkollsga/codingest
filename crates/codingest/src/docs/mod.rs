@@ -254,13 +254,62 @@ fn discover_and_parse(root: &Path) -> Result<Vec<DocEntry>, String> {
         }
     }
 
-    docs.sort_by(|a, b| a.concept_id.cmp(&b.concept_id));
+    for c in sort_and_drop_collisions(&mut docs) {
+        eprintln!(
+            "[docs] warning: {} and {} both map to the doc id '{}'; keeping {} (.mdx > .md > .rst) and ignoring {}",
+            c.kept, c.dropped, c.concept_id, c.kept, c.dropped
+        );
+    }
     Ok(docs)
 }
 
-/// Enumerate `.md` / `.mdx` / `.rst` files under `root`, pruning hidden /
-/// build dirs. The accepted-extension match is the single place that decides
-/// what counts as documentation — `.txt` is rejected here, on purpose.
+/// The markup extensions the docs pass ingests, each with the extractor it
+/// selects. **The single place that decides what counts as documentation**:
+/// [`discover_docs`] asks it what to admit and [`strip_doc_ext`] asks it what a
+/// `concept_id` drops, so the two cannot drift apart. They did drift: the
+/// admission test was case-insensitive while the stripper matched six literal
+/// suffixes, so a `Guide.Mdx` was ingested with its extension welded into its
+/// id and could never be the target of a doc→doc link.
+///
+/// `.mdx` is Markdown plus embedded JSX/ESM. Every Markdown extractor
+/// (frontmatter, headings, backtick mentions, `[](…)` links) reads it
+/// unchanged; the JSX is inert text to all of them — `import {X} from "y"` and
+/// `<Component />` carry no backtick span, no `::`-qualified prose and no
+/// markdown link, so they contribute nothing rather than noise.
+/// Astro/Starlight/Docusaurus sites keep their entire documentation set in
+/// `.mdx`.
+///
+/// `.txt` is deliberately NOT here — do not "fix" this. Two independent
+/// reasons:
+///  1. No structure. A `.txt` file has no frontmatter, no heading syntax and
+///     no link syntax, so every extractor degrades to nothing: the node would
+///     carry a filename-derived title, an empty `headings` outline, no
+///     MENTIONS and no DOCUMENTS.
+///  2. The extension is indiscriminate. `requirements.txt`, `CMakeLists.txt`,
+///     `LICENSE.txt`, vendored word lists and test fixtures all share it, so
+///     ingesting it turns build inputs and data blobs into `:Doc` nodes.
+///
+/// Real prose does live in `.txt` (opencode ships 37 model-facing prompt files
+/// that way), but a generic builder cannot separate those from the junk
+/// without a manifest-driven opt-in, which is a known follow-up and
+/// deliberately not built here.
+const DOC_EXTENSIONS: &[(&str, DocFormat)] = &[
+    ("md", DocFormat::Markdown),
+    ("mdx", DocFormat::Markdown),
+    ("rst", DocFormat::Rst),
+];
+
+/// The format `ext` (without its dot, any case) selects, or `None` if it is
+/// not a doc extension.
+fn doc_format_for_ext(ext: &str) -> Option<DocFormat> {
+    DOC_EXTENSIONS
+        .iter()
+        .find(|(e, _)| ext.eq_ignore_ascii_case(e))
+        .map(|(_, f)| *f)
+}
+
+/// Enumerate [`DOC_EXTENSIONS`] files under `root`, pruning hidden / build
+/// dirs.
 fn discover_docs(root: &Path) -> Vec<Discovered> {
     let mut out = Vec::new();
     let walker = WalkDir::new(root)
@@ -270,32 +319,9 @@ fn discover_docs(root: &Path) -> Vec<Discovered> {
         if !entry.file_type().is_file() {
             continue;
         }
-        let format = match entry.path().extension().and_then(|e| e.to_str()) {
-            Some(e) if e.eq_ignore_ascii_case("md") => DocFormat::Markdown,
-            // `.mdx` is Markdown plus embedded JSX/ESM. Every Markdown
-            // extractor (frontmatter, headings, backtick mentions, `[](…)`
-            // links) reads it unchanged; the JSX is inert text to all of them
-            // — `import {X} from "y"` and `<Component />` carry no backtick
-            // span, no `::`-qualified prose and no markdown link, so they
-            // contribute nothing rather than noise. Astro/Starlight/Docusaurus
-            // sites keep their entire documentation set in `.mdx`.
-            Some(e) if e.eq_ignore_ascii_case("mdx") => DocFormat::Markdown,
-            Some(e) if e.eq_ignore_ascii_case("rst") => DocFormat::Rst,
-            // `.txt` is deliberately NOT ingested — do not "fix" this.
-            // Two independent reasons:
-            //  1. No structure. A `.txt` file has no frontmatter, no heading
-            //     syntax and no link syntax, so every extractor degrades to
-            //     nothing: the node would carry a filename-derived title, an
-            //     empty `headings` outline, no MENTIONS and no DOCUMENTS.
-            //  2. The extension is indiscriminate. `requirements.txt`,
-            //     `CMakeLists.txt`, `LICENSE.txt`, vendored word lists and
-            //     test fixtures all share it, so ingesting it turns build
-            //     inputs and data blobs into `:Doc` nodes.
-            // Real prose does live in `.txt` (opencode ships 37 model-facing
-            // prompt files that way), but a generic builder cannot separate
-            // those from the junk without a manifest-driven opt-in, which is a
-            // known follow-up and deliberately not built here.
-            _ => continue,
+        let ext = entry.path().extension().and_then(|e| e.to_str());
+        let Some(format) = ext.and_then(doc_format_for_ext) else {
+            continue;
         };
         let Ok(rel) = entry.path().strip_prefix(root) else {
             continue;
@@ -316,15 +342,82 @@ fn discover_docs(root: &Path) -> Vec<Discovered> {
 
 /// Strip the trailing markup extension from a path, yielding the `concept_id`.
 ///
-/// Order is irrelevant: the match is an exact suffix, so `foo.mdx` never
-/// matches `.md` (it ends `dx`) and `foo.md` never matches `.mdx`.
+/// Only the segment after the LAST `.` is considered, and only if
+/// [`DOC_EXTENSIONS`] admits it (case-insensitively, exactly as
+/// [`discover_docs`] does). So `a.mdx.md` loses just its `.md` — the inner
+/// `.mdx` is part of the name — and a path whose real extension is not a doc
+/// extension (`notes.txt`), or which has none at all (`Makefile`), comes back
+/// untouched.
 fn strip_doc_ext(rel_path: &str) -> &str {
-    for ext in [".md", ".mdx", ".rst", ".MD", ".MDX", ".RST"] {
-        if let Some(stem) = rel_path.strip_suffix(ext) {
-            return stem;
-        }
+    match rel_path.rfind('.') {
+        Some(i) if doc_format_for_ext(&rel_path[i + 1..]).is_some() => &rel_path[..i],
+        _ => rel_path,
     }
-    rel_path
+}
+
+/// Collision precedence for two docs whose paths strip to the same
+/// `concept_id`: `.mdx` (0) beats `.md` (1) beats `.rst` (2). Lower wins.
+///
+/// The order is not arbitrary. An `.mdx` is a superset of Markdown, so where a
+/// project ships both spellings of one page the `.mdx` is the live one and the
+/// `.md` is what it was migrated from; `.rst` loses to both because a tree
+/// mixing Sphinx and Markdown is mid-migration in the same direction.
+fn ext_precedence(file_path: &str) -> u8 {
+    match file_path.rfind('.').map(|i| &file_path[i + 1..]) {
+        Some(e) if e.eq_ignore_ascii_case("mdx") => 0,
+        Some(e) if e.eq_ignore_ascii_case("md") => 1,
+        _ => 2,
+    }
+}
+
+/// One dropped doc, reported by [`drop_colliding_docs`] for warning.
+struct Collision {
+    concept_id: String,
+    kept: String,
+    dropped: String,
+}
+
+/// Sort `docs` into ingest order and drop every doc whose `concept_id` a
+/// higher-precedence doc already claims, returning one [`Collision`] per
+/// dropped file.
+///
+/// The sort is by `concept_id` first — the order everything downstream sees —
+/// then by the collision keys, so any two docs that strip to the same id land
+/// adjacent with the winner first and the drop is a single adjacent-pair scan.
+/// `file_path` breaks a tie between two equal-precedence spellings
+/// (`guide.md` + `guide.MD`) and is unique per doc, so the order is total: the
+/// surviving set never depends on the walk's arrival order.
+///
+/// Why dropping rather than merging: `add_doc_nodes` builds one DataFrame row
+/// per doc and calls `add_nodes` with `conflict_handling = "update"`, so two
+/// rows sharing a `concept_id` used to silently collapse — the LAST row won,
+/// which meant the surviving node's title, `file_path` and frontmatter came
+/// from whichever file the walk happened to reach second. The node count was
+/// right, so nothing looked wrong.
+fn sort_and_drop_collisions(docs: &mut Vec<DocEntry>) -> Vec<Collision> {
+    docs.sort_by(|a, b| {
+        a.concept_id
+            .cmp(&b.concept_id)
+            .then_with(|| ext_precedence(&a.file_path).cmp(&ext_precedence(&b.file_path)))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+    });
+    let mut collisions = Vec::new();
+    let mut kept: Option<(String, String)> = None;
+    docs.retain(|d| match &kept {
+        Some((cid, keeper)) if *cid == d.concept_id => {
+            collisions.push(Collision {
+                concept_id: cid.clone(),
+                kept: keeper.clone(),
+                dropped: d.file_path.clone(),
+            });
+            false
+        }
+        _ => {
+            kept = Some((d.concept_id.clone(), d.file_path.clone()));
+            true
+        }
+    });
+    collisions
 }
 
 // ── :Doc node materialisation ───────────────────────────────────────────────
@@ -1165,6 +1258,180 @@ mod tests {
         // Neither a non-doc extension nor a bare name is touched.
         assert_eq!(strip_doc_ext("notes.txt"), "notes.txt");
         assert_eq!(strip_doc_ext("Makefile"), "Makefile");
+    }
+
+    /// `discover_docs` accepts extensions case-insensitively, so mixed case is
+    /// not an exotic input — it is whatever the filesystem happens to hold.
+    /// Every spelling it admits must strip here, or the resulting `:Doc` id
+    /// keeps its extension and can never be the target of a doc→doc link.
+    #[test]
+    fn strip_doc_ext_matches_discover_docs_case_insensitively() {
+        assert_eq!(strip_doc_ext("docs/Guide.Mdx"), "docs/Guide");
+        assert_eq!(strip_doc_ext("README.Md"), "README");
+        assert_eq!(strip_doc_ext("doc/intro.Rst"), "doc/intro");
+        assert_eq!(strip_doc_ext("NOTES.mD"), "NOTES");
+        // Every extension `discover_docs` admits, in every case, must strip —
+        // and nothing else may.
+        for stem in ["md", "mdx", "rst"] {
+            for ext in [stem.to_ascii_lowercase(), stem.to_ascii_uppercase()] {
+                assert_eq!(strip_doc_ext(&format!("d/x.{ext}")), "d/x", "ext {ext}");
+            }
+        }
+        // The pins from `strip_doc_ext_covers_mdx_in_both_cases` restated as
+        // the boundary of the case-insensitive match: an inner extension and a
+        // non-doc extension stay put whatever their case.
+        assert_eq!(strip_doc_ext("docs/a.MDX.Md"), "docs/a.MDX");
+        assert_eq!(strip_doc_ext("notes.TXT"), "notes.TXT");
+        assert_eq!(strip_doc_ext("Makefile"), "Makefile");
+    }
+
+    fn doc_entry(rel_path: &str) -> DocEntry {
+        let format = match doc_format_for_ext(rel_path.rsplit('.').next().unwrap()) {
+            Some(f) => f,
+            None => panic!("not a doc path: {rel_path}"),
+        };
+        DocEntry {
+            concept_id: strip_doc_ext(rel_path).to_string(),
+            file_path: rel_path.to_string(),
+            title: rel_path.to_string(),
+            body: String::new(),
+            props: Vec::new(),
+            format,
+        }
+    }
+
+    #[test]
+    fn collision_verdict_is_independent_of_discovery_order() {
+        // Every arrival order of one colliding trio plus two innocents. The
+        // walk's order is a filesystem property, so the policy is only a policy
+        // if all of these agree.
+        let paths = [
+            "docs/guide.md",
+            "docs/guide.mdx",
+            "docs/guide.rst",
+            "docs/intro.rst",
+            "Notes.MD",
+        ];
+        for rotation in 0..paths.len() {
+            let mut docs: Vec<DocEntry> = paths
+                .iter()
+                .cycle()
+                .skip(rotation)
+                .take(paths.len())
+                .map(|p| doc_entry(p))
+                .collect();
+            let collisions = sort_and_drop_collisions(&mut docs);
+
+            // The survivors, in ingest order: the `.mdx` won `docs/guide`, and
+            // the two non-colliding docs are untouched.
+            let kept: Vec<&str> = docs.iter().map(|d| d.file_path.as_str()).collect();
+            assert_eq!(
+                kept,
+                ["Notes.MD", "docs/guide.mdx", "docs/intro.rst"],
+                "rotation {rotation}"
+            );
+            assert!(
+                docs.windows(2).all(|w| w[0].concept_id < w[1].concept_id),
+                "survivors stay sorted by concept_id and unique"
+            );
+
+            // One warning per DROPPED file — not per collider, and not
+            // repeated: the two losers of a three-way collision report once
+            // each, naming both files.
+            let reported: Vec<(&str, &str)> = collisions
+                .iter()
+                .map(|c| (c.kept.as_str(), c.dropped.as_str()))
+                .collect();
+            assert_eq!(
+                reported,
+                [
+                    ("docs/guide.mdx", "docs/guide.md"),
+                    ("docs/guide.mdx", "docs/guide.rst"),
+                ],
+                "rotation {rotation}"
+            );
+            assert!(collisions.iter().all(|c| c.concept_id == "docs/guide"));
+        }
+    }
+
+    /// Read one property off the single `:Doc` node with id `id`.
+    fn doc_field(g: &DirGraph, id: &str, field: &str) -> Option<Value> {
+        g.graph
+            .node_indices()
+            .filter_map(|n| g.get_node(n))
+            .find(|nd| {
+                nd.node_type_str(&g.interner) == "Doc"
+                    && matches!(&*nd.id(), Value::String(s) if s == id)
+            })
+            .and_then(|nd| nd.get_field_ref(field).map(|v| v.into_owned()))
+    }
+
+    #[test]
+    fn same_stem_different_ext_collapses_to_the_highest_precedence_file() {
+        // Three spellings of one concept id in one directory. They collide by
+        // construction — `strip_doc_ext` maps all three to `docs/guide` — and
+        // the policy is explicit precedence (`.mdx` > `.md` > `.rst`) with the
+        // losers dropped, not last-write-wins on a duplicate DataFrame row.
+        let tmp = tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn parse_wkt() {}\npub fn shadowedOnly() {}",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docs/guide.mdx"),
+            "---\ntitle: Guide (mdx wins)\n---\n\nCall `parse_wkt`.\n",
+        )
+        .unwrap();
+        // `shadowedOnly` is mentioned ONLY by the two losers, so an edge to it
+        // is proof a dropped doc still contributed to the graph.
+        fs::write(
+            root.join("docs/guide.md"),
+            "# Guide (md loses)\n\nCall `shadowedOnly`.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docs/guide.rst"),
+            "Guide (rst loses)\n=================\n\nSee :func:`shadowedOnly`.\n",
+        )
+        .unwrap();
+        // A link written against the DROPPED `.md` spelling: link targets are
+        // compared extension-stripped, so it must still reach the survivor.
+        fs::write(
+            root.join("README.md"),
+            "# Project\nStart at the [guide](docs/guide.md).\n",
+        )
+        .unwrap();
+
+        let g = run_with_options(&root, false, true, None, None, true).unwrap();
+
+        // Exactly one `:Doc` for the colliding stem.
+        assert_eq!(
+            doc_ids(&g),
+            BTreeSet::from(["README".to_string(), "docs/guide".to_string()])
+        );
+        // …and it is the `.mdx` file's node, properties and all.
+        assert_eq!(
+            doc_field(&g, "docs/guide", "title"),
+            Some(Value::String("Guide (mdx wins)".into()))
+        );
+        assert_eq!(
+            doc_field(&g, "docs/guide", "file_path"),
+            Some(Value::String("docs/guide.mdx".into()))
+        );
+        // The dropped files contribute nothing at all — no mention of theirs
+        // survives.
+        let names = mention_target_names(&g, "MENTIONS");
+        assert!(names.contains("parse_wkt"), "the survivor still mentions");
+        assert!(
+            !names.contains("shadowedOnly"),
+            "a dropped collider must contribute no MENTIONS, got {names:?}"
+        );
+        // Doc→doc resolution still works across the collision.
+        assert_eq!(count_conn(&g, "DOCUMENTS"), 1, "README -> docs/guide");
     }
 
     #[test]
