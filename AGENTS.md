@@ -43,6 +43,11 @@ it names the authority literally in every copy, per doctrine `R7`/`R14`.)
     echoed exit status, a "done" line, or the absence of visible errors is not
     the result — open the log the run wrote. This is how a failed background
     build reports green.
+  - **Recipes never invoke bare `python` and never verify via
+    `>/dev/null 2>&1; echo $?`.** A shell alias makes bare `python` report the
+    alias's failure as the checker's verdict, and the null-masked `$?` hides
+    *which* command failed — use the venv interpreter and read the target
+    command's own status.
 - **Testing cadence: targeted per landing, the full battery once at the end.**
   A landing's gate is the suites chosen to catch what *that* change could break
   — its touched surface plus that surface's direct consumers. This does not
@@ -188,7 +193,9 @@ the gitignored **`dev-docs/`**. The canonical layout + lifecycle is
 elsewhere. `dev-docs/` and `inbox/` are both gitignored local working state.
 **Committed files never cite a `dev-docs/` path** — the folder is gitignored and
 unbacked, so a citation from source, tests, docs, CI or scripts outlives the file
-it names and silently becomes a dangling instruction. Durable rationale goes in
+it names and silently becomes a dangling instruction. A gate's *failure message*
+is held to the same bar: every pointer in it must resolve for every reader — a
+failure text citing a gitignored path fails exactly when it is read. Durable rationale goes in
 the commit message, in a self-contained comment at the code it constrains, or in
 a committed doc (`PARITY.md`, `BENCHMARKS.md`, here).
 

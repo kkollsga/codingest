@@ -180,7 +180,7 @@ For every phase, in order:
    thing it guards, confirm it goes red, then restore. Reading a gate cannot tell
    you whether it works: every vacuous gate found on 2026-07-28 looked correct,
    and the only thing that separated the live ones from the dead ones was
-   mutation. Three ways a gate is born dead:
+   mutation. Four ways a gate is born dead:
    - **Substring subsumption.** `assert "cmd" in block` also matches
      `cmd --self-test`, so deleting the real invocation stays green. Compare
      whole stripped lines, not `in`.
@@ -189,6 +189,10 @@ For every phase, in order:
    - **`exit` inside `$( )`.** A shell guard that exits inside command
      substitution kills only the subshell; the caller reads the empty output as 0
      and passes. Return a sentinel the caller checks.
+   - **A guard skippable by the condition it guards.** A check placed inside a
+     module or step that is skipped wholesale when its subject is absent checks
+     nothing — a binary-resolution test inside the module that skips when no
+     binary exists can never fail. Put the guard where the skip cannot reach it.
    **Verify the probe, not just the result.** A mutation that silently edited the
    wrong text makes a working gate look broken, and an unchanged file makes a dead
    gate look alive. Confirm the subject actually changed before believing either
