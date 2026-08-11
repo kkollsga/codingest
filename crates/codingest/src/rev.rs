@@ -518,7 +518,7 @@ fn record_rev_manifest(
     let mut fingerprints: HashMap<(String, String), Vec<i64>> = HashMap::new();
 
     for idx in rev_graph.graph.node_indices() {
-        let Some(node) = rev_graph.graph.node_weight(idx) else {
+        let Some(node) = rev_graph.node_view(idx) else {
             continue;
         };
         let node_type = node.node_type_str(&rev_graph.interner).to_string();
@@ -620,18 +620,22 @@ fn stamp_node_revs(graph: &mut DirGraph, node_revs: &NodeRevManifest) -> Result<
 
     // Phase 2: apply (mutable). In-tree this was a direct
     // `node.properties.insert(pre_interned_key, ..)`, but `NodeData::properties`
-    // is `pub(crate)` in kglite and unreachable from this standalone crate. The
-    // public `NodeData::set_property` performs the identical insertion:
-    // `InternedKey::from_str` is a pure hash, so it derives the same keys as
-    // `revs_key`/`fp_key` (already registered in `graph.interner` above), and the
-    // scratch interner merely absorbs `set_property`'s key-registration side
-    // effect (discarded) — the resulting node state is byte-identical.
-    let mut scratch = kglite::api::StringInterner::new();
+    // is `pub(crate)` in kglite and unreachable from this standalone crate.
+    // `DirGraph::set_node_property` (kglite >= 0.15.11) performs the identical
+    // insertion: it interns the key into `graph.interner` — where `revs_key` /
+    // `fp_key` are already registered above, and `InternedKey` is a pure hash of
+    // the name, so it resolves to those same keys — then routes the write by
+    // storage variant, which is the path `NodeData::set_property` itself called
+    // before 0.15.9 deleted it. Resulting node state is byte-identical; the
+    // frozen parity goldens are what holds that claim.
+    //
+    // Do NOT swap this for `GraphWrite::set_node_property` with an
+    // `InternedKey::from_str` key: that spelling never registers the name, so
+    // the property reads back in-session but vanishes from enumeration and is
+    // silently dropped by `save_graph`.
     for (idx, revs_val, fp_val) in updates {
-        if let Some(node) = graph.get_node_mut(idx) {
-            node.set_property("revs", revs_val, &mut scratch);
-            node.set_property("rev_fp", fp_val, &mut scratch);
-        }
+        graph.set_node_property(idx, "revs", revs_val);
+        graph.set_node_property(idx, "rev_fp", fp_val);
     }
     Ok(())
 }
@@ -831,7 +835,7 @@ mod tests {
     /// True when the node's title (where code_tree stores the simple `name`;
     /// `qualified_name` is the node `id`, so neither is a plain property) equals
     /// `name`.
-    fn title_is(node: &kglite::api::NodeData, name: &str) -> bool {
+    fn title_is(node: &kglite::api::NodeView<'_>, name: &str) -> bool {
         node.title().as_ref() == &Value::String(name.to_string())
     }
 
@@ -840,13 +844,13 @@ mod tests {
     fn list_prop(graph: &DirGraph, node_type: &str, name: &str, prop: &str) -> Vec<String> {
         let mut found: Vec<Vec<String>> = Vec::new();
         for idx in graph.graph.node_indices() {
-            let Some(node) = graph.graph.node_weight(idx) else {
+            let Some(node) = graph.node_view(idx) else {
                 continue;
             };
             if node.node_type_str(&graph.interner) != node_type {
                 continue;
             }
-            if !title_is(node, name) {
+            if !title_is(&node, name) {
                 continue;
             }
             let list = match node.get_property_value(prop) {
@@ -875,11 +879,10 @@ mod tests {
             let Some((s, t)) = graph.graph.edge_endpoints(eidx) else {
                 continue;
             };
-            let (Some(sn), Some(tn)) = (graph.graph.node_weight(s), graph.graph.node_weight(t))
-            else {
+            let (Some(sn), Some(tn)) = (graph.node_view(s), graph.node_view(t)) else {
                 continue;
             };
-            if title_is(sn, caller) && title_is(tn, callee) {
+            if title_is(&sn, caller) && title_is(&tn, callee) {
                 return match edge.properties.iter().find(|(k, _)| *k == revs_key) {
                     Some((_, Value::List(items))) => items
                         .iter()
@@ -912,7 +915,7 @@ mod tests {
         let fp = match graph
             .graph
             .node_indices()
-            .filter_map(|i| graph.graph.node_weight(i))
+            .filter_map(|i| graph.node_view(i))
             .find(|n| n.node_type_str(&graph.interner) == "Function" && title_is(n, "foo"))
             .and_then(|n| n.get_property_value("rev_fp"))
         {
@@ -930,7 +933,7 @@ mod tests {
         let sig = graph
             .graph
             .node_indices()
-            .filter_map(|i| graph.graph.node_weight(i))
+            .filter_map(|i| graph.node_view(i))
             .find(|n| n.node_type_str(&graph.interner) == "Function" && title_is(n, "foo"))
             .and_then(|n| n.get_property_value("signature"))
             .and_then(|v| v.as_string())
@@ -1039,7 +1042,7 @@ mod tests {
             let mut out: Vec<(String, String)> = graph
                 .graph
                 .node_indices()
-                .filter_map(|index| graph.graph.node_weight(index))
+                .filter_map(|index| graph.node_view(index))
                 .map(|node| {
                     (
                         node.node_type_str(&graph.interner).to_string(),
@@ -1111,7 +1114,7 @@ mod tests {
             for node in graph
                 .graph
                 .node_indices()
-                .filter_map(|index| graph.graph.node_weight(index))
+                .filter_map(|index| graph.node_view(index))
             {
                 if node.node_type_str(&graph.interner) != "Element" {
                     continue;
@@ -1178,7 +1181,7 @@ mod tests {
         let mut nodes: Vec<(String, String)> = graph
             .graph
             .node_indices()
-            .filter_map(|i| graph.graph.node_weight(i))
+            .filter_map(|i| graph.node_view(i))
             .map(|n| {
                 (
                     n.node_type_str(&graph.interner).to_string(),
@@ -1211,7 +1214,7 @@ mod tests {
     /// existing node without minting a new one.
     fn assert_all_nodes_have_revs(graph: &DirGraph, expect: &[String]) {
         for idx in graph.graph.node_indices() {
-            let Some(node) = graph.graph.node_weight(idx) else {
+            let Some(node) = graph.node_view(idx) else {
                 continue;
             };
             let revs: Vec<String> = match node.get_property_value("revs") {

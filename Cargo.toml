@@ -17,8 +17,34 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.15.8
-# floor adds recorded storage modes, `--storage` conversion on an existing
+# kglite engine + MCP server — imported as crates.io libraries. The 0.15.11
+# floor brings three things, only one of which changes what we run:
+#   * 0.15.10's `add_connections` resolves its edge-property columns once per
+#     call instead of once per cell — upstream measured 66.7ms -> 30.4ms
+#     (-54%) on 60k edges x 10 property columns. That is exactly the shape of
+#     our `control_edges_df` handoff, so it lands on the `calls` stage.
+#   * The `NodeData` -> `NodeView` API break from 0.15.9, made migratable in
+#     0.15.11. 0.15.9 deleted `NodeData`'s inherent property accessors and
+#     0.15.11 finally shipped reachable replacements: reads go through
+#     `DirGraph::node_view(idx)`, and by-index writes through the inherent
+#     `DirGraph::set_node_property(idx, "key", value)`. We migrated 21 read
+#     sites and the 2 `revs`/`rev_fp` write sites in `rev.rs` for this floor.
+#     It is a compile-time break only — the storage path behind both spellings
+#     is the one the removed methods already called, so it is NOT
+#     output-affecting.
+#     NOTE: do NOT reach the write side via `GraphWrite::set_node_property`
+#     with an `InternedKey::from_str` key. That key is never registered: it
+#     reads back within the session but breaks property enumeration and is
+#     silently dropped by `save_graph`. The inherent string-keyed calls
+#     register the name; use them.
+#   * 0.15.11's `kglite::api::embeddings` ingest API and `text_score()` query-
+#     vector arguments — codingest consumes neither.
+# Per the 0.15.9-0.15.11 changelogs, graph output, property encoding and
+# `.kgl` serialization are unchanged; the frozen parity goldens are what
+# proves it, and they must not move across this bump.
+#
+# Floor history. The 0.15.8
+# floor added recorded storage modes, `--storage` conversion on an existing
 # graph, and boot-validated Cypher recipe catalogs — none of which codingest
 # consumes — plus two changes that do reach us: workspace-graph producers now
 # receive deduplicated changed-path hints alongside full-build requests (our
@@ -45,8 +71,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.15.8", default-features = false }
-kglite-mcp-server = { version = "0.15.8", default-features = false }
+kglite = { version = "0.15.11", default-features = false }
+kglite-mcp-server = { version = "0.15.11", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

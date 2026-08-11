@@ -1177,7 +1177,7 @@ mod tests {
         let readme_kind = g
             .graph
             .node_indices()
-            .filter_map(|n| g.get_node(n))
+            .filter_map(|n| g.node_view(n))
             .find(|nd| {
                 nd.node_type_str(&g.interner) == "Doc"
                     && matches!(&*nd.id(), Value::String(s) if s == "README")
@@ -1424,7 +1424,7 @@ mod tests {
     fn doc_field(g: &DirGraph, id: &str, field: &str) -> Option<Value> {
         g.graph
             .node_indices()
-            .filter_map(|n| g.get_node(n))
+            .filter_map(|n| g.node_view(n))
             .find(|nd| {
                 nd.node_type_str(&g.interner) == "Doc"
                     && matches!(&*nd.id(), Value::String(s) if s == id)
@@ -1532,7 +1532,7 @@ mod tests {
         let node = g
             .graph
             .node_indices()
-            .filter_map(|n| g.get_node(n))
+            .filter_map(|n| g.node_view(n))
             .find(|nd| {
                 nd.node_type_str(&g.interner) == "Doc"
                     && matches!(&*nd.id(), Value::String(s) if s == "docs/guide")

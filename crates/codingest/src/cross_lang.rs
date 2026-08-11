@@ -116,7 +116,7 @@ pub fn ingest_http_cross_edges(
     // 1. Routes: (route_id, route_segments).
     let mut routes: Vec<(String, Vec<String>)> = Vec::new();
     for idx in graph.graph.node_indices() {
-        let Some(node) = graph.get_node(idx) else {
+        let Some(node) = graph.node_view(idx) else {
             continue;
         };
         if node.node_type_str(&graph.interner) != "Route" {
@@ -136,7 +136,7 @@ pub fn ingest_http_cross_edges(
     // 2. Functions grouped by file: file_path -> [(qname, start_line, end_line)].
     let mut by_file: HashMap<String, Vec<(String, usize, usize)>> = HashMap::new();
     for idx in graph.graph.node_indices() {
-        let Some(node) = graph.get_node(idx) else {
+        let Some(node) = graph.node_view(idx) else {
             continue;
         };
         if node.node_type_str(&graph.interner) != "Function" {
@@ -292,7 +292,7 @@ mod tests {
         let mut route_files: Vec<String> = g
             .graph
             .node_indices()
-            .filter_map(|i| g.graph.node_weight(i))
+            .filter_map(|i| g.node_view(i))
             .filter(|n| n.node_type_str(&g.interner) == "Route")
             .filter_map(|n| match n.get_property("file_path").as_deref() {
                 Some(Value::String(p)) => Some(p.clone()),

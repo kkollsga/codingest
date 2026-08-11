@@ -972,7 +972,7 @@ mod tests {
         let space = graph
             .graph
             .node_indices()
-            .filter_map(|index| graph.graph.node_weight(index))
+            .filter_map(|index| graph.node_view(index))
             .find(|node| node.id().as_ref() == &Value::String("Comanche055.SPACE".into()))
             .unwrap();
         assert_eq!(

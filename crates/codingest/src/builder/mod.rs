@@ -1218,7 +1218,7 @@ mod tests {
         let languages = graph
             .graph
             .node_indices()
-            .filter_map(|index| graph.graph.node_weight(index))
+            .filter_map(|index| graph.node_view(index))
             .find(|node| node.node_type_str(&graph.interner) == "Project")
             .and_then(|node| node.get_property("languages"))
             .expect("Project.languages");
@@ -1463,7 +1463,7 @@ public:
                 let mut rows: Vec<(String, String)> = graph
                     .graph
                     .node_indices()
-                    .filter_map(|index| graph.graph.node_weight(index))
+                    .filter_map(|index| graph.node_view(index))
                     .filter(|node| {
                         node.node_type_str(&graph.interner) == "Function"
                             && node.title().as_ref() == &Value::String("pick".into())
@@ -1552,7 +1552,7 @@ public:
         let mut found: Vec<(String, BTreeMap<String, Value>)> = graph
             .graph
             .node_indices()
-            .filter_map(|index| graph.graph.node_weight(index))
+            .filter_map(|index| graph.node_view(index))
             .filter(|node| node.node_type_str(&graph.interner) == "Project")
             .map(|node| {
                 let id = match &*node.id() {

@@ -208,7 +208,7 @@ fn node_props(g: &DirGraph) -> Vec<(String, String, BTreeMap<String, String>)> {
     let mut v: Vec<(String, String, BTreeMap<String, String>)> = g
         .graph
         .node_indices()
-        .filter_map(|i| g.graph.node_weight(i))
+        .filter_map(|i| g.node_view(i))
         .map(|n| {
             let props: BTreeMap<String, String> = n
                 .properties_cloned(&g.interner)
@@ -668,7 +668,7 @@ fn assert_has_stamped_revs(g: &DirGraph) {
     let has_revs = g
         .graph
         .node_indices()
-        .filter_map(|i| g.graph.node_weight(i))
+        .filter_map(|i| g.node_view(i))
         .any(|n| matches!(n.get_property_value("revs"), Some(Value::List(_))));
     assert!(
         has_revs,

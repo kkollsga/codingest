@@ -171,6 +171,39 @@ ship time — it's the only place the version bumps.
   each drop is reported with a warning naming both files.
 
 ### Changed
+- **The KGLite floor moves to 0.15.11 across Cargo and Python** (from 0.15.8),
+  and codingest migrated to the node-property API that 0.15.9 broke. **No
+  functional change is visible to users** — graph output, property encoding and
+  `.kgl` serialization are unchanged, and the frozen parity goldens did not move
+  across the bump, which is the evidence for that claim. What changes is the
+  requirement: **codingest no longer builds against kglite < 0.15.11**.
+  - kglite 0.15.9 deleted `NodeData`'s inherent property accessors
+    (`get_property`, `get_property_value`, `get_field_ref`, `set_property`,
+    `properties_cloned`, …) in a *patch* release, and its replacement write path
+    was not publicly reachable, so codingest was stuck at 0.15.8 and could take
+    no further 0.15.x engine release. 0.15.11 made the migration reachable.
+    Reads now go through `DirGraph::node_view(idx)`, whose signatures match the
+    removed ones one-for-one; the two `revs` / `rev_fp` by-index writes in
+    `rev.rs` go through the inherent, string-keyed
+    `DirGraph::set_node_property(idx, key, value)`, which registers the key in
+    the graph's own interner. The `GraphWrite` + `InternedKey::from_str` route
+    is deliberately **not** used: it never registers the key, so the property
+    reads back in-session but vanishes from enumeration and is silently dropped
+    by `save_graph`. `NodeData`'s `id()` / `title()` / `node_type_str()` survived
+    upstream and are still read directly.
+  - What the floor move buys: 0.15.10 resolves `add_connections`' edge-property
+    columns **once per call instead of once per cell**. Measured here on the
+    frozen `agc-scaled` corpus (`corpus_sha256 cc4c17e6…4453`, 8000 files,
+    release build, same-session A/B against a 0.15.8 build of the same source):
+    the engine-side `add_connections` cost for the AGC control edges (16,000
+    JUMPS_TO + 8,000 BRANCHES_TO) drops **0.0173 s → 0.0097 s (−44%)**, taking
+    the whole `calls` stage from 0.068 s to 0.058 s (−15%). Builder-side
+    `control_edges_df` is unchanged at 0.0012 s, so the builder/engine split
+    moves from 6.6%/93.4% to 11.2%/88.8% — `add_connections` still dominates.
+    Total build time moves only −1.2%, within noise, because the whole
+    control-edge cost is ~8 ms of a ~430 ms build.
+  - 0.15.11's other headline work — the `kglite::api::embeddings` ingest API and
+    `text_score()` accepting a query vector — is not consumed by codingest.
 - **Declared external dependency floors now match what the code needs**, and a
   nightly `direct-minimal-versions` CI job keeps them honest. `anyhow = "1"`,
   `clap = "4"`, `regex = "1"` and `tempfile = "3"` each claimed the code built

@@ -33,7 +33,7 @@ graph tools). codingest adds the builder back on top and returns
 
 The **read-side** code-entity helpers stayed in kglite, at
 `kglite::api::code_entities` — codingest depends on them (and currently
-requires kglite ≥ 0.15.8).
+requires kglite ≥ 0.15.11).
 
 ## Python import changes
 
@@ -58,7 +58,7 @@ from kglite import KnowledgeGraph, load   # unchanged
 
 ```toml
 [dependencies]
-kglite = "0.15.8"      # the engine (graph build, persistence, code_entities)
+kglite = "0.15.11"     # the engine (graph build, persistence, code_entities)
 codingest = "0.1"      # the builder
 ```
 

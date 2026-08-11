@@ -10,7 +10,7 @@ keywords = ["knowledge-graph", "code-analysis", "tree-sitter", "cypher", "kglite
 categories = ["development-tools", "parser-implementations"]
 
 # Requires the kglite 0.15 engine API (`kglite::api::code_entities`); the
-# workspace pins the current 0.15 patch floor (0.15.8).
+# workspace pins the current 0.15 patch floor (0.15.11).
 
 [lib]
 name = "codingest"

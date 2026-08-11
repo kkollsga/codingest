@@ -11,16 +11,19 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.15.8
+## Requires kglite ≥ 0.15.11
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The 0.15.8 floor includes the workspace lifecycle and
+in-tree builder. The 0.15.11 floor includes the workspace lifecycle and
 containment controls introduced through 0.15.5, the corrected mixed-selection
 vector search, community modularity scoring, sampled-centrality validation
 and persisted HNSW validation of 0.15.6, the mcp-methods 0.4.4 / rmcp 3.1.1
-server integration of 0.15.7, and 0.15.8's changed-path hints for workspace
-graph producers. Cargo and pip
+server integration of 0.15.7, 0.15.8's changed-path hints for workspace
+graph producers, 0.15.10's per-call edge-property column resolution in
+`add_connections`, and the `NodeView` / `DirGraph::set_node_property` API that
+0.15.11 made reachable — codingest is built against that API and will not
+compile on an earlier engine. Cargo and pip
 install this compatible engine automatically; codingest adds the builder and
 returns ordinary `kglite.KnowledgeGraph` objects.
 
