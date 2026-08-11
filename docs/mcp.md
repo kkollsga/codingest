@@ -60,7 +60,7 @@ Then configure the client command as `codingest-mcp --mcp-config
 **`root` is the starting root, not a boundary.** It sets where the server
 points initially; on its own it does **not** constrain where `set_root_dir` can
 subsequently point. Containment is `sandbox_root`, it is **opt-in**, and it
-was introduced in kglite 0.15.5: with it, a swap outside the boundary is
+is supported by every engine codingest admits: with it, a swap outside the boundary is
 refused and the active root does not move; without it, a root swap is
 unbounded.
 
@@ -70,7 +70,7 @@ unbounded.
 > read window was *derived from* the active root, so the source tools bounded
 > reads relative to wherever the server already pointed, and never constrained
 > where it could be pointed. The boundary those revisions described is real only
-> from kglite 0.15.5 onward, and only when you set `sandbox_root`. If you relied
+> on every engine codingest admits, and only when you set `sandbox_root`. If you relied
 > on that sentence to confine an agent to a directory tree, **set `sandbox_root`
 > explicitly** — the guarantee you were promised was not being enforced.
 

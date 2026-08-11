@@ -225,7 +225,8 @@ This release changed **no builder code**, and the record reflects that rather
 than re-deriving it. The only `crates/codingest/src` changes since `v0.1.3` are
 the `codingest_bench` harness (which defines the measured corpus, not the graph)
 and a comment in `rev.rs`; all seven `tests/goldens/*.sha256` files are
-byte-identical to `v0.1.3`. The engine floor moved from kglite 0.15.0 to 0.15.3,
+byte-identical to `v0.1.3`. The engine floor moved up two kglite patch releases
+(the exact pair is in that release's notes),
 which is the one change that *could* have shifted output — it did not, and that
 was confirmed twice independently: the goldens did not move, and a matched
 before/after bench capture (varying only the linked engine, against two
