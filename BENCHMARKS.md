@@ -88,6 +88,38 @@ Consequences for this document:
   with its machine state recorded. The next release capture starts the new
   comparable series.
 
+## Release 0.2.0 — 2026-08-11 (backlog program: parse dispatch, fingerprint, AGC frames; kglite 0.15.11)
+
+Perf-sensitive paths changed this release (single-dispatch parse worklist,
+fingerprint rescope, control-edge frames, kglite engine 0.15.8→0.15.11), so
+the record refreshes. All numbers release-build; full rows in the local bench
+ledger (`phase9-*`, `phase11-lpt-parsewall`, `phase12-*`, `clitimer-*`).
+
+- **Parse wall (single-dispatch worklist, P9):** KGLite corpus
+  `0882abb4c2b1` 0.320→0.281 s (**−12.0%**), mistral.rs `8c44399b4047`
+  0.294→0.239 s (**−18.9%**); whole build −9.6% / −13.3%. CONTROL query
+  medians moved ±4.3% with no systematic direction. Byte-identical graphs
+  (15/15 goldens + 5-run determinism soak).
+- **Freshness fingerprint (ingestibility scoping + parallel hash, P10):**
+  KGLite checkout, warm min-of-5 **0.299 s → 0.013 s**; first-run
+  1.440 → 0.105 s; hashed set 231.7 MB / 3250 files → 16.8 MB / 1150 files.
+  Paid on every `build`/`status`/`query` freshness check.
+- **LPT dispatch: measured and rejected** (pre-registered ≥10 ms bar):
+  −2/+4 ms head-of-line saving; naive size-sorted dispatch REGRESSES +245 ms
+  under rayon's contiguous chunking. Decision recorded; do not re-attempt
+  without new evidence.
+- **AGC control-edge insertion (kglite 0.15.10 index+intern, our ask):**
+  engine-side `add_connections` 0.0173→0.0097 s (**−44%**) on the frozen
+  synthetic AGC corpus `cc4c17e6…4453`; builder share now 11.2%. Reported
+  upstream; their second-look trigger fires (engine still 88.8%).
+- **Drift anchor (first live release run):** PASS in both docs modes vs the
+  0.1.7 baseline on settled, twice-agreeing captures (control +7.69%). Two
+  earlier load-contaminated captures were caught by the gate itself — one
+  VOID, one FAIL that did not survive settling — and the run surfaced+fixed a
+  comparator defect (control voided on sub-floor jitter, contradicting its
+  documented floor contract; red-first tested). 0.2.0 baselines captured
+  post-release per `tests/benchmarks/README.md`.
+
 ## Release 0.1.6 — 2026-08-01 (closure-scoped definitions + `.mdx` docs)
 
 **Not comparable to the 0.1.5 section below.** That capture used opencode at

@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-11
+
 ### Added
 - **A release perf anchor — committed per-release bench baselines (docs-on and
   docs-off) and `scripts/bench_anchor.sh`, which refuses cross-corpus

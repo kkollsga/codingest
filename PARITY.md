@@ -7,6 +7,20 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.0 — 2026-08-11: 15 corpora, all green
+
+Released state: **15 corpora** (12 pre-program + `docs_ext_collide`,
+`py_routes_dup`, `html_js_lang_group`, each captured additively), all green in
+the release-mode gate (`golden_parity` three builds per corpus +
+`rev_self_consistency` + `kgl_bytes_are_stable_across_builds`). Golden
+movements this release, each regenerated in its own phase commit with a
+recorded reason: `py_basic` + `py_nested_defs` (Python absolute imports now
+resolve), `cross_ts_py` (route identity → registration model), the 13-of-14
+bulk regen below (manifestless anchoring; `rust_xfile` frozen as the
+additivity proof). The kglite 0.15.8 → 0.15.11 engine move and the
+NodeView/`set_node_property` API migration left every digest byte-identical —
+verified, not assumed.
+
 ## Inferred `:Project` for manifestless repositories — 2026-08-10 (branch `feat/backlog-2026-08`)
 
 **The first bulk golden regeneration since the extraction: 13 of 14 digests

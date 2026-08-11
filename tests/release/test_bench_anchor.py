@@ -107,6 +107,7 @@ def make_baseline(
     digest: str = DIGEST,
     include_docs: bool = True,
     control: bool = True,
+    control_ms: float = 1.000,
     floors: dict | None = None,
 ) -> dict:
     return {
@@ -128,8 +129,8 @@ def make_baseline(
                         "name": CONTROL,
                         **({"control": True} if control else {}),
                         "rows": 1,
-                        "median_ms": 1.000,
-                        "min_ms": 1.000,
+                        "median_ms": control_ms,
+                        "min_ms": control_ms,
                     },
                     {"name": "slow_one", "rows": 10, "median_ms": 2.000, "min_ms": 2.000},
                 ],
@@ -609,3 +610,25 @@ def test_committed_baseline_compares_clean_against_itself(path):
     for entry in doc["corpora"]:
         v = ba.compare(ba.normalize_bench(_capture_from(entry)), doc)
         assert v.status == "PASS", f"{path.name} {entry['mode']}: {v.lines}"
+
+
+def test_subfloor_control_move_does_not_void():
+    """A control living below the absolute floor cannot void a capture.
+
+    Row trips require BOTH >30% AND >= floors.query_abs_ms raw (module
+    docstring: "must not void a capture") — the control is held to the same
+    standard. 0.002 -> 0.003 ms is +50% relative but +0.001 ms raw, an order
+    of magnitude under the 0.010 ms floor: sub-resolution jitter, not an
+    instrument move. Live instance: the 0.2.0 release's docs-on capture
+    void-looped on a 0.0019 -> 0.0024 ms/row control (+30.77%) that two
+    agreeing re-measures reproduced exactly.
+    """
+    v = verdict(make_current(control_ms=0.003), make_baseline(control_ms=0.002))
+    assert v.status != "VOID"
+    assert any("sub-floor" in line or "under the" in line for line in v.lines)
+
+
+def test_control_move_above_floor_still_voids():
+    """The floor must not defang the control: a real move still voids."""
+    v = verdict(make_current(control_ms=1.500), make_baseline(control_ms=1.000))
+    assert v.status == "VOID"

@@ -416,19 +416,32 @@ def compare(
             f"with a control that resolves above the measurement floor."
         )
         return Verdict("VOID", EXIT_VOID, lines, [])
+    ctl_abs_ms = float(cc["median_ms"]) - float(cb["median_ms"])
     if abs(ctl_delta) > control_pct:
+        if abs(ctl_abs_ms) >= query_floor_ms:
+            lines.append(
+                f"VOID: CONTROL {ctl!r} moved {ctl_delta:+.2f}% per row "
+                f"({cb_pr:.4f} -> {cc_pr:.4f} ms/row, {ctl_abs_ms:+.3f} ms raw), "
+                f"past the +/-{control_pct:.0f}% void threshold."
+            )
+            lines.append(
+                "  The instrument moved, not necessarily the code. RE-MEASURE on a "
+                "settled machine. Do NOT bisect and do NOT read the other rows — "
+                "this capture reports none, on purpose."
+            )
+            return Verdict("VOID", EXIT_VOID, lines, [])
+        # Same standard as a trip row (module docstring: a sub-floor movement
+        # "must not void a capture"): below floors.query_abs_ms the ratio is
+        # sub-resolution jitter, not evidence the machine changed speed.
         lines.append(
-            f"VOID: CONTROL {ctl!r} moved {ctl_delta:+.2f}% per row "
-            f"({cb_pr:.4f} -> {cc_pr:.4f} ms/row), past the +/-{control_pct:.0f}% "
-            f"void threshold."
+            f"CONTROL {ctl}: {ctl_delta:+.2f}% per row but only "
+            f"{ctl_abs_ms:+.3f} ms raw — under the {query_floor_ms} ms floor, "
+            f"sub-floor jitter; instrument treated as steady"
         )
+    else:
         lines.append(
-            "  The instrument moved, not necessarily the code. RE-MEASURE on a "
-            "settled machine. Do NOT bisect and do NOT read the other rows — "
-            "this capture reports none, on purpose."
+            f"CONTROL {ctl}: {ctl_delta:+.2f}% per row — instrument steady"
         )
-        return Verdict("VOID", EXIT_VOID, lines, [])
-    lines.append(f"CONTROL {ctl}: {ctl_delta:+.2f}% per row — instrument steady")
 
     # ---- (d) per-row drift, build time, node/edge counts ----------------
     rows: list[dict[str, Any]] = []
