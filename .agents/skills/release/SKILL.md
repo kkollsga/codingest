@@ -71,6 +71,14 @@ named blocker.
      to **number**. Strictness belongs at the irreversible act (step 9), not at
      this routine one — and spending it here while step 9 self-authorized was
      exactly backwards.
+   - **Escalation is one-way: it comes from the user, never from the agent**
+     (doctrine 0.1.4). The agent never *suggests*, *recommends*, or *announces*
+     a minor/major bump — not in a readiness report, not as a "0.X.0 unless you
+     object" default. An agent-announced number the user did not repeat back in
+     their own typed words is **void**: invoking `/release` past it adopts the
+     patch default, not the announcement — silence over an agent-stated default
+     is not user input. Cost of learning this: 0.2.0 shipped 2026-08-11 off
+     exactly that shape, and crates.io versions are permanent.
    - **The version lives in SIX places, not one.** `[workspace.package] version`
      in the root `Cargo.toml` covers each crate's *own* `package.version` via
      `version.workspace = true`. It does **not** cover the internal dependency
