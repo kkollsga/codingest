@@ -48,7 +48,13 @@ their inbox via the **`notify`** skill's schema, named
 bug or an API affordance that must land **upstream in KGLite** — route it to
 KGLite's inbox (`../../KGLite/inbox/unread/`). KGLite source is read-only here,
 so a *note* is the correct channel, not a local patch. Only route if there's
-genuinely something for them to do — don't clutter their `unread/`.
+genuinely something for them to do — don't clutter their `unread/`. Batch the
+routing: all actionable items for one target from this triage session go in
+ONE note, not one per source message. Route a *reply* only if the sender
+requested one or your content changes their next action — a bare ack or "done
+on our side" belongs in the Status footer (step 5), never in their `unread/`.
+The notify skill's "Send discipline" section is the authority on the outbound
+bar.
 
 ## 5. Append Status footer, move to read/
 Append a one-line footer to the message before archiving:

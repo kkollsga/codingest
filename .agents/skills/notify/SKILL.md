@@ -78,6 +78,29 @@ project only if it carries an actionable task for *them*). For an upstream-parit
 ask to KGLite, cite the exact `code_tree` / `kglite::api` site and what codingest
 needs.
 
+## Send discipline — the receiving side is a person
+
+Every note lands as triage work in someone's `read-inbox` — in this estate,
+often the same person operating both ends. The bar is not "true and relevant";
+it is **"changes what the recipient does."** Four rules (doctrine 0.1.3):
+
+- **Batch per target, per session.** Non-urgent items accumulate and go as ONE
+  combined note when the thread or work session completes — never one note per
+  finding. An immediate single-purpose note is justified only by: a **blocker**
+  (work here cannot proceed), a **reply the target explicitly requested**, or a
+  **time-sensitive coordination fact**.
+- **No FYI-grade notes.** If the sender didn't ask for a reply and the content
+  doesn't change their next action, the acknowledgment belongs in *your* copy's
+  Status footer at archive time (read-inbox step 5), not in their `unread/`.
+  Read "genuinely useful to know" narrowly: a bare ack, a "done on our side",
+  or a progress report all fail it.
+- **Ping a stalled thread at most once, with new evidence.** A ping is
+  justified only when the silence blocks live work, and it must carry something
+  the original note didn't — a number, a repro, a commit. A bare "any update?"
+  is noise.
+- **Piggyback related items.** A new small item for a target with an open
+  thread rides the next legitimate note to them, not its own file.
+
 ## 4. Write + report
 Write the file to `<target>/inbox/unread/<filename>` and report the full path.
 Don't move or touch anything in our own inbox — this skill only *sends*.

@@ -259,14 +259,24 @@ not permission to begin it.
   rule, stated where the loop can actually stall.
 
 **Bugs that surface mid-plan — fix them as they surface, don't step over them**
-(AGENTS.md "no bugs left behind"):
-- **In scope** (same file/subsystem): reproduce + confirm root cause, then fix
-  as its **own bisectable phase** (`Phase Nb`) with its own test + commit
-  (+ CHANGELOG if user-visible). Don't fold a behaviour change into a mechanical
-  refactor commit.
-- **Out of scope** (different subsystem): don't silently leave it. Reproduce,
-  confirm, file it to `dev-docs/plans/` with a `todos.md` backlink (via
-  `add-todo`), and add a cheap regression/parity assertion if one fits.
+(AGENTS.md "no bugs left behind"; doctrine 0.1.2 — fixing is the default):
+- **Classify first.** A *bug* — wrong result, crash, data loss, broken
+  contract, measured regression, dead gate, contradicted claim — is **fixed,
+  never filed**. Only a *missing capability* (a route never built, an
+  optimization never attempted) may go to the backlog/parking lot.
+- **"Out of scope" changes the commit boundary, not the decision to fix**: an
+  in-scope bug folds into the phase's work as its **own bisectable phase**
+  (`Phase Nb`) with its own test + commit (+ CHANGELOG if user-visible); an
+  out-of-scope bug still gets fixed, just as a separately-scoped phase. Don't
+  fold a behaviour change into a mechanical refactor commit.
+- **Filing a bug is allowed only when fixing-now is genuinely blocked** (e.g.
+  it needs its own parity decision, a corpus that doesn't exist, or an
+  upstream change), and the report-out must then say **why** — "out of scope"
+  is a location, not a reason. Reproduce + confirm first, file via `add-todo`
+  with the blocking reason in the plan doc, and add a cheap regression/parity
+  assertion pinning the current behaviour if one fits.
+- **A suspected perf bug is measured in-plan** to confirm it before its fix
+  counts — never deferred unmeasured to a someday-backlog.
 - **A break that traces to the shared engine** (the fix belongs in
   `kglite::api` / Cypher / storage, not the builder): KGLite is read-only here —
   capture it and `notify` KGLite's inbox (type `bug`/`request`); don't patch
