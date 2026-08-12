@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,8 +17,11 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.15.11
-# floor brings three things, only one of which changes what we run:
+# kglite engine + MCP server — imported as crates.io libraries. The 0.15.13
+# floor adds 0.15.13's planner fix for joins filtered on a type's title/id field
+# (anchored traversals 5.7-327x faster here; see BENCHMARKS.md 0.2.1) on top of
+# the 0.15.11 floor, which brought three things, only one of which changed what
+# we run:
 #   * 0.15.10's `add_connections` resolves its edge-property columns once per
 #     call instead of once per cell — upstream measured 66.7ms -> 30.4ms
 #     (-54%) on 60k edges x 10 property columns. That is exactly the shape of

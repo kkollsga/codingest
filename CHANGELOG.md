@@ -10,6 +10,50 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-12
+
+### Fixed
+- **The Python-side kglite floor is back in lockstep with the Rust one.** 0.2.1
+  moved the Rust engine floor to kglite 0.15.13 but left every *other*
+  declaration of that floor at 0.15.11, so the published 0.2.1 wheel requires
+  `kglite>=0.15.11,<0.16` while the Rust engine compiled into it is 0.15.13.
+  The wheel's Rust kglite *writes* the `.kgl` bytes and the separately-installed
+  Python kglite *reads* them, which is exactly the skew
+  `test_kglite_cargo_and_python_floors_are_in_lockstep` exists to prevent — it
+  went red in CI on the 0.2.1 commit and the tag was pushed before that run
+  reported. In practice pip resolves the range to 0.15.13 anyway, so the
+  exposure is limited to an install that deliberately pins 0.15.11; it is
+  corrected here rather than left as a latent mismatch.
+
+  The floor turned out to be declared in **15 places across 8 files**, not the
+  one the test named: `pyproject.toml` (the requirement and the comment
+  asserting the lockstep rule), `.github/workflows/ci.yml` (the pinned
+  `kglite==`, which is what actually decides the engine CI exercises — the same
+  site that was left behind at 0.15.5 once before), the `pip install` line in
+  `codingest-py`'s import-failure message, the floor rationale in the root and
+  `codingest` manifests, and seven prose declarations across `README.md`,
+  `docs/index.md`, `docs/migrating-from-kglite-code-tree.md` and
+  `docs/python-api.md`. A further **7 mentions were deliberately left at
+  0.15.11**: they cite when an API first appeared (`rev.rs`'s
+  "`set_node_property` (kglite >= 0.15.11)", `docs/index.md`'s "0.15.11 made
+  reachable", the floor history in `Cargo.toml`) and remain true. A version
+  *declaration* must move; a version *citation* in a historical statement must
+  not.
+
+### Known issues
+- **`test_committed_baseline_is_well_formed[0.2.0]` is red and is not silenced
+  here.** The committed 0.2.0 perf baseline records a control query at 0.012 ms
+  against its own 0.013 ms noise floor, so the control cannot resolve what it is
+  meant to police. This predates 0.2.1 — it was already red on the 0.2.0 release
+  commit — and it shares a root cause with the VOID recorded in `[0.2.1]`: the
+  control is `anchored_callers`, which kglite 0.15.13 then made 5.7x faster
+  still. Both available quick fixes (raise the recorded floor, or drop the
+  baseline) are the re-baseline-to-silence move this project forbids at the
+  parity gate and forbids here for the same reason. Choosing a control the
+  engine cannot reach is a design change and is tracked as such; no new baseline
+  was captured for 0.2.1 or 0.2.2, because a capture taken now would commit an
+  artifact its own well-formedness test rejects.
+
 ## [0.2.1] - 2026-08-12
 
 ### Changed
