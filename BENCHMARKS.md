@@ -88,6 +88,67 @@ Consequences for this document:
   with its machine state recorded. The next release capture starts the new
   comparable series.
 
+## Release 0.2.1 — 2026-08-12 (kglite 0.15.13 engine move: anchored traversals 5.7–327× faster)
+
+**No codingest source changed this release** — `git diff v0.2.0..HEAD -- crates/codingest/src`
+is empty. The movement is entirely kglite 0.15.11 → 0.15.13, whose planner fix
+(a join filtered on a type's title/id field was estimated as excluding nothing,
+present since 0.11.9) reaches us through the canonical `title` / `id` aliases
+code_tree nodes carry.
+
+**Corpus:** KGLite tracked-only, `corpus_sha256`
+`69b2872a4c6ab70628f6fadf30e0f2db87f8f2030804df33059e9228056e9559` — 1,251
+files / 20,756,050 bytes → 8,691 nodes / 43,868 edges. Release build
+(`lto=thin`, `codegen-units=1`), `codingest_bench`, WARMUP 3 / ITERS 20,
+per-query median.
+
+**Design: A/B/A.** The first A→B read showed every non-anchored cell moving
++2…+13 % one way, which reads as machine drift rather than eight independent
+regressions. 0.15.11 was therefore rebuilt and re-measured *after* the 0.15.13
+arm; it landed within **−3.8…+4.5 %** of its own earlier run. The machine was
+steady, so both the wins and the regressions below are real. `Δ` compares
+0.15.13 against the **adjacent** late-0.15.11 run.
+
+| Query | 0.15.11 (late) | 0.15.13 | Δ |
+|---|---:|---:|---:|
+| `two_hop_into_hot` (2-hop traversal) | 4.389 | 0.013 | **−99.7 %** |
+| `reverse_callees_of_hub` (reverse 1-hop) | 0.983 | 0.021 | **−97.9 %** |
+| `anchored_callers` (anchored 1-hop, in-hub) | 1.161 | 0.204 | **−82.4 %** |
+| `calls_edge_scan` (1-hop edge scan) | 1.042 | 1.038 | −0.4 % |
+| `contains_new` (CONTAINS filter) | 0.096 | 0.098 | +2.1 % |
+| `varlen_callers_1_3` (`[:CALLS*1..3]`) | 2.934 | 3.023 | +3.0 % |
+| `method_calls_mix` (3-type join) | 0.101 | 0.104 | +3.5 % |
+| `eq_filter_pub` (equality property filter) | 0.160 | 0.178 | **+11.2 %** |
+| `defs_per_file` (grouped aggregation) | 0.083 | 0.094 | **+13.3 %** |
+| `top20_by_branch_count` (ORDER BY + LIMIT) | 2.503 | 2.881 | **+15.1 %** |
+
+Median ms. `count_functions` omitted — 0.000 ms on both arms, below timer
+resolution and a dead cell in this harness.
+
+**Validity.** Row counts identical on every query on both arms (259/259, 61/61,
+20/20, …) and the hot anchors resolved to the same two nodes — a shrinking
+result set is the obvious way to fake a 327×, and it is ruled out. min/median
+0.88–1.00, so no heavy tails and the medians sit on real floors. An independent
+corpus (codingest `crates/codingest/src`, digest `5ab22bc61c70…`, 1,238 nodes —
+never pooled with the above) agrees on direction: −65.1 %, −99.1 %, −92.6 % on
+the same three queries. Parity goldens unmoved.
+
+**The three regressions are real, not noise** — they sit outside the ±4.5 %
+control band and reproduce on both corpora. They land on cheap cells, so the net
+is decisively positive, but they are a genuine cost of the planner change.
+
+**The perf anchor returned VOID (4) in docs-off mode and was not overridden.**
+Its control query is `anchored_callers`, one of the three the bump improves, so
+it moved −71.43 % per row — identically across three consecutive re-measures.
+A deterministic move is not the instrument wandering: the control's premise,
+that nothing we change can touch it, is void once the engine floor moves under
+it. docs-on saw the same −69.23 % and returned PASS only because its raw delta
+fell 0.001 ms under the 0.01 ms jitter floor, so that PASS is luck rather than
+evidence. No baseline was regenerated to make either verdict go away; the perf
+question is answered by the controlled capture above instead. **A control query
+a dependency bump can improve is not a control** — the gate needs one the
+engine cannot reach.
+
 ## Release 0.2.0 — 2026-08-11 (backlog program: parse dispatch, fingerprint, AGC frames; kglite 0.15.11)
 
 Perf-sensitive paths changed this release (single-dispatch parse worklist,

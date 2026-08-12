@@ -10,6 +10,47 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-12
+
+### Changed
+- **Engine floor moves to kglite 0.15.13, and anchored traversals get between
+  5.7× and 327× faster.** kglite 0.15.13 fixes a planner estimate present since
+  0.11.9: a join filtered on a type's title/id field was scored as excluding
+  nothing, so the join anchored on the *other*, larger end of the pattern and
+  drove every one of its rows through the filter. code_tree nodes carry the
+  canonical `title` / `id` aliases, so every anchored query we serve was paying
+  it. Measured on the KGLite corpus (`corpus_sha256` `69b2872a4c6ab706…`,
+  8,691 nodes / 43,868 edges, release build, A/B/A controlled — 0.15.11
+  re-measured *after* the 0.15.13 arm landed within −3.8…+4.5 % of its own
+  earlier run, so the machine was steady): `two_hop_into_hot` 4.389 → 0.013 ms
+  (−99.7 %), `reverse_callees_of_hub` 0.983 → 0.021 ms (−97.9 %),
+  `anchored_callers` 1.161 → 0.204 ms (−82.4 %). These are the shapes behind
+  every "what calls X" and blast-radius question the MCP answers. Row counts
+  are identical on every query on both arms and the parity goldens are
+  unmoved, so this is a planning change, not a result change. Three cheap cells
+  regress and are not noise — they sit outside the ±4.5 % control band:
+  `top20_by_branch_count` +15.1 %, `defs_per_file` +13.3 %, `eq_filter_pub`
+  +11.2 %. 0.15.13 also fixes an indexed `MATCH` returning phantom or duplicate
+  rows after a Cypher `CREATE`/`SET` on an id/title-alias-indexed property, and
+  `.statistics()` on a type's own title or id field silently answering empty;
+  codingest exercises neither today. 0.15.12 is Bolt-only — its one breaking
+  change (a conflict is now `TransientError`, not `ClientError`) cannot reach
+  us, as codingest opens no Bolt session.
+
+### Notes
+- **The release perf anchor returned VOID (4) in docs-off mode, and it is
+  right to.** Its designated control query is `anchored_callers` — one of the
+  three the engine bump improves — so the control moved −71.43 % per row,
+  identically across three consecutive re-measures. A deterministic move is not
+  the instrument wandering; the control's premise (that no change of ours can
+  touch it) is simply void once the engine floor moves under it. docs-on saw
+  the same −69.23 % and returned PASS only because its raw delta fell 0.001 ms
+  under the 0.01 ms jitter floor, so that PASS carries no evidence either. The
+  perf question the anchor exists to answer is answered independently above, on
+  two corpora with different digests, with row-count equality and a re-measured
+  control. A control query a dependency bump can improve is not a control; the
+  gate needs one the engine cannot reach.
+
 ## [0.2.0] - 2026-08-11
 
 ### Added

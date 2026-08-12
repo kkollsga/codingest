@@ -7,6 +7,19 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.1 — 2026-08-12: 15 corpora, all green across the kglite 0.15.13 engine move
+
+Released state: unchanged corpus set (**15 corpora**), all green in the
+release-mode gate. The engine floor moved kglite 0.15.11 → 0.15.13, which
+includes a query-planner estimate fix that makes anchored traversals 5.7–327×
+faster (see `CHANGELOG.md` `[0.2.1]` and
+`BENCHMARKS.md`). **Every golden digest is byte-identical across that move —
+verified, not assumed:** `golden_parity` (three builds per corpus),
+`rev_self_consistency` and `kgl_bytes_are_stable_across_builds` all pass with no
+golden regenerated. Independent evidence that it is a planning change and not a
+result change: the bench harness returned identical row counts for all eleven
+queries on both engine versions, on both a 8,691-node and a 1,238-node corpus.
+
 ## Release 0.2.0 — 2026-08-11: 15 corpora, all green
 
 Released state: **15 corpora** (12 pre-program + `docs_ext_collide`,
