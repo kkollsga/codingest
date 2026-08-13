@@ -47,6 +47,13 @@ MODULE = REPO / "scripts" / "bench_anchor.py"
 BASELINE_DIR = REPO / "tests" / "benchmarks" / "baselines"
 BENCH_RS = REPO / "crates" / "codingest" / "src" / "bin" / "codingest_bench.rs"
 
+# How far a baseline's control query must sit above that capture's own noise
+# floor. Doctrine R11's control-quality corollary: a control at ~1x the floor
+# measures nothing, and the failure is invisible — the gate keeps returning
+# verdicts, they just stop meaning anything. See the note in
+# `test_committed_baseline_is_well_formed` for the capture that bought this.
+CONTROL_FLOOR_MARGIN = 2.0
+
 sys.path.insert(0, str(REPO / "scripts"))
 import bench_anchor as ba  # noqa: E402
 
@@ -517,8 +524,22 @@ def test_committed_baseline_is_well_formed(path):
         assert len(controls) == 1, f"{entry['mode']}: need exactly one control"
         # A control below the recorded resolution cannot detect anything —
         # this is why `count_functions` (0.000 ms) is rejected on every corpus.
+        #
+        # `>= floor` is not enough, and that is not theoretical: the original
+        # control (`anchored_callers`) was picked at 0.012-0.014 ms against a
+        # 0.010-0.013 ms floor. It passed this assertion for two releases at
+        # ~1.0x, then the 0.2.0 capture landed at 0.012 against a 0.013 floor
+        # and the gate went unfalsifiable in one mode while the other passed
+        # only because its raw delta fell 0.001 ms under the jitter floor.
+        # A control needs MARGIN over its own resolution, not a tie. Doctrine
+        # R11's control-quality corollary fixes that margin at 2x.
         floor = entry["floors"]["query_abs_ms"]
-        assert controls[0]["median_ms"] >= floor, "control is below its own noise floor"
+        margin = controls[0]["median_ms"] / floor if floor else 0.0
+        assert margin >= CONTROL_FLOOR_MARGIN, (
+            f"{entry['mode']}: control {controls[0]['name']!r} is "
+            f"{margin:.1f}x its own noise floor, below the {CONTROL_FLOOR_MARGIN}x "
+            "minimum — pick a slower query that the last dependency move left flat"
+        )
         assert controls[0]["rows"] >= 1
 
 

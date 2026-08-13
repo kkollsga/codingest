@@ -5,7 +5,7 @@
   "captured_at": "2026-08-10",
   "target": "tests/corpus",
   "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
-  "control_query": "anchored_callers (anchored 1-hop, in-hub)",
+  "control_query": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
   "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
   "build_gating": "recorded, not enforced: at 27 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here.",
   "stability_across_3_runs": {
@@ -89,8 +89,7 @@
           "name": "anchored_callers (anchored 1-hop, in-hub)",
           "rows": 7,
           "median_ms": 0.013,
-          "min_ms": 0.011,
-          "control": true
+          "min_ms": 0.011
         },
         {
           "name": "two_hop_into_hot (2-hop traversal + count)",
@@ -102,7 +101,8 @@
           "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
           "rows": 1,
           "median_ms": 0.026,
-          "min_ms": 0.024
+          "min_ms": 0.024,
+          "control": true
         },
         {
           "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
@@ -174,8 +174,7 @@
           "name": "anchored_callers (anchored 1-hop, in-hub)",
           "rows": 7,
           "median_ms": 0.014,
-          "min_ms": 0.013,
-          "control": true
+          "min_ms": 0.013
         },
         {
           "name": "two_hop_into_hot (2-hop traversal + count)",
@@ -187,7 +186,8 @@
           "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
           "rows": 1,
           "median_ms": 0.028,
-          "min_ms": 0.027
+          "min_ms": 0.027,
+          "control": true
         },
         {
           "name": "reverse_callees_of_hub (reverse-direction 1-hop)",

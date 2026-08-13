@@ -149,6 +149,26 @@ question is answered by the controlled capture above instead. **A control query
 a dependency bump can improve is not a control** — the gate needs one the
 engine cannot reach.
 
+**Resolved 2026-08-13.** The control is now `varlen_callers_1_3`: 28 µs against
+floors of 5–7.5 µs (**3.7–5.6× margin**, versus the old control's ~1.0×) and
+measured flat (+2.2 %, +3.0 %) across the 0.15.11 → 0.15.13 move that
+disqualified its predecessor. No measured value in `0.1.7.json` or `0.2.0.json`
+was altered — only which already-recorded query carries the `control` flag, so
+the historical captures stand as taken. `CONTROL_FLOOR_MARGIN = 2.0` in
+`tests/release/test_bench_anchor.py` now rejects a marginal control at commit
+time, which is what would have caught the original choice.
+
+Capturing the replacement surfaced a second defect in the procedure itself: the
+documented "three runs per mode" had no warmup, and the first run after a build
+reads high in *every cell at once* (top20 0.054 then 0.043–0.045; varlen 0.034
+then 0.028–0.029). Folding that one-time page-cache fill into the spread pushed
+the 2.5× floor from 0.005 to 0.0275 — high enough that **no query on this corpus
+could clear the 2× margin**, making a well-formed baseline unconstructible. The
+procedure now discards a warmup run per mode; `tests/benchmarks/README.md`
+carries the evidence. Both modes now return a real PASS, and
+`tests/benchmarks/baselines/0.2.2.json` is the first baseline captured under the
+corrected procedure.
+
 ## Release 0.2.0 — 2026-08-11 (backlog program: parse dispatch, fingerprint, AGC frames; kglite 0.15.11)
 
 Perf-sensitive paths changed this release (single-dispatch parse worklist,

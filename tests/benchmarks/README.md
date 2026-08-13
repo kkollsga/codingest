@@ -109,9 +109,43 @@ the fixture corpus it measures 0.007 ms and swings **14.3 %** run-to-run,
 under the 15 % void threshold by a hair — a control that would void captures
 at random. Hardcoding it would have shipped exactly that.
 
-The fixture corpus therefore designates **`anchored_callers`**: zero observed
-spread across three runs in both modes, 7 rows (so per-row normalization is
-actually exercised), and 13–14 µs against a 1 µs resolution.
+The fixture corpus therefore designates **`varlen_callers_1_3`**: 28 µs against
+floors of 5–7.5 µs, so **3.7–5.6× margin**, and measured flat (+2.2 %, +3.0 %)
+across the kglite 0.15.11 → 0.15.13 engine move — the exact change that
+disqualified its predecessor.
+
+**It used to designate `anchored_callers`, and that choice failed twice over.**
+It was picked for a good-looking reason — zero observed spread across three runs
+in both modes, 7 rows so per-row normalization is exercised — but at 13–14 µs
+against a 10–13 µs floor it only ever had ~1.0× margin. Two independent things
+then went wrong:
+
+- **The margin ran out.** The 0.2.0 capture landed at 12 µs against a 13 µs
+  floor, so `test_committed_baseline_is_well_formed` went red and stayed red
+  through the 0.2.0 release.
+- **The premise expired.** A control is chosen because the work under test
+  cannot touch it — but the thing that moved was a **dependency**, not our
+  source. kglite 0.15.13's planner fix made that exact query 5.7× faster
+  (4 µs on this corpus now), so docs-off VOIDed three times running while
+  docs-on returned PASS purely because its raw delta fell 0.001 ms under the
+  jitter floor. Two uninformative verdicts, neither legible as such.
+
+So a control now has two requirements, both enforced:
+
+1. **≥2× its own noise floor** — checked by
+   `test_committed_baseline_is_well_formed` against `CONTROL_FLOOR_MARGIN`.
+   `>= floor` is a tie, and a tie is one noise tick from measuring nothing.
+2. **Measured stable across the last dependency move.** Prefer the slowest
+   query that did not move; a query the upstream release notes describe as
+   improved is disqualified on sight. This one cannot be asserted in a unit
+   test — it is a judgement made when the control is chosen, and it is why the
+   control is named per baseline rather than hardcoded.
+
+**A control that moves *deterministically* is not the instrument wandering.**
+VOID says "re-measure on a settled machine", but a repeated re-measure that
+returns the same delta every time has refuted that reading: the control's
+premise is void and the gate needs a new control. Three identical VOIDs is a
+finding about the gate, not about the machine.
 
 The first and simplest query, `count_functions`, is **rejected on every
 corpus**: it measures 0.000 ms, below the recorded field's rounding
@@ -132,17 +166,38 @@ comparable to anything here):
 
 ```sh
 cargo build --release -p codingest --bin codingest_bench
-./target/release/codingest_bench tests/corpus --json           > /tmp/on.json
-./target/release/codingest_bench tests/corpus --no-docs --json > /tmp/off.json
+# discard a warmup run per mode — see below, this is not optional
+./target/release/codingest_bench tests/corpus --json           > /dev/null 2>&1
+for i in 1 2 3; do
+  ./target/release/codingest_bench tests/corpus --json         > /tmp/on$i.json  2>/dev/null
+done
+./target/release/codingest_bench tests/corpus --no-docs --json > /dev/null 2>&1
+for i in 1 2 3; do
+  ./target/release/codingest_bench tests/corpus --no-docs --json > /tmp/off$i.json 2>/dev/null
+done
 ```
 
-Run it **three times per mode** and confirm the runs agree within noise before
-recording. Store the **min** per query (a repeatable inner loop has a floor
-worth finding) and the **mean** for `build_secs` (a once-per-build cost does
-not), and record the worst spread under `stability_across_3_runs`. Set
-`floors.query_abs_ms` to roughly 2.5× the worst observed spread. A capture
-whose `corpus_sha256` is null is not tracked-only, is not reproducible, and is
-rejected by the tool.
+**Discard a warmup run per mode.** The first run after a build reads high in
+*every cell at once* — measured 2026-08-13 over six runs: `top20` 0.054 then
+0.043/0.044/0.043/0.045/0.044, `varlen` 0.034 then 0.028/0.028/0.029/0.029/0.029,
+with `defs_per_file`, `calls_edge_scan` and `reverse_callees_of_hub` all showing
+the same one-run step. A whole-capture step is a one-time cost (page-cache fill
+for the fixture tree), not per-cell noise, and folding it into the spread
+inflated the 2.5× floor from 0.005 to 0.0275 — high enough that **no query on
+this corpus could clear the 2× control margin**, i.e. the un-warmed procedure
+made a well-formed baseline unconstructible. This is the same shape as the
+"trust min" caveat: a once-per-event cost has no steady state to find a floor
+of.
+
+Run it **three times per mode after the warmup** and confirm the runs agree
+within noise before recording — if they do not agree, find out why rather than
+averaging over it. Store the **min** per query (a repeatable inner loop has a
+floor worth finding) and the **mean** for `build_secs` (a once-per-build cost
+does not), and record the worst spread under `stability_across_3_runs`. Set
+`floors.query_abs_ms` to roughly 2.5× the worst observed spread — then check the
+designated control still clears **2×** that floor; if it does not, the control
+is wrong, not the floor. A capture whose `corpus_sha256` is null is not
+tracked-only, is not reproducible, and is rejected by the tool.
 
 Note that `codingest_bench` writes warnings to stderr before the JSON, so
 redirect the two streams separately — `> out.json 2>/dev/null`, never `2>&1`,
