@@ -99,6 +99,18 @@ named blocker.
      `cargo metadata --format-version 1 >/dev/null` (it must exit 0), then
      `cargo metadata --no-deps --format-version 1 | grep -o '"version":"[^"]*"'
      | sort -u` only to eyeball that every member reports the new version.
+   - **A dependency floor is a SECOND version surface, not covered by the six
+     sites (doctrine R16).** If this release moves the kglite floor, the floor
+     is declared in many more places than the manifests: pyproject.toml's
+     requirement + its lockstep comment, ci.yml's pinned `kglite==` install,
+     the `pip install` string in codingest-py's import-failure error, README /
+     docs install snippets, and manifest comments. After moving it, run
+     `git grep -n "<old-floor>"` over the tree and classify every hit: a
+     *declaration* (states the requirement now) must move; a *citation*
+     (historical fact — when an API appeared, what a record was verified
+     against) must NOT move, ever — renumbering one falsifies the record.
+     Unclassified hits must be zero. 0.2.1 shipped a wheel requiring
+     `kglite>=0.15.11` around a 0.15.13 engine by checking only the six sites.
    - **kglite-floor prerequisite** (release.yml header): the minimum `kglite` /
      `kglite-mcp-server` version in the root `Cargo.toml` must already be live
      on crates.io (and the matching `kglite` Python package on PyPI) **before

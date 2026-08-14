@@ -138,6 +138,14 @@ every error produced a plausible, low-concern reading:
   load is *not* a precondition for a capture — the control is what carries the
   validity — but a number compared across sessions records the conditions it was
   taken under.
+- **A control needs ≥2× margin over its own noise floor, and immunity from what
+  it anchors** (doctrine R11 corollary, 0.1.6). A control at ~1× the floor
+  measures nothing; a control chosen because *our source* can't touch it
+  silently expires when a **dependency** moves instead — prefer the slowest
+  query measured flat across the last engine bump. And a control that moves
+  **deterministically** across repeated re-measures is not the instrument
+  wandering: "re-measure" cannot resolve it, the control's premise is void, and
+  that is a finding about the gate.
 - **Measure the headline quantity two independent ways.** Agreement is cheap
   evidence the harness is sound; disagreement caught a real instrument bug that a
   single route reported as a clean result.

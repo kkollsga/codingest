@@ -113,6 +113,16 @@ they decline, proceed without it.
   parity/unit test), the green gate.
 - No phase touches the workspace `version` / CHANGELOG promotion — shipping is
   the `release` skill's job.
+- **Challenge the plan once before presenting it** (doctrine 0.1.5). List the
+  factual claims it rests on (paths, call sites, API behaviour, cost
+  attributions) and verify each against the code, recording the evidence —
+  Phase 0's attributions are hypotheses until re-checked *as written into the
+  plan*, where a stale or misquoted one reads as settled. Then run one
+  pre-mortem: "this plan shipped and failed — why?", 2–3 concrete scenarios. A
+  scenario that names a real failure changes a phase, adds a test, or becomes a
+  stop rule; one that cannot is a design preference — argue it in the approval
+  loop, unlabelled. **No severity tiers** (R15 names them as the laundering
+  mechanism, and the same agents work review an hour later).
 - Present the plan, then **invite revision: ask the user to revise or approve,
   and loop on their feedback until they approve.**
 - **This is the stage where "I would have designed this differently" belongs —
