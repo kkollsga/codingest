@@ -1091,7 +1091,7 @@ mod tests {
         let nodes: Vec<(String, String)> = graph
             .graph
             .node_indices()
-            .filter_map(|index| graph.graph.node_weight(index))
+            .filter_map(|index| graph.node_view(index))
             .map(|node| {
                 (
                     node.node_type_str(&graph.interner).to_string(),
@@ -1133,7 +1133,7 @@ mod tests {
             let mut nodes: Vec<(String, String)> = graph
                 .graph
                 .node_indices()
-                .filter_map(|index| graph.graph.node_weight(index))
+                .filter_map(|index| graph.node_view(index))
                 .map(|node| {
                     (
                         node.node_type_str(&graph.interner).to_string(),
@@ -1520,8 +1520,8 @@ public:
                         return false;
                     };
                     let (Some(source), Some(target)) = (
-                        first.graph.node_weight(source),
-                        first.graph.node_weight(target),
+                        first.node_view(source),
+                        first.node_view(target),
                     ) else {
                         return false;
                     };

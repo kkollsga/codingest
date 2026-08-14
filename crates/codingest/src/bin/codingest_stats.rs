@@ -577,7 +577,7 @@ mod tests {
                     return None;
                 }
                 let (_, t) = graph.graph.edge_endpoints(e)?;
-                Some(short_name(&id_string(graph.graph.node_weight(t)?.id())).to_string())
+                Some(short_name(&id_string(graph.node_view(t)?.id())).to_string())
             })
             .collect();
         assert!(all.len() > 1, "need several distinct callees to prove sort");

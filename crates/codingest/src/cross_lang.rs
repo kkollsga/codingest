@@ -316,8 +316,8 @@ mod tests {
                     return None;
                 }
                 let (s, t) = g.graph.edge_endpoints(e)?;
-                let sn = g.graph.node_weight(s)?;
-                let tn = g.graph.node_weight(t)?;
+                let sn = g.node_view(s)?;
+                let tn = g.node_view(t)?;
                 assert!(
                     sn.id().to_string().contains("loadThing"),
                     "unexpected CALLS_SERVICE source {}",

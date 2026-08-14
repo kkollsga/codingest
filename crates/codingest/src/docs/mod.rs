@@ -1090,7 +1090,7 @@ mod tests {
                 continue;
             }
             if let Some((_, tgt)) = g.graph.edge_endpoints(e) {
-                if let Some(nd) = g.get_node(tgt) {
+                if let Some(nd) = g.node_view(tgt) {
                     if let Value::String(name) = &*nd.title() {
                         out.insert(name.clone());
                     }
@@ -1249,7 +1249,7 @@ mod tests {
                     .is_some_and(|w| w.connection_type_str(&g.interner) == "MENTIONS")
             })
             .filter_map(|e| g.graph.edge_endpoints(e).map(|(_, t)| t))
-            .filter_map(|t| g.get_node(t))
+            .filter_map(|t| g.node_view(t))
             .filter_map(|nd| match &*nd.id() {
                 Value::String(s) => Some(s.clone()),
                 _ => None,
@@ -1287,7 +1287,7 @@ mod tests {
         let title = g
             .graph
             .node_indices()
-            .filter_map(|n| g.get_node(n))
+            .filter_map(|n| g.node_view(n))
             .find(|nd| {
                 nd.node_type_str(&g.interner) == "Doc"
                     && matches!(&*nd.id(), Value::String(s) if s == "guide")
@@ -1300,7 +1300,7 @@ mod tests {
     fn doc_ids(g: &DirGraph) -> BTreeSet<String> {
         g.graph
             .node_indices()
-            .filter_map(|n| g.get_node(n))
+            .filter_map(|n| g.node_view(n))
             .filter(|nd| nd.node_type_str(&g.interner) == "Doc")
             .filter_map(|nd| match &*nd.id() {
                 Value::String(s) => Some(s.clone()),

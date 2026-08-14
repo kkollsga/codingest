@@ -844,8 +844,8 @@ mod tests {
             .filter_map(|edge_index| {
                 let edge = graph.graph.edge_weight(edge_index)?;
                 let (source, target) = graph.graph.edge_endpoints(edge_index)?;
-                let source = graph.graph.node_weight(source)?;
-                let target = graph.graph.node_weight(target)?;
+                let source = graph.node_view(source)?;
+                let target = graph.node_view(target)?;
                 let source_id = match source.id().as_ref() {
                     Value::String(value) => value.clone(),
                     _ => return None,
