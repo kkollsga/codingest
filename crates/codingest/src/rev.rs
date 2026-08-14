@@ -550,9 +550,14 @@ fn record_rev_manifest(
         let Some((s, t)) = rev_graph.graph.edge_endpoints(eidx) else {
             continue;
         };
+        // node_view, not node_weight: a raw NodeData's id() is the Null
+        // sentinel under 0.16.0's columnar layout, which collapsed every edge
+        // manifest key to (conn, "NULL", "NULL") — one bucket accumulating the
+        // union of all revs. The node half of this fn was migrated at 0.15.11;
+        // this edge half was missed.
         let (Some(sn), Some(tn)) = (
-            rev_graph.graph.node_weight(s),
-            rev_graph.graph.node_weight(t),
+            rev_graph.node_view(s),
+            rev_graph.node_view(t),
         ) else {
             continue;
         };
@@ -592,7 +597,10 @@ fn stamp_node_revs(graph: &mut DirGraph, node_revs: &NodeRevManifest) -> Result<
     let mut updates: Vec<(_, Value, Value)> = Vec::new();
     let mut types_touched: std::collections::HashSet<String> = std::collections::HashSet::new();
     for idx in graph.graph.node_indices() {
-        let Some(node) = graph.graph.node_weight(idx) else {
+        // node_view: the raw route's id() sentinel made every lookup key
+        // (type, "NULL"), so no node ever matched and no revs/rev_fp were
+        // stamped — silently, since an empty update set is a valid state.
+        let Some(node) = graph.node_view(idx) else {
             continue;
         };
         let node_type = node.node_type_str(&graph.interner).to_string();
@@ -664,7 +672,10 @@ fn stamp_edge_revs(graph: &mut DirGraph, edge_revs: &EdgeRevManifest) {
         let Some((s, t)) = graph.graph.edge_endpoints(eidx) else {
             continue;
         };
-        let (Some(sn), Some(tn)) = (graph.graph.node_weight(s), graph.graph.node_weight(t)) else {
+        // node_view: with sentinel ids this key MATCHED the equally-NULL
+        // manifest key, stamping the union of every edge's revs onto every
+        // edge — wrong provenance with no panic to flag it.
+        let (Some(sn), Some(tn)) = (graph.node_view(s), graph.node_view(t)) else {
             continue;
         };
         let conn = edge.connection_type_str(&graph.interner).to_string();
@@ -961,7 +972,7 @@ mod tests {
         let names: Vec<String> = merged
             .graph
             .node_indices()
-            .filter_map(|i| merged.graph.node_weight(i))
+            .filter_map(|i| merged.node_view(i))
             .filter(|n| n.node_type_str(&merged.interner) == "Function")
             .map(|n| n.title().into_owned())
             .filter_map(|v| v.as_string())
@@ -1201,8 +1212,11 @@ mod tests {
             .filter_map(|e| {
                 let edge = graph.graph.edge_weight(e)?;
                 let (s, t) = graph.graph.edge_endpoints(e)?;
-                let sn = graph.graph.node_weight(s)?;
-                let tn = graph.graph.node_weight(t)?;
+                // node_view — with the raw route both sides of the
+                // edge-identity assertions were "NULL", making the equality
+                // vacuously green. This is the witness for the manifold fix.
+                let sn = graph.node_view(s)?;
+                let tn = graph.node_view(t)?;
                 Some((
                     edge.connection_type_str(&graph.interner).to_string(),
                     sn.id().to_string(),
