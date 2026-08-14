@@ -1061,7 +1061,7 @@ mod tests {
         g.graph
             .node_indices()
             .filter(|&n| {
-                g.get_node(n)
+                g.node_view(n)
                     .is_some_and(|nd| nd.node_type_str(&g.interner) == label)
             })
             .count()

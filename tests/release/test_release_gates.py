@@ -2589,3 +2589,31 @@ def test_ci_workflow_runs_this_suite():
     """Without this step the whole extraction is untested and the gates are back
     to being unfailable."""
     assert_has_line(CI_WORKFLOW, "run: python -m pytest tests/release -v")
+
+
+def test_no_raw_node_reads_in_crates():
+    """kglite 0.16.0 deleted the row-shaped node layout: a raw `get_node` /
+    `node_weight` ref returns a NodeData whose id()/title() are the Null
+    sentinel, silently. Every read must go through `node_view`, which resolves
+    the column store. This guard holds the migration closed: the failure mode
+    it prevents produced two real production regressions (docs-pass MENTIONS
+    edges lost; rev provenance stamped as the union onto every edge) — both
+    silent, neither caught by type-checking, because the API's signature is
+    unchanged while its meaning changed.
+
+    Whole stripped lines are matched, and comment lines are dropped first —
+    substring-in-block matching is how a guard gets subsumed by the comment
+    explaining it.
+    """
+    offenders = []
+    for path in sorted((REPO / "crates").rglob("*.rs")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("//"):
+                continue
+            if ".node_weight(" in stripped or ".get_node(" in stripped:
+                offenders.append(f"{path.relative_to(REPO)}:{lineno}: {stripped}")
+    assert not offenders, (
+        "raw NodeData reads found — use `node_view` (kglite >= 0.16.0 returns "
+        "Null sentinels for id/title on the raw route):\n" + "\n".join(offenders)
+    )

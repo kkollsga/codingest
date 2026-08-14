@@ -132,7 +132,7 @@ fn edge_breakdown(graph: &DirGraph) -> BTreeMap<String, usize> {
         let Some((s, t)) = graph.graph.edge_endpoints(e) else {
             continue;
         };
-        let (Some(sn), Some(tn)) = (graph.graph.node_weight(s), graph.graph.node_weight(t)) else {
+        let (Some(sn), Some(tn)) = (graph.node_view(s), graph.node_view(t)) else {
             continue;
         };
         let key = edge_breakdown_key(

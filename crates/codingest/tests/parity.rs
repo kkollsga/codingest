@@ -170,7 +170,7 @@ fn canon(v: &Value) -> String {
 fn node_type_counts(g: &DirGraph) -> BTreeMap<String, usize> {
     let mut m = BTreeMap::new();
     for idx in g.graph.node_indices() {
-        if let Some(n) = g.graph.node_weight(idx) {
+        if let Some(n) = g.node_view(idx) {
             *m.entry(n.node_type_str(&g.interner).to_string())
                 .or_insert(0) += 1;
         }
@@ -510,6 +510,40 @@ fn capture_goldens() {
 //
 // This is the net the in-memory digest cannot provide: build the same corpus
 // repeatedly, save each build, compare the FILES.
+#[test]
+fn reloaded_graph_renders_identically() {
+    // The property kglite 0.16.0's headline change is about: a freshly built
+    // graph and a reloaded one are "the same shape". Assert it at CONTENT
+    // level — build → save `.kgl` (v6) → load → the canonical rendering of the
+    // reloaded graph is byte-identical to the in-memory one. `kgl_bytes`
+    // proves the WRITER is deterministic without ever loading a file; the cli
+    // query tests reload without digesting. Until this test, "a reload loses
+    // or rewrites values" was caught by nothing — and a reloaded graph is
+    // exactly where the columnar sentinel lived on 0.15.x.
+    let tmp = tempfile::Builder::new()
+        .prefix("codingest-reload-digest-")
+        .tempdir()
+        .unwrap();
+    let root = corpus_root();
+    // Densest edge-property corpus + a docs corpus (Doc nodes carry the widest
+    // string properties) + the sparse-column AGC shape.
+    for name in ["ts_monorepo", "docs_mdx", "agc_basic"] {
+        let dir = root.join(name);
+        assert!(dir.is_dir(), "missing corpus dir: {}", dir.display());
+        let dest = tmp.path().join(format!("{name}.kgl"));
+        let built =
+            codingest::builder::run_with_options(&dir, false, true, Some(&dest), None, true)
+                .unwrap_or_else(|e| panic!("[{name}] build failed: {e}"));
+        let reloaded = kglite::api::io::load_file(&dest.to_string_lossy())
+            .unwrap_or_else(|e| panic!("[{name}] reload failed: {e}"));
+        assert_eq!(
+            canonical_graph_string(&built),
+            canonical_graph_string(&reloaded),
+            "[{name}] reloaded graph renders differently from the one saved"
+        );
+    }
+}
+
 #[test]
 fn kgl_bytes_are_stable_across_builds() {
     let tmp = tempfile::Builder::new()

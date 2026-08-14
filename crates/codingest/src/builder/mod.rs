@@ -1539,7 +1539,7 @@ public:
         graph
             .graph
             .node_indices()
-            .filter_map(|index| graph.graph.node_weight(index))
+            .filter_map(|index| graph.node_view(index))
             .filter(|node| node.node_type_str(&graph.interner) == label)
             .count()
     }
