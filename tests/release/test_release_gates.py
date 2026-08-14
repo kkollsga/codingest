@@ -948,10 +948,22 @@ def test_kglite_cargo_and_python_floors_are_in_lockstep():
     assert len(set(rust_floors)) == 1, "kglite and kglite-mcp-server floors differ"
 
     pyproject = (REPO / "pyproject.toml").read_text()
-    match = re.search(r'"kglite>=([^,]+),<0\.16"', pyproject)
+    # The ceiling is DERIVED from the floor, never hardcoded: this regex used
+    # to read `<0\.16` literally, so the exact bump it exists to police (a
+    # minor engine move) failed the *regex* instead of the comparison — red
+    # for the wrong reason, and while red it checked nothing, including the
+    # ci.yml pin below (the 0.16.0 migration hit precisely this).
+    match = re.search(r'"kglite>=([^,]+),<([0-9.]+)"', pyproject)
     assert match, "did not find the bounded Python KGLite runtime requirement"
     assert match.group(1) == rust_floors[0], (
         "Python KGLite floor differs from the Rust engine/MCP floor"
+    )
+    floor_parts = rust_floors[0].split(".")
+    expected_ceiling = f"{floor_parts[0]}.{int(floor_parts[1]) + 1}"
+    assert match.group(2) == expected_ceiling, (
+        f"Python KGLite ceiling {match.group(2)!r} does not track the floor's "
+        f"next minor {expected_ceiling!r} — the Cargo caret range and the pip "
+        "range must exclude the same format-breaking minor"
     )
 
     ci_pins = re.findall(r"kglite==(\S+)", CI_WORKFLOW.read_text())
