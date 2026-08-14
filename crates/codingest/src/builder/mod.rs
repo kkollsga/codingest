@@ -774,12 +774,19 @@ fn finalize_and_load(
     }
 
     if let Some(dest) = save_to {
-        // Mirror the prep that `KnowledgeGraph.save()` does — without these
-        // steps, property column stores aren't materialised before
-        // serialisation and only `id`/`title`/`type` survive the round-trip.
+        // Everything a `.kgl` write needs done before its bytes exist: the
+        // metadata stamp plus the column-consolidation pass. Without it,
+        // property column stores aren't materialised before serialisation and
+        // only `id`/`title`/`type` survive the round-trip.
+        //
+        // This was open-coded as `prepare_save` + `Arc::make_mut(..)
+        // .enable_columnar()` until kglite 0.16.0, which made
+        // `enable_columnar` crate-internal and published this as the one
+        // route. Not merely a rename: `prepare_kgl_write` preserves the
+        // graph's copy-on-write lineage across the mutation, which the
+        // `Arc::make_mut` spelling did not.
         let mut graph = graph;
-        kglite::api::io::prepare_save(&mut graph);
-        std::sync::Arc::make_mut(&mut graph).enable_columnar();
+        kglite::api::io::prepare_kgl_write(&mut graph);
         let dest_str = dest.to_string_lossy();
         kglite::api::io::write_kgl(&graph, &dest_str).map_err(|e| e.to_string())?;
         return Ok((graph, call_stats));

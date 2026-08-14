@@ -17,11 +17,24 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.15.13
-# floor adds 0.15.13's planner fix for joins filtered on a type's title/id field
-# (anchored traversals 5.7-327x faster here; see BENCHMARKS.md 0.2.1) on top of
-# the 0.15.11 floor, which brought three things, only one of which changed what
-# we run:
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.0
+# floor is a HARD floor, not a preference: 0.16.0 writes `.kgl` container v6,
+# which kglite 0.15.14 and earlier refuse by version number. Because
+# `codingest.build()` writes the bytes with the Rust engine compiled in here and
+# reads them back through the separately-installed Python `kglite` wheel, the
+# two sides must be on the same side of that break — hence `>=0.16.0,<0.17` in
+# pyproject.toml, and hence a reader on 0.15.x is not "old but workable", it is
+# a hard failure with `FileFormatError`.
+# 0.16.0 also removed `DirGraph::enable_columnar` from the public API (every
+# graph is columnar from its first node now); the two sites that open-coded
+# `prepare_save` + `enable_columnar` before a `.kgl` write moved to the
+# purpose-built `kglite::api::io::prepare_kgl_write`, which also keeps the
+# graph's copy-on-write lineage across that mutation — our `Arc::make_mut`
+# spelling did not.
+# It sits on top of the 0.15.13 floor, which added a planner fix for joins
+# filtered on a type's title/id field (anchored traversals 5.7-327x faster here;
+# see BENCHMARKS.md 0.2.1), and the 0.15.11 floor before it, which brought three
+# things, only one of which changed what we run:
 #   * 0.15.10's `add_connections` resolves its edge-property columns once per
 #     call instead of once per cell — upstream measured 66.7ms -> 30.4ms
 #     (-54%) on 60k edges x 10 property columns. That is exactly the shape of
@@ -74,8 +87,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.15.13", default-features = false }
-kglite-mcp-server = { version = "0.15.13", default-features = false }
+kglite = { version = "0.16.0", default-features = false }
+kglite-mcp-server = { version = "0.16.0", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

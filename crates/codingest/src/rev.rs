@@ -500,8 +500,10 @@ pub fn build_code_tree_revs(
 /// stamped. Saving earlier produces a valid graph whose reloaded `describe()`
 /// silently loses the revision instructions held only by the returned Arc.
 fn save_built_graph(graph: &mut Arc<DirGraph>, dest: &Path) -> Result<(), String> {
-    kglite::api::io::prepare_save(graph);
-    Arc::make_mut(graph).enable_columnar();
+    // See `builder::mod`'s save path: one call replaces the `prepare_save` +
+    // `enable_columnar` pair kglite 0.16.0 retired, and keeps the graph's
+    // copy-on-write lineage that `Arc::make_mut` here did not.
+    kglite::api::io::prepare_kgl_write(graph);
     let dest_str = dest.to_string_lossy();
     kglite::api::io::write_kgl(graph, &dest_str).map_err(|e| e.to_string())
 }
@@ -568,8 +570,8 @@ fn record_rev_manifest(
 /// Stamp `revs` / `rev_fp` list props onto every merged node, in place. Each
 /// node's other properties are preserved (`PropertyStorage::insert` extends the
 /// node's own compact schema for the new key), and the two keys are registered
-/// in the graph's `type_schemas` + `node_type_metadata` so `enable_columnar()`
-/// materialises them as columns on `.kgl` save.
+/// in the graph's `type_schemas` + `node_type_metadata` so the consolidation
+/// pass inside `prepare_kgl_write` materialises them as columns on `.kgl` save.
 ///
 /// Direct insertion — not `add_nodes` — because `add_nodes` with a 3-column
 /// (`id`/`revs`/`rev_fp`) update DataFrame rebuilds each matched node from just
@@ -608,9 +610,12 @@ fn stamp_node_revs(graph: &mut DirGraph, node_revs: &NodeRevManifest) -> Result<
             let mut merged = (*existing).clone();
             merged.add_key(revs_key);
             merged.add_key(fp_key);
-            graph
-                .type_schemas
-                .insert(node_type.clone(), Arc::new(merged));
+            // kglite 0.16.0 wrapped the property catalogue in an `Arc` so a
+            // mutating statement stops copying it, so the map is no longer
+            // directly mutable. `make_mut` clones only when this graph is not
+            // the sole owner of the catalogue — the same copy-on-write the
+            // engine itself now relies on.
+            Arc::make_mut(&mut graph.type_schemas).insert(node_type.clone(), Arc::new(merged));
         }
         let mut meta = HashMap::new();
         meta.insert("revs".to_string(), "List".to_string());

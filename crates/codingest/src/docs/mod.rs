@@ -645,7 +645,7 @@ impl SymbolIndex {
         for &label in CONTAINER_LABELS {
             if let Some(nodes) = graph.type_indices.get(label) {
                 for idx in nodes.iter() {
-                    if let Some(nd) = graph.get_node(idx) {
+                    if let Some(nd) = graph.node_view(idx) {
                         if let Value::String(q) = &*nd.id() {
                             container_qnames.insert(q.clone());
                         }
@@ -659,7 +659,7 @@ impl SymbolIndex {
                 continue;
             };
             for idx in nodes.iter() {
-                let Some(nd) = graph.get_node(idx) else {
+                let Some(nd) = graph.node_view(idx) else {
                     continue;
                 };
                 let qname = match &*nd.id() {
@@ -917,7 +917,7 @@ fn file_basename_index(graph: &DirGraph) -> HashMap<String, Vec<String>> {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     if let Some(nodes) = graph.type_indices.get(FILE_LABEL) {
         for idx in nodes.iter() {
-            if let Some(nd) = graph.get_node(idx) {
+            if let Some(nd) = graph.node_view(idx) {
                 if let Value::String(path) = &*nd.id() {
                     let base = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
                     out.entry(base).or_default().push(path.clone());

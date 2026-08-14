@@ -10,6 +10,28 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.16.0, whose `.kgl` container v6 is a one-way
+  format break: files codingest now writes cannot be read by kglite 0.15.14 or
+  earlier** (an old reader refuses by version number with `FileFormatError`
+  rather than misreading). The Python requirement widens to
+  `kglite>=0.16.0,<0.17` — the wheel's compiled writer and the installed
+  reader must sit on the same side of the break. v6 also shrinks files
+  (upstream: 0.93×/0.79×/0.43× on their three size fixtures).
+- The save path uses 0.16.0's `kglite::api::io::prepare_kgl_write` — the one
+  published route for pre-write consolidation, replacing the open-coded
+  `prepare_save` + `enable_columnar` pair (retired upstream). Also preserves
+  copy-on-write lineage across the mutation, which the old spelling did not.
+
+### Fixed
+- **Docs-pass regression under kglite 0.16.0: MENTIONS/DOCUMENTS edges were
+  silently lost.** 0.16.0 made every graph columnar from its first node, so
+  the docs symbol index — which read node ids/titles via the raw
+  `DirGraph::get_node` route — got Null sentinels, matched nothing, and
+  dropped the edges with no error. Reads go through `node_view` now; every
+  frozen parity golden is byte-identical again (verified across all 15
+  corpora, goldens NOT regenerated).
+
 ## [0.2.2] - 2026-08-12
 
 ### Fixed

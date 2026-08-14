@@ -41,7 +41,10 @@ fn handoff_via_kgl(
         // Caller wants the `.kgl` persisted — write there and load it back.
         Some(path) => {
             kglite::api::io::save_graph(&mut graph, &path.to_string_lossy())
-                .map_err(PyRuntimeError::new_err)?;
+                // kglite 0.16.0 gave `save_graph` a typed `SaveError` in place
+                // of the old `String`; render it for Python rather than
+                // exposing a Rust type the wheel has no binding for.
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             load_via_kglite(py, &path)
         }
         // No target path — carry the bytes through a temp file that is deleted
@@ -53,7 +56,10 @@ fn handoff_via_kgl(
                 .tempfile()
                 .map_err(|e| PyRuntimeError::new_err(format!("temp file for handoff: {e}")))?;
             kglite::api::io::save_graph(&mut graph, &tmp.path().to_string_lossy())
-                .map_err(PyRuntimeError::new_err)?;
+                // kglite 0.16.0 gave `save_graph` a typed `SaveError` in place
+                // of the old `String`; render it for Python rather than
+                // exposing a Rust type the wheel has no binding for.
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             let obj = load_via_kglite(py, tmp.path())?;
             // `tmp` drops here, removing the file; the graph now lives entirely
             // inside the returned kglite object.
@@ -67,7 +73,7 @@ fn load_via_kglite(py: Python<'_>, path: &Path) -> PyResult<Py<PyAny>> {
     let kglite = py.import("kglite").map_err(|e| {
         PyRuntimeError::new_err(format!(
             "codingest.build() returns a kglite.KnowledgeGraph, but importing \
-             `kglite` failed ({e}). Install it: `pip install kglite>=0.15.13`."
+             `kglite` failed ({e}). Install it: `pip install kglite>=0.16.0`."
         ))
     })?;
     let graph = kglite.call_method1("load", (path.to_string_lossy().as_ref(),))?;

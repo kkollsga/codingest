@@ -192,10 +192,15 @@ fn edge_type_counts(g: &DirGraph) -> BTreeMap<String, usize> {
 
 /// Sorted (node_type, id) identity set.
 fn node_identities(g: &DirGraph) -> Vec<(String, String)> {
+    // Read through `node_view`, not the raw `node_weight`. kglite 0.16.0 made
+    // every graph columnar from its first node and deleted the row layout, so a
+    // node's own struct no longer carries its id — `NodeData::id()` yields the
+    // `Null` sentinel and this digest silently became a list of "NULL". The
+    // view resolves the sentinel through the type's column store.
     let mut v: Vec<(String, String)> = g
         .graph
         .node_indices()
-        .filter_map(|i| g.graph.node_weight(i))
+        .filter_map(|i| g.node_view(i))
         .map(|n| (n.node_type_str(&g.interner).to_string(), n.id().to_string()))
         .collect();
     v.sort();
@@ -236,8 +241,9 @@ fn edge_props(g: &DirGraph) -> Vec<(String, String, String, BTreeMap<String, Str
         .filter_map(|e| {
             let edge = g.graph.edge_weight(e)?;
             let (s, t) = g.graph.edge_endpoints(e)?;
-            let sn = g.graph.node_weight(s)?;
-            let tn = g.graph.node_weight(t)?;
+            // Endpoint ids come from the column store — see `node_identities`.
+            let sn = g.node_view(s)?;
+            let tn = g.node_view(t)?;
             let props: BTreeMap<String, String> = edge
                 .properties_cloned(&g.interner)
                 .iter()
