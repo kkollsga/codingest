@@ -555,10 +555,7 @@ fn record_rev_manifest(
         // manifest key to (conn, "NULL", "NULL") — one bucket accumulating the
         // union of all revs. The node half of this fn was migrated at 0.15.11;
         // this edge half was missed.
-        let (Some(sn), Some(tn)) = (
-            rev_graph.node_view(s),
-            rev_graph.node_view(t),
-        ) else {
+        let (Some(sn), Some(tn)) = (rev_graph.node_view(s), rev_graph.node_view(t)) else {
             continue;
         };
         let conn = edge.connection_type_str(&rev_graph.interner).to_string();

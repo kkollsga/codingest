@@ -1519,10 +1519,9 @@ public:
                     let Some((source, target)) = first.graph.edge_endpoints(edge_index) else {
                         return false;
                     };
-                    let (Some(source), Some(target)) = (
-                        first.node_view(source),
-                        first.node_view(target),
-                    ) else {
+                    let (Some(source), Some(target)) =
+                        (first.node_view(source), first.node_view(target))
+                    else {
                         return false;
                     };
                     source.title().as_ref() == &Value::String("run".into())
