@@ -2,7 +2,7 @@
 
 Give AI agents a live, queryable map of any codebase. codingest builds
 [KGLite](https://github.com/kkollsga/kglite) knowledge graphs with tree-sitter
-parsers for 15 languages, call / type / inheritance / route edges, an optional
+parsers for 17 languages, call / type / inheritance / route edges, an optional
 documentation pass, and multi-git-revision merged graphs.
 
 codingest owns code-graph construction: KGLite's former in-tree `code_tree`
@@ -15,7 +15,10 @@ reads, and the underlying MCP server.
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The 0.16.0 floor includes the workspace lifecycle and
+in-tree builder. The 0.16.1 floor adds the structured wire-JSON shapes and
+the documentation contract for raw `NodeData` reads on top of 0.16.0's
+columnar-from-first-node storage and `.kgl` v6; beneath those sit the
+workspace lifecycle and
 containment controls introduced through 0.15.5, the corrected mixed-selection
 vector search, community modularity scoring, sampled-centrality validation
 and persisted HNSW validation of 0.15.6, the mcp-methods 0.4.4 / rmcp 3.1.1

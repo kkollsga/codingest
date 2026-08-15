@@ -5,10 +5,10 @@
 //! "some_kind" | …)` arm whose kind a grammar bump renames simply stops
 //! firing: no error, no red test, an edge type quietly goes to zero.
 //! `Language::id_for_node_kind` returns 0 for a kind the grammar does not
-//! define, which makes the class checkable (adapted, architecture-only, from
-//! mcp-servers' 2026-08-15 repowise note — see
-//! dev-docs/designs/resolver-architecture.md for provenance and the AGPL
-//! boundary).
+//! define, which makes the class checkable. Provenance: the idea was adapted
+//! architecture-only from an external suggestion (mcp-servers, 2026-08-15)
+//! that cited an AGPL project; no code from that project was read or used —
+//! this implementation is written entirely against tree-sitter's public API.
 //!
 //! **Stated limit (part of the gate, not a caveat):** this guard checks that
 //! matched literals EXIST; it cannot see an ABSENT match arm. The

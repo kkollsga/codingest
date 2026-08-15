@@ -63,7 +63,7 @@ how an operator learns to ignore the gate.
   measurement supports — where a cell's own noise exceeds the threshold, the
   right verdict is *no verdict*.
 
-- **Build time is recorded but does not gate on this corpus.** At 27 KB the
+- **Build time is recorded but does not gate on this corpus.** At 33 KB the
   build (0.006–0.025 s) is dominated by one-time grammar initialization — a
   once-per-event cost with no steady state, which is also why `build_secs` is
   a mean rather than a min. The build-side signal is carried by node and edge
@@ -84,13 +84,15 @@ It is the wrong one, for a structural reason:
 - It is all Rust and contains **no docs at all**, so docs-on and docs-off
   produce byte-identical graphs there and the second capture proves nothing.
 
-`tests/corpus` — the frozen polyglot fixture tree, 60 files of TS/PY/RS/HTML
-plus `.md`/`.mdx` — has none of those problems. It is committed, needs no
+`tests/corpus` — the frozen polyglot fixture tree: 94 files spanning
+TS/JS, Python, Rust, C/C++, Dart, Julia, R, HTML/CSS and AGC plus
+`.md`/`.mdx` docs (grown from 60 files by the 2026-08-15 import and
+language corpora) — has none of those problems. It is committed, needs no
 network or sibling checkout, and its digest moves only when someone
 deliberately changes a fixture. Its two docs modes are genuinely independent
-measurements: **279 nodes / 394 edges** docs-on versus **272 / 374** docs-off.
+measurements: **404 nodes / 608 edges** docs-on versus **397 / 588** docs-off.
 
-Its one real cost is scale: at 27 KB the absolute timings are small, which the
+Its one real cost is scale: at 33 KB the absolute timings are still small, which the
 per-baseline floor accounts for. `test_committed_baseline_gate_is_not_vacuous`
 asserts the gate can still trip there — doubling the slowest query in either
 mode must FAIL — so "too small to gate" cannot creep in unnoticed.

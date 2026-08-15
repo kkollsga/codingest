@@ -11,6 +11,24 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- **One route registration mints one Route node.** `@app.post('/x')` used to
+  satisfy both the flask method-shortcut detector and the fastapi holder
+  detector, and framework is part of the Route id — so every such registration
+  produced twin Route nodes. Framework is now claimed by per-file import
+  evidence (files importing `fastapi` give it the `app` holder; `.route`
+  stays flask; no-evidence `@app.<verb>` defaults to flask). On a real FastAPI
+  repo every prior graph carried doubled routes.
+- **`codingest build` fails loudly on an empty result.** A build whose graph
+  contains no `File` and no `Doc` node now exits non-zero and writes NO
+  artifact — previously it exited 0 and wrote a `.kgl`, the silence that once
+  masked a walk-root bug. And a build rooted at a dot-prefixed directory
+  (`.hidden/`) no longer derives module ids with an empty leading segment.
+- **Java line comments and Go interface methods are extracted again.** Two
+  match arms had gone silently dead under grammar renames (`comment` →
+  `line_comment`/`block_comment` in tree-sitter-java 0.23; `method_spec` →
+  `method_elem` in tree-sitter-go 0.25) — found by the new grammar-drift
+  guard's first run. Java doc-comment gating and Go interface-method
+  extraction resume on every Java/Go repo.
 - **Two new languages: Julia and R** (seventeen total). Julia: functions in
   every definition form incl. multiple dispatch, structs with EXTENDS, nested
   modules, `include("path.jl")` file edges, `using`/`import` deliberately

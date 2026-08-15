@@ -162,6 +162,25 @@ back byte-identical. The gate was then mutation-tested: restoring the separator
 sniff in `infer_lang_group`'s place turned it red (the call re-resolved to the
 Python definition) and the registry lookup turned it back green.
 
+The four import-corpus digests (`rust_import`, `py_import`, `cpp_include`,
+`dart_import`) were captured additively on 2026-08-15 (post-016 program B0)
+with a provenance unique in this file: **they deliberately pin the then-BROKEN
+resolver output** — 2/4/8/3 IMPORTS edges against far more declared imports —
+so that each fix phase's regeneration diff is itself the record of exactly the
+edges the fix gained (B1 Rust, B2 Python, B3 C/C++ incl. a later
+angle-collision corpus pin, B4 Dart; regeneration reasons live in those
+commit messages per this file's convention). Verified strictly additive at
+capture: only the four new `.sha256` files appeared.
+
+The additive `r_basic` digest was captured on 2026-08-15 (post-016 E2) with R
+language support: no pre-existing corpus contained a `.R`/`.r` file. It pins
+both assignment shapes plus the `\(x)` lambda, conservative S4
+(setClass/setGeneric/setMethod), a `source()` chain A→B→C through a
+subdirectory (file-anchored path route), a lowercase `.r` file end-to-end, and
+a `library(tools)` bait against a local `tools.R` that must produce no edge of
+either kind. Verified strictly additive; mutation-tested (assignment-shape and
+path-route breaks each turned the golden red).
+
 The additive `julia_basic` digest was captured on 2026-08-15 with the corpus
 itself and with Julia language support (post-016 program phase E): no
 pre-existing corpus contained a `.jl` file, so the entire Julia parser had no

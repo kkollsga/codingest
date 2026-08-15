@@ -59,7 +59,7 @@ from kglite import KnowledgeGraph, load   # unchanged
 ```toml
 [dependencies]
 kglite = "0.16.1"     # the engine (graph build, persistence, code_entities)
-codingest = "0.1"      # the builder
+codingest = "0.2"      # the builder
 ```
 
 ```rust
@@ -86,7 +86,7 @@ pip install "kglite<0.14"
 
 ## Why the split
 
-The builder carries 14 tree-sitter grammars that the kglite engine should not
+The builder carries 16 tree-sitter grammars that the kglite engine should not
 have to; extracting it dropped kglite's wheel from ~40 MB to ~19 MB and lets the
 builder and engine release on their own cadence. Extraction fidelity is enforced
 by frozen golden digests captured while both copies were verified byte-identical

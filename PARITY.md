@@ -7,7 +7,20 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
-## Post-016 program — 2026-08-15: 19 corpora; six deliberate golden moves, each with its recorded reason
+## Post-016 program, closing reconciliation — 2026-08-15: 21 corpora
+
+Three golden events post-date the entry below and are recorded here per this
+file's completeness charter: **py_routes_dup** regenerated (multi-line route
+decorators — the dominant real FastAPI style — produced no Route node; a
+multi-line registration joined the corpus and Route went 5→6), and the two
+additive language captures **r_basic** and **julia_basic** (languages 16 and
+17; each verified strictly additive by `git status` after `capture_goldens`).
+This also corrects the entry below on two counts: the corpus set is now
+**21**, and "the 14 pre-program goldens never moved" held only until
+py_routes_dup's deliberate, reasoned move — every other pre-program golden
+remained untouched through program end.
+
+## Post-016 program — 2026-08-15: 19 corpora at entry time; six deliberate golden moves, each with its recorded reason
 
 Corpus set grew 15 → 19 (`rust_import`, `py_import`, `cpp_include`,
 `dart_import` — each added FIRST to pin the pre-fix broken output, so the fix

@@ -26,7 +26,7 @@ graph.cypher("MATCH (f:Function) RETURN f.name LIMIT 10")
 ```
 
 No language servers, databases, or repository-specific build steps are
-required. The native Rust builder bundles parsers for 15 languages and returns
+required. The native Rust builder bundles parsers for 17 languages and returns
 a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 
 ## Built for agents and code analysis
@@ -42,8 +42,8 @@ a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 - **Open-source intelligence:** clone and analyse a GitHub repository with one
   Python call, or let an agent manage cached public repositories through MCP.
 - **Polyglot by default:** one graph across Python, Rust, TypeScript,
-  JavaScript, Java, Go, C/C++, C#, Swift, PHP, HTML, CSS, Dart, and AGC
-  assembly.
+  JavaScript, Java, Go, C/C++, C#, Swift, PHP, HTML, CSS, Dart, Julia, R,
+  and AGC assembly.
 - **Revision-aware:** analyse a tag, branch, commit, or multiple revisions in
   one graph and query what changed.
 
@@ -176,7 +176,7 @@ Python prerequisites.
 
 ```toml
 [dependencies]
-codingest = "0.1"
+codingest = "0.2"
 kglite = "0.16.1"
 ```
 

@@ -123,6 +123,14 @@ anchor gate returned **REFUSE(3)** on the fixture corpus — correct and
 pre-declared: B0 added four import corpora, so the corpus digest moved; the
 release captures the new baseline per `tests/benchmarks/README.md`.
 
+**Superseded same-day as a comparison floor.** Three builder changes landed
+after this capture (Rust bare-path resolution, the multi-line route fix, the
+file-anchored allowlist), so these node/edge counts no longer reproduce at
+branch tip even on an identical corpus digest — a digest-matched comparison
+against this row would read deliberate builder change as drift. The numbers
+stand as the record of this capture; the release-time refresh is the floor
+the next comparison anchors to.
+
 ## Release 0.2.1 — 2026-08-12 (kglite 0.15.13 engine move: anchored traversals 5.7–327× faster)
 
 **No codingest source changed this release** — `git diff v0.2.0..HEAD -- crates/codingest/src`
