@@ -341,6 +341,92 @@ fn module_path_root_prefix(file: &FileInfo, sep: &str) -> Option<(String, Vec<St
 /// project is a descendant of — `import functools` would then resolve to the
 /// project root module. That is the manufactured-edge failure this whole
 /// resolver is built to avoid.
+/// Candidates for a **Rust** `use` path, rewritten into the same coordinate
+/// system `file_to_module_path` stamps on files — the conversion whose absence
+/// meant a `crate::` path could never match a derived `crate::src::…` module
+/// path (mcp-servers report 2026-08-14, finding 1).
+///
+/// The importing file's own `module_path` carries everything needed:
+/// * its **crate-root prefix** — the derived path up to and including the last
+///   `src` segment (`crate::src`, or `crate::crates::<pkg>::src` in a
+///   workspace layout). `crate::X` rewrites to `{prefix}::X`, which is exactly
+///   where the target file's derived path lives. Stored module ids stay
+///   untouched (globally unique across workspace members); only matching
+///   changes coordinates.
+/// * its **module chain** for `super::`/`self::`: `self` is the file's own
+///   module; each `super` pops one segment.
+///
+/// Emitted longest→shortest so the caller's `find_map` lands on the deepest
+/// real file: `crate::alpha::AlphaThing` tries `…::alpha::AlphaThing` (an
+/// item, usually no file) before `…::alpha` (the file). No candidate is ever
+/// shorter than the crate-root prefix itself — trimming past it would resolve
+/// every import to the crate-root module, which is precisely the old bug's
+/// output shape (every Rust IMPORTS edge landing on one Module "crate").
+fn rust_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
+    if file.language != "rust" {
+        return Vec::new();
+    }
+    let own: Vec<&str> = file.module_path.split("::").collect();
+    // Crate-root prefix: up to and including the LAST `src` segment; a layout
+    // with no `src` dir (rare, but `build.rs` or a flat corpus root) uses the
+    // leading `crate` alone.
+    let root_len = own
+        .iter()
+        .rposition(|seg| *seg == "src")
+        .map(|i| i + 1)
+        .unwrap_or(1);
+
+    let trimmed = raw.trim();
+    let rebased: Option<Vec<String>> = if let Some(rest) = trimmed.strip_prefix("crate::") {
+        Some(
+            own[..root_len]
+                .iter()
+                .map(|s| s.to_string())
+                .chain(rest.split("::").map(str::to_string))
+                .collect(),
+        )
+    } else if trimmed == "crate" {
+        Some(own[..root_len].iter().map(|s| s.to_string()).collect())
+    } else if trimmed.starts_with("super::") || trimmed == "super" || trimmed.starts_with("self::")
+    {
+        // `self` = the file's own module; each `super` pops one segment.
+        let mut base: Vec<String> = own.iter().map(|s| s.to_string()).collect();
+        let mut rest = trimmed;
+        while let Some(r) =
+            rest.strip_prefix("super::")
+                .or(if rest == "super" { Some("") } else { None })
+        {
+            if base.len() > root_len {
+                base.pop();
+            }
+            rest = r;
+        }
+        if let Some(r) = rest.strip_prefix("self::") {
+            rest = r;
+        }
+        if !rest.is_empty() {
+            base.extend(rest.split("::").map(str::to_string));
+        }
+        Some(base)
+    } else {
+        // A bare path (`alpha::Item` via 2015-style or re-export) — try it
+        // under the importer's crate root before the raw walk gives up.
+        None
+    };
+
+    let mut out = Vec::new();
+    if let Some(parts) = rebased {
+        // Longest→shortest, never shorter than the crate-root prefix.
+        for end in (root_len..=parts.len()).rev() {
+            let candidate = parts[..end].join("::");
+            if !out.contains(&candidate) {
+                out.push(candidate);
+            }
+        }
+    }
+    out
+}
+
 fn module_path_prefix_candidates(file: &FileInfo, raw: &str, sep: &str) -> Vec<String> {
     if file.language != "python" {
         return Vec::new();
@@ -428,6 +514,25 @@ pub fn build_import_edges(
                 });
                 continue;
             }
+            let rust_candidates = rust_import_candidates(f, use_path);
+            if !rust_candidates.is_empty() {
+                // Same no-fallthrough rule as the file-edge pass: the raw walk
+                // ends at the bare `crate` Module for every rewritable path.
+                // And the same self-guard: `use self::helper` names the file's
+                // own module — a dependency on yourself is not an edge.
+                if let Some(module) = rust_candidates
+                    .into_iter()
+                    .find(|candidate| known_modules.contains(candidate))
+                {
+                    if module != f.module_path {
+                        out.push(ImportEdge {
+                            file_path: f.path.clone(),
+                            module,
+                        });
+                    }
+                }
+                continue;
+            }
             let parts: Vec<&str> = use_path.split(sep).collect();
             let mut resolved = false;
             for end in (1..=parts.len()).rev() {
@@ -507,6 +612,23 @@ pub fn build_file_import_edges(
                     *counts
                         .entry((f.path.clone(), target_file.clone()))
                         .or_insert(0) += 1;
+                }
+                continue;
+            }
+            let rust_candidates = rust_import_candidates(f, use_path);
+            if !rust_candidates.is_empty() {
+                // A rewritten Rust path either resolves here or not at all —
+                // falling through to the raw prefix walk would re-land on the
+                // crate-root Module match the rewrite exists to prevent.
+                if let Some(target_file) = rust_candidates
+                    .into_iter()
+                    .find_map(|candidate| module_to_file.get(&candidate))
+                {
+                    if target_file != &f.path {
+                        *counts
+                            .entry((f.path.clone(), target_file.clone()))
+                            .or_insert(0) += 1;
+                    }
                 }
                 continue;
             }
@@ -1723,15 +1845,27 @@ mod determinism_tests {
 
     #[test]
     fn file_import_edges_are_key_sorted() {
+        // RE-FOUNDED 2026-08-15 (program B1). The old fixture hand-built
+        // `module_to_file` as `"crate::alpha" -> "src/alpha.rs"` — a shape the
+        // real builder never emitted (it derives `crate::src::alpha`), so the
+        // test was green while production resolved nothing (mcp-servers
+        // report, finding 8). Every module path below now comes from the REAL
+        // `RustParser::file_to_module_path`, so this fixture cannot drift from
+        // production again: if the derivation changes, this test sees it.
+        use crate::parsers::rust_lang::RustParser;
+        use std::path::Path;
+        let root = Path::new("");
+        let mp = |p: &str| RustParser::file_to_module_path(Path::new(p), root);
         let source = FileInfo {
             path: "src/lib.rs".into(),
             language: "rust".into(),
+            module_path: mp("src/lib.rs"),
             imports: vec!["crate::beta".into(), "crate::alpha".into()],
             ..FileInfo::default()
         };
         let module_to_file = HashMap::from([
-            ("crate::alpha".into(), "src/alpha.rs".into()),
-            ("crate::beta".into(), "src/beta.rs".into()),
+            (mp("src/alpha.rs"), "src/alpha.rs".to_string()),
+            (mp("src/beta.rs"), "src/beta.rs".to_string()),
         ]);
 
         let edges = build_file_import_edges(&[source], &module_to_file, &JsWorkspace::default());

@@ -594,7 +594,72 @@ impl RustParser {
         out
     }
 
-    fn file_to_module_path(filepath: &Path, src_root: &Path) -> String {
+    /// Recursively expand one node of a `use` tree into leaf import paths,
+    /// appended to `out` with `prefix` (the accumulated scope) prepended.
+    ///
+    /// Shapes handled: `scoped_identifier`/`identifier` (a plain path),
+    /// `use_as_clause` (recurse into its `path` field — the alias renames the
+    /// binding, not the origin), `use_wildcard` (`a::b::*` → `a::b`),
+    /// `scoped_use_list` (`a::{…}` → recurse each list element under `a`),
+    /// bare `use_list` (`use {a, b}`), and `self` inside a list
+    /// (`a::{self, b}` → `a` itself).
+    fn collect_use_paths(node: Node, source: &[u8], prefix: &str, out: &mut Vec<String>) {
+        let joined = |leaf: &str| -> String {
+            if prefix.is_empty() {
+                leaf.to_string()
+            } else if leaf.is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}::{leaf}")
+            }
+        };
+        match node.kind() {
+            "scoped_identifier" | "identifier" | "crate" | "super" => {
+                out.push(joined(node_text(node, source).trim()));
+            }
+            "self" => {
+                // `a::{self, b}` — self names the prefix module itself.
+                if !prefix.is_empty() {
+                    out.push(prefix.to_string());
+                }
+            }
+            "use_as_clause" => {
+                if let Some(path) = node.child_by_field_name("path") {
+                    Self::collect_use_paths(path, source, prefix, out);
+                }
+            }
+            "use_wildcard" => {
+                let text = node_text(node, source).trim().to_string();
+                let base = text.strip_suffix("::*").unwrap_or(&text);
+                if !base.is_empty() && base != "*" {
+                    out.push(joined(base));
+                }
+            }
+            "scoped_use_list" => {
+                let inner_prefix = node
+                    .child_by_field_name("path")
+                    .map(|p| joined(node_text(p, source).trim()))
+                    .unwrap_or_else(|| prefix.to_string());
+                let mut c = node.walk();
+                for sub in node.children(&mut c) {
+                    if sub.kind() == "use_list" {
+                        Self::collect_use_paths(sub, source, &inner_prefix, out);
+                    }
+                }
+            }
+            "use_list" => {
+                let mut c = node.walk();
+                for sub in node.children(&mut c) {
+                    if sub.is_named() {
+                        Self::collect_use_paths(sub, source, prefix, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn file_to_module_path(filepath: &Path, src_root: &Path) -> String {
         let rel = filepath.strip_prefix(src_root).unwrap_or(filepath);
         let mut parts: Vec<String> = rel
             .components()
@@ -1215,18 +1280,15 @@ impl RustParser {
                     result.type_relationships.push(type_rel);
                 }
                 "use_declaration" => {
+                    // Expand the use tree into one import string per leaf
+                    // path. The old single-capture loop stored a
+                    // `scoped_use_list` as its raw text (braces included, so
+                    // it never resolved) and skipped `use_as_clause`
+                    // entirely, so `use foo::Bar as Baz;` recorded nothing
+                    // (mcp-servers report 2026-08-14, finding 2).
                     let mut uc = child.walk();
-                    let mut path_text: Option<String> = None;
                     for sub in child.children(&mut uc) {
-                        if matches!(
-                            sub.kind(),
-                            "scoped_identifier" | "use_wildcard" | "scoped_use_list" | "identifier"
-                        ) {
-                            path_text = Some(node_text(sub, source).to_string());
-                        }
-                    }
-                    if let Some(p) = path_text {
-                        file_info.imports.push(p);
+                        Self::collect_use_paths(sub, source, "", &mut file_info.imports);
                     }
                 }
                 "mod_item" => {
