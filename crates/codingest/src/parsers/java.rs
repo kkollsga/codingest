@@ -159,7 +159,10 @@ impl JavaParser {
 
     fn get_doc_comment(node: Node, source: &[u8]) -> Option<String> {
         let sibling = node.prev_named_sibling()?;
-        if !matches!(sibling.kind(), "comment" | "block_comment") {
+        // "comment" went dead when tree-sitter-java 0.23 split it into
+        // line_comment/block_comment — found by the grammar_kinds guard on
+        // its first run; line comments silently stopped matching here.
+        if !matches!(sibling.kind(), "line_comment" | "block_comment") {
             return None;
         }
         let text = node_text(sibling, source).trim();

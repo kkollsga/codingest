@@ -207,7 +207,7 @@ impl GoParser {
                     match sub.kind() {
                         "field_identifier" => names.push(node_text(sub, source).to_string()),
                         _ if sub.is_named()
-                            && !matches!(sub.kind(), "tag" | "comment" | "field_identifier") =>
+                            && !matches!(sub.kind(), "comment" | "field_identifier") =>
                         {
                             if type_ann.is_none() && names.is_empty() {
                                 let text = node_text(sub, source);
@@ -613,7 +613,10 @@ impl LanguageParser for GoParser {
                                 };
                                 let mut mc = type_node.walk();
                                 for ms in type_node.children(&mut mc) {
-                                    if ms.kind() == "method_spec" {
+                                    // "method_spec" was renamed method_elem in tree-sitter-go 0.25 —
+                                    // found dead by the grammar_kinds guard; interface
+                                    // method extraction had silently stopped.
+                                    if ms.kind() == "method_elem" {
                                         if let Some(fn_name) =
                                             Self::get_name(ms, &source, "field_identifier")
                                         {

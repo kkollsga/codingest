@@ -1145,10 +1145,7 @@ impl JstsParser {
     ) {
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
-            if !matches!(
-                child.kind(),
-                "public_field_definition" | "property_declaration" | "field_definition"
-            ) {
+            if !matches!(child.kind(), "public_field_definition" | "field_definition") {
                 continue;
             }
             let mut name: Option<String> = None;

@@ -1475,7 +1475,7 @@ impl CppParser {
             "using_declaration" => {
                 let mut cursor = node.walk();
                 for sub in node.children(&mut cursor) {
-                    if matches!(sub.kind(), "scoped_identifier" | "qualified_identifier") {
+                    if matches!(sub.kind(), "qualified_identifier") {
                         file_info.imports.push(node_text(sub, source).to_string());
                         break;
                     }

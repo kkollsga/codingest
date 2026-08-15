@@ -287,10 +287,7 @@ impl CSharpParser {
                     let line = node.start_position().row as u32 + 1;
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        if matches!(
-                            child.kind(),
-                            "identifier" | "type_identifier" | "generic_name"
-                        ) {
+                        if matches!(child.kind(), "identifier" | "generic_name") {
                             out.push((node_text(child, source).to_string(), line));
                             break;
                         }
