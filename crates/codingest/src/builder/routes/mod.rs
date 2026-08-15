@@ -162,7 +162,13 @@ pub(super) fn first_string_literal(args: &str) -> Option<String> {
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if b == b' ' || b == b'\t' {
+        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+            // Newlines are whitespace here: the dominant real-world FastAPI
+            // style breaks the line after `(` (long arg lists,
+            // `response_model=`), and treating `\n` as "not a string literal"
+            // silently dropped every such registration — 20 of 147 on the
+            // first real-repo acceptance run (2026-08-15). The comment below
+            // always said "whitespace"; the code now agrees.
             i += 1;
             continue;
         }
