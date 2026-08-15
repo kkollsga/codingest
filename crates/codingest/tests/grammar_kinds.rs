@@ -17,9 +17,12 @@
 //! missing. That half of the silence class is closed by corpus coverage
 //! (`tests/corpus/*_import`), not by this test.
 //!
-//! Extraction is deliberately narrow — two reliably-greppable shapes:
+//! Extraction is deliberately narrow — the reliably-greppable shapes:
 //!   * `matches!(<expr>.kind(), "a" | "b" | …)` alternation literals
 //!   * `<expr>.kind() == "lit"` / `"lit" == <expr>.kind()` comparisons
+//!   * `<expr>.kind() != "lit"` / `"lit" != <expr>.kind()` (added 2026-08-15
+//!     after the R build proved `!=` escaped the guard — 48 sites were
+//!     unguarded across the pre-R parsers)
 //!
 //! plus `child_by_field_name("name")` probed via `field_id_for_name`.
 //!
@@ -89,6 +92,16 @@ fn extract_literals(source: &str) -> (Vec<String>, Vec<String>) {
     let eq_rev_re =
         regex::Regex::new(r#""([A-Za-z_][A-Za-z0-9_]*)"\s*==\s*[^;]*\.kind\(\)"#).unwrap();
     for cap in eq_rev_re.captures_iter(source) {
+        kinds.push(cap[1].to_string());
+    }
+    // <expr>.kind() != "lit"  /  "lit" != <expr>.kind()
+    let neq_re = regex::Regex::new(r#"\.kind\(\)\s*!=\s*"([A-Za-z_][A-Za-z0-9_]*)""#).unwrap();
+    for cap in neq_re.captures_iter(source) {
+        kinds.push(cap[1].to_string());
+    }
+    let neq_rev_re =
+        regex::Regex::new(r#""([A-Za-z_][A-Za-z0-9_]*)"\s*!=\s*[^;]*\.kind\(\)"#).unwrap();
+    for cap in neq_rev_re.captures_iter(source) {
         kinds.push(cap[1].to_string());
     }
     // child_by_field_name("name")
