@@ -148,6 +148,17 @@ const CORPORA: &[&str] = &[
     "py_import",   // relative imports, `import a, b`, aliased, from-pkg-import-sub, nested walk
     "cpp_include", // quoted #include vs <system>, same-dir + subdir resolution
     "dart_import", // package: URIs with directory structure; a/x.dart vs b/x.dart
+    // Added 2026-08-15 with the R parser (post-016 E2). No other corpus
+    // contains a single `.R`/`.r` file, so the whole language — both
+    // assignment shapes (`<-`, `=`) and the `\(x)` lambda, S4
+    // setClass/setGeneric/setMethod extraction, the `source()` path-import
+    // chain A→B→C (`main.R` → `sub/helpers.R` → `sub/deep.R`, including a
+    // file-relative `source("deep.R")` from inside `sub/`), the lowercase
+    // `.r` extension registration, and the `library(tools)` collision bait
+    // (a local `tools.R` that must attract NO edge from the package
+    // reference) — could be changed, or deleted, with zero golden movement.
+    // Its golden is captured additively (see `tests/goldens/README.md`).
+    "r_basic",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

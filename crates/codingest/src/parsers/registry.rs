@@ -20,7 +20,7 @@
 //! `manifest/mod.rs`.
 
 use super::{
-    agc, cpp, csharp, css, dart, go, html, java, php, python, rust_lang, swift, typescript,
+    agc, cpp, csharp, css, dart, go, html, java, php, python, r, rust_lang, swift, typescript,
     LanguageParser,
 };
 
@@ -131,6 +131,10 @@ fn dart_parser() -> Box<dyn LanguageParser + Send + Sync> {
 
 fn agc_parser() -> Box<dyn LanguageParser + Send + Sync> {
     Box::new(agc::AgcParser::new())
+}
+
+fn r_parser() -> Box<dyn LanguageParser + Send + Sync> {
+    Box::new(r::RParser::new())
 }
 
 macro_rules! language_registry {
@@ -294,6 +298,18 @@ language_registry! {
         noise_names: agc::AGC_NOISE_NAMES,
         make_parser: agc_parser,
     },
+    // Added 2026-08-15. Both extension casings are registered because
+    // `language_for_extension` matches EXACTLY (no case folding anywhere in
+    // the walk): `.R` is the dominant convention and `.r` occurs in the
+    // wild — registering only one would silently drop the other's files.
+    "r" => {
+        extensions: ["R", "r"],
+        module_sep: ".",
+        edge_sep: ".",
+        group: LangGroup::PythonJava,
+        noise_names: &[],
+        make_parser: r_parser,
+    },
 }
 
 pub fn language_for_extension(extension: &str) -> Option<&'static str> {
@@ -325,7 +341,14 @@ pub fn uses_path_imports(language: &str) -> bool {
     // exactly the C/HTML/CSS shape. `dart:`/`package:` URIs never match a
     // file path and fall through to the module-path walk (see
     // `normalize_dart_import`).
-    matches!(language, "c" | "cpp" | "html" | "css" | "dart")
+    //
+    // R is here for `source("path.R")` only: the parser keeps the string
+    // verbatim, and it is a real file path (importing-file-relative or
+    // project-root-relative — the route tries both). `library(pkg)` /
+    // `require(pkg)` names carry no extension and never match a file path,
+    // so they fall through to the module walk; they are namespace-shaped and
+    // R stays OUT of `build_file_import_edges`'s file-anchored allowlist.
+    matches!(language, "c" | "cpp" | "html" | "css" | "dart" | "r")
 }
 
 /// Languages whose import specifiers name a *path* but whose modules are
@@ -383,6 +406,8 @@ mod tests {
                 ("css", "css"),
                 ("dart", "dart"),
                 ("agc", "agc"),
+                ("R", "r"),
+                ("r", "r"),
             ]
         );
     }
@@ -423,6 +448,7 @@ mod tests {
             ("css", ".", "."),
             ("dart", ".", "."),
             ("agc", "/", "/"),
+            ("r", ".", "."),
             ("unknown", ".", "/"),
         ];
 
@@ -443,6 +469,8 @@ mod tests {
             ("css", true, false),
             ("dart", true, false),
             ("rust", false, false),
+            // R: path imports for `source("path.R")`, no implicit hierarchy.
+            ("r", true, false),
         ];
         for (language, path_imports, hierarchy) in expected {
             assert_eq!(uses_path_imports(language), path_imports, "{language}");

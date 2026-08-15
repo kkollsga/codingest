@@ -13,6 +13,7 @@ pub mod html;
 pub mod java;
 pub mod php;
 pub mod python;
+pub mod r;
 pub mod registry;
 pub mod rust_lang;
 pub mod shared;

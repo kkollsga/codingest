@@ -1459,6 +1459,155 @@ mod tests {
         );
     }
 
+    /// R `source()` resolution end to end (added 2026-08-15 with the R
+    /// parser): a root-level `source("utils.R")`, a subdir
+    /// `source("sub/helpers.R")`, and an importing-file-relative
+    /// `source("deep.R")` from inside `sub/` all resolve through the
+    /// path-import route to exact files — File→Module and File→File both.
+    /// A non-literal `source(paste0(…))` contributes nothing.
+    #[test]
+    fn r_source_resolves_as_file_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("r_proj");
+        std::fs::create_dir_all(project.join("sub")).expect("create sub");
+        std::fs::write(
+            project.join("main.R"),
+            "source(\"utils.R\")\n\
+             source(\"sub/helpers.R\")\n\
+             source(paste0(dir, \"/dyn.R\"))\n\
+             main <- function() run()\n",
+        )
+        .expect("write main");
+        std::fs::write(project.join("utils.R"), "add_one <- function(x) x + 1\n")
+            .expect("write utils");
+        std::fs::write(
+            project.join("sub/helpers.R"),
+            "source(\"deep.R\")\nhelp_fn <- function() 1\n",
+        )
+        .expect("write helpers");
+        std::fs::write(project.join("sub/deep.R"), "deep_fn <- function() 2\n")
+            .expect("write deep");
+
+        let result = get_parser("r")
+            .expect("R parser")
+            .parse_directory(&project, false);
+        let known_modules: HashSet<_> = result
+            .files
+            .iter()
+            .map(|file| file.module_path.clone())
+            .collect();
+        let module_pairs: HashSet<_> = other_edges::build_import_edges(
+            &result.files,
+            &known_modules,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.file_path, edge.module))
+        .collect();
+        let expected_modules: HashSet<_> = [
+            ("main.R", "r_proj.utils"),
+            ("main.R", "r_proj.sub.helpers"),
+            ("sub/helpers.R", "r_proj.sub.deep"),
+        ]
+        .into_iter()
+        .map(|(f, m)| (f.to_string(), m.to_string()))
+        .collect();
+        assert_eq!(module_pairs, expected_modules, "{module_pairs:?}");
+
+        let module_to_file = result
+            .files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_pairs: HashSet<_> = other_edges::build_file_import_edges(
+            &result.files,
+            &module_to_file,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.source, edge.target))
+        .collect();
+        let expected_files: HashSet<_> = [
+            ("main.R", "utils.R"),
+            ("main.R", "sub/helpers.R"),
+            ("sub/helpers.R", "sub/deep.R"),
+        ]
+        .into_iter()
+        .map(|(s, t)| (s.to_string(), t.to_string()))
+        .collect();
+        assert_eq!(file_pairs, expected_files, "{file_pairs:?}");
+    }
+
+    /// The R collision bait (added 2026-08-15 with the R parser):
+    /// `library(tools)` when a local `tools.R` exists. `library()` names an
+    /// external package, never a project file, so the collision must
+    /// manufacture NO edge of either kind: R is deliberately not in
+    /// `build_file_import_edges`'s file-anchored allowlist (no File→File),
+    /// and the Track-D root-prefix fallback stays Python-only by its own
+    /// doctrine, so the bare name also never lands on the root-prefixed
+    /// local module (no File→Module). A package name resolves only on an
+    /// exact known-module match, which a parser-prefixed local module can't
+    /// produce. `library(stats)` (genuinely external) likewise resolves to
+    /// nothing.
+    #[test]
+    fn r_library_naming_a_local_module_yields_no_file_edge() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("r_proj");
+        std::fs::create_dir_all(&project).expect("create project");
+        std::fs::write(
+            project.join("main.R"),
+            "library(stats)\nlibrary(tools)\nmain <- function() pad_left(\"x\", 3)\n",
+        )
+        .expect("write main");
+        std::fs::write(
+            project.join("tools.R"),
+            "pad_left <- function(s, n) formatC(s, width = n)\n",
+        )
+        .expect("write tools");
+
+        let result = get_parser("r")
+            .expect("R parser")
+            .parse_directory(&project, false);
+        let known_modules: HashSet<_> = result
+            .files
+            .iter()
+            .map(|file| file.module_path.clone())
+            .collect();
+        let module_pairs: Vec<_> = other_edges::build_import_edges(
+            &result.files,
+            &known_modules,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.file_path, edge.module))
+        .collect();
+        // Neither the bait nor the external name resolves to any module:
+        // "tools" is not an exact match for the root-prefixed local module
+        // `r_proj.tools`, and no fallback is allowed to bridge that gap.
+        assert!(
+            module_pairs.is_empty(),
+            "a package reference must not land on a colliding local module: {module_pairs:?}"
+        );
+
+        let module_to_file = result
+            .files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_pairs: Vec<_> = other_edges::build_file_import_edges(
+            &result.files,
+            &module_to_file,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.source, edge.target))
+        .collect();
+        assert!(
+            file_pairs.is_empty(),
+            "a package reference must not manufacture a File→File edge: {file_pairs:?}"
+        );
+    }
+
     #[test]
     fn overload_identity_keeps_last_exact_duplicate_and_leaves_ordinary_ids_alone() {
         let ordinary = FunctionInfo {
