@@ -772,18 +772,34 @@ pub fn build_file_import_edges(
                 }
                 continue;
             }
+            // The raw prefix walk may claim a FILE target only for languages
+            // whose module coordinates are file-anchored — one module path,
+            // one file. For namespace-shaped languages a module is MANY
+            // files and `module_to_file` keeps one arbitrary winner, so the
+            // walk manufactures wrong edges at scale: real-repo acceptance
+            // (2026-08-15) measured Java 438/438 false (141 imports onto one
+            // test file), PHP 146 src→tests inversions, C# 118
+            // arbitrary-member picks. Python (absolute imports, Track D) and
+            // AGC ($-directives) are the file-anchored proof cases — their
+            // corpus goldens and real-repo sweeps hold through this gate.
+            // Dart is file-anchored BY CONSTRUCTION since B4 (a normalized
+            // package URI names exactly one lib/ file) and its dotted module
+            // coordinates resolve here. Rust/TS/JS/C/C++ use their own routes.
+            let file_anchored = matches!(f.language.as_str(), "python" | "agc" | "dart");
             let parts: Vec<&str> = use_path.split(sep).collect();
             let mut resolved = false;
-            for end in (1..=parts.len()).rev() {
-                let candidate = parts[..end].join(sep);
-                if let Some(target_file) = module_to_file.get(&candidate) {
-                    if target_file != &f.path {
-                        *counts
-                            .entry((f.path.clone(), target_file.clone()))
-                            .or_insert(0) += 1;
+            if file_anchored {
+                for end in (1..=parts.len()).rev() {
+                    let candidate = parts[..end].join(sep);
+                    if let Some(target_file) = module_to_file.get(&candidate) {
+                        if target_file != &f.path {
+                            *counts
+                                .entry((f.path.clone(), target_file.clone()))
+                                .or_insert(0) += 1;
+                        }
+                        resolved = true;
+                        break;
                     }
-                    resolved = true;
-                    break;
                 }
             }
             if resolved {
@@ -791,7 +807,12 @@ pub fn build_file_import_edges(
             }
             // Mirror of `build_import_edges`: root-prefixed candidates for a
             // root-relative specifier, tried only after the raw walk misses.
-            // The self-import guard applies here exactly as above.
+            // The self-import guard applies here exactly as above — and so
+            // does the file-anchored gate: this fallback feeds the same
+            // one-arbitrary-file map.
+            if !file_anchored {
+                continue;
+            }
             if let Some(target_file) = module_path_prefix_candidates(f, use_path, sep)
                 .into_iter()
                 .find_map(|candidate| module_to_file.get(&candidate))
@@ -2163,6 +2184,51 @@ mod determinism_tests {
         let edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].module, "ArgumentParser");
+    }
+
+    /// Namespace-shaped languages must not receive File→File edges from
+    /// the raw prefix walk: a package/namespace is MANY files, the reverse
+    /// map keeps one arbitrary winner, and real-repo acceptance measured the
+    /// result (Java 438/438 false edges). Python keeps the walk — its module
+    /// paths are file-anchored and Track D's real-repo sweep was 0 FP / 0 FN.
+    #[test]
+    fn namespace_languages_get_no_file_edges_from_the_raw_walk() {
+        let java = FileInfo {
+            path: "src/App.java".into(),
+            language: "java".into(),
+            module_path: "com.example.app".into(),
+            imports: vec!["com.example.util.Helper".into()],
+            ..FileInfo::default()
+        };
+        // The bait: the namespace resolves — to an arbitrary member file.
+        let module_to_file = HashMap::from([(
+            "com.example.util".to_string(),
+            "src/util/Unrelated.java".to_string(),
+        )]);
+        let edges = build_file_import_edges(&[java], &module_to_file, &JsWorkspace::default());
+        assert!(
+            edges.is_empty(),
+            "a namespace hit must not become a file edge (got {} edge(s), first: {} -> {})",
+            edges.len(),
+            edges.first().map(|e| e.source.as_str()).unwrap_or("-"),
+            edges.first().map(|e| e.target.as_str()).unwrap_or("-"),
+        );
+
+        let python = FileInfo {
+            path: "pkg/app.py".into(),
+            language: "python".into(),
+            module_path: "proj.pkg.app".into(),
+            imports: vec!["proj.pkg.util".into()],
+            ..FileInfo::default()
+        };
+        let module_to_file =
+            HashMap::from([("proj.pkg.util".to_string(), "pkg/util.py".to_string())]);
+        let edges = build_file_import_edges(&[python], &module_to_file, &JsWorkspace::default());
+        assert_eq!(
+            edges.len(),
+            1,
+            "file-anchored python must keep its raw-walk resolution"
+        );
     }
 
     /// Acceptance FP-1/FN-2 (2026-08-15): a Rust bare path resolves under
