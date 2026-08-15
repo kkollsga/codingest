@@ -652,8 +652,24 @@ pub fn build_import_edges(
                 continue;
             }
             let parts: Vec<&str> = use_path.split(sep).collect();
+            // How deep the Module-pass walk may trim, by language semantics:
+            // * AGC `$FILE.agc` directives are literal filenames — exact or
+            //   nothing. Trimming is what turned Apollo-11's two upstream
+            //   typos into edges onto the parent program Module.
+            // * Namespace-shaped languages (java/csharp/php/swift/go) may
+            //   trim exactly ONE segment — the class/symbol name off its
+            //   package. Deeper trims are what landed gson's jackson imports
+            //   on ancestor Modules `com`/`com.google` (252 measured false
+            //   edges). Listed explicitly, not by complement: TS/JS and the
+            //   file-anchored languages keep their existing full walk, whose
+            //   behavior the corpus goldens pin.
+            let min_end = match f.language.as_str() {
+                "agc" => parts.len(),
+                "java" | "csharp" | "php" | "swift" | "go" => parts.len().saturating_sub(1).max(1),
+                _ => 1,
+            };
             let mut resolved = false;
-            for end in (1..=parts.len()).rev() {
+            for end in (min_end..=parts.len()).rev() {
                 let candidate = parts[..end].join(sep);
                 if known_modules.contains(&candidate) {
                     out.push(ImportEdge {
@@ -787,9 +803,12 @@ pub fn build_file_import_edges(
             // coordinates resolve here. Rust/TS/JS/C/C++ use their own routes.
             let file_anchored = matches!(f.language.as_str(), "python" | "agc" | "dart");
             let parts: Vec<&str> = use_path.split(sep).collect();
+            // AGC directives are literal filenames in this pass too: exact
+            // or nothing (see the Module-pass rationale).
+            let file_min_end = if f.language == "agc" { parts.len() } else { 1 };
             let mut resolved = false;
             if file_anchored {
-                for end in (1..=parts.len()).rev() {
+                for end in (file_min_end..=parts.len()).rev() {
                     let candidate = parts[..end].join(sep);
                     if let Some(target_file) = module_to_file.get(&candidate) {
                         if target_file != &f.path {
@@ -2260,6 +2279,65 @@ mod determinism_tests {
         let edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].module, "ArgumentParser");
+    }
+
+    /// Module-pass trim depth: a namespace language may shed exactly its
+    /// class name; AGC directives are exact-or-nothing. Deep trims were the
+    /// mechanism behind gson's 252 ancestor-Module edges and Apollo-11's
+    /// typo'd directives landing on the parent program.
+    #[test]
+    fn module_walk_trim_depth_is_bounded_by_language_semantics() {
+        let mut known = HashSet::new();
+        known.insert("com".to_string());
+        known.insert("com.example".to_string());
+        let java = FileInfo {
+            path: "src/App.java".into(),
+            language: "java".into(),
+            module_path: "com.example.app".into(),
+            // external: only ancestors exist — one trim reaches
+            // com.fasterxml.jackson.core, which is unknown → NO edge.
+            imports: vec!["com.fasterxml.jackson.core.JsonFactory".into()],
+            ..FileInfo::default()
+        };
+        let edges = build_import_edges(&[java], &known, &JsWorkspace::default());
+        assert!(
+            edges.is_empty(),
+            "an external namespace import must not land on an ancestor Module: {:?}",
+            edges.iter().map(|e| e.module.as_str()).collect::<Vec<_>>()
+        );
+
+        let mut known = HashSet::new();
+        known.insert("com.example.util".to_string());
+        let java_ok = FileInfo {
+            path: "src/App.java".into(),
+            language: "java".into(),
+            module_path: "com.example.app".into(),
+            imports: vec!["com.example.util.Helper".into()],
+            ..FileInfo::default()
+        };
+        let edges = build_import_edges(&[java_ok], &known, &JsWorkspace::default());
+        assert_eq!(
+            edges.len(),
+            1,
+            "one trim to the real package must still resolve"
+        );
+        assert_eq!(edges[0].module, "com.example.util");
+
+        // AGC: a typo'd directive must not fall back to the parent module.
+        let mut known = HashSet::new();
+        known.insert("Luminary099".to_string());
+        let agc = FileInfo {
+            path: "Luminary099/MAIN.agc".into(),
+            language: "agc".into(),
+            module_path: "Luminary099/MAIN".into(),
+            imports: vec!["Luminary099/TRIM_GIMBAL_CNTROL_SYSTEM".into()],
+            ..FileInfo::default()
+        };
+        let edges = build_import_edges(&[agc], &known, &JsWorkspace::default());
+        assert!(
+            edges.is_empty(),
+            "a typo'd AGC directive must resolve to nothing, not the parent program"
+        );
     }
 
     /// Namespace-shaped languages must not receive File→File edges from
