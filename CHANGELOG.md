@@ -11,6 +11,25 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- **Two new languages: Julia and R** (seventeen total). Julia: functions in
+  every definition form incl. multiple dispatch, structs with EXTENDS, nested
+  modules, `include("path.jl")` file edges, `using`/`import` deliberately
+  edge-free (namespace-shaped). R: both assignment shapes plus lambdas,
+  conservative S4, `source("path.R")` file edges with `.R`/`.r` both
+  registered, `library()`/`require()` deliberately edge-free. Each ships with
+  a corpus, an additive golden, grammar-guard coverage, and collision-bait
+  tests proving the namespace mechanisms abstain.
+- **Real-repo acceptance hardening across all languages.** A five-agent sweep
+  over real repositories (then a four-agent sweep for the long tail) produced
+  three same-day fixes: Rust bare `use` paths resolve under the crate root and
+  never reach the language-blind fallback (killing a false edge into a
+  same-named Python package stub, and resolving `pub use` re-exports);
+  multi-line route decorators — the dominant FastAPI style — no longer
+  silently produce zero Route nodes; and the generic import fallback now
+  claims File targets only for languages whose module coordinates name exactly
+  one file (python/agc/dart) — namespace languages abstain, eliminating
+  measured wrong-edge families (Java 438/438 false, PHP 146 src→tests
+  inversions, C# 118 arbitrary picks).
 - **File→File import edges exist for Rust, Python, C/C++ and Dart.** A
   five-defect family (independently reported by mcp-servers, 2026-08-14,
   upstream lead natashahirt/kglite PR #4) left the file-level dependency graph
