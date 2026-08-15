@@ -7,6 +7,21 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Post-016 program — 2026-08-15: 19 corpora; six deliberate golden moves, each with its recorded reason
+
+Corpus set grew 15 → 19 (`rust_import`, `py_import`, `cpp_include`,
+`dart_import` — each added FIRST to pin the pre-fix broken output, so the fix
+commit's golden diff is the record of exactly what it changed). Golden moves,
+one per phase commit, reasons in the commit messages: rust_import (File→File
+0→4, File→Module off the bare crate root), py_import (IMPORTS 4→16),
+dart_import (IMPORTS 3→5, the a/x-vs-b/x collision split), cpp_include
+(corpus pin only — an angle include naming a real project file, proving no
+edge forms), cross_ts_py (Route 4→2: flask twins of fastapi registrations
+removed). The 14 pre-program goldens never moved at any phase — isolation
+verified by canonical dump at every integration, twice per agent-implemented
+phase (agent's check + coordinator's independent check). kglite 0.16.0 → 0.16.1
+moved no golden (verified before the program's own changes began).
+
 ## Release 0.2.1 — 2026-08-12: 15 corpora, all green across the kglite 0.15.13 engine move
 
 Released state: unchanged corpus set (**15 corpora**), all green in the

@@ -88,6 +88,41 @@ Consequences for this document:
   with its machine state recorded. The next release capture starts the new
   comparable series.
 
+## Post-016 program — 2026-08-15 (kglite 0.16.1 + import-resolution fixes; fresh capture, no cross-comparison)
+
+**No before/after comparison is published for this program, deliberately.**
+Every prior capture's corpus digest differs (KGLite itself moved:
+1,313 tracked files vs 1,251 on 2026-08-12), and the code under test changed
+on both sides of the boundary (engine 0.15.13 → 0.16.1 AND the resolver
+fixes), so a delta would conflate three causes. Numbers below are the fresh
+floor for the next comparison, captured per protocol: release build, warmup
+run discarded, min over 3 agreeing runs (worst per-query spread 0.097 ms, on
+`varlen_callers_1_3`).
+
+**Corpus:** KGLite tracked-only, `corpus_sha256` `f6f971f59eb45349…` — 1,313
+files → 9,579 nodes / 51,386 edges. The graph is denser than any prior
+capture partly BY DESIGN: File→File IMPORTS edges now exist for Rust (this
+corpus's language), and one registration mints one Route.
+
+| Query | min ms |
+|---|---:|
+| `two_hop_into_hot` | 0.012 |
+| `reverse_callees_of_hub` | 0.022 |
+| `contains_new` | 0.098 |
+| `eq_filter_pub` | 0.116 |
+| `defs_per_file` | 0.115 |
+| `method_calls_mix` | 0.120 |
+| `anchored_callers` | 0.211 |
+| `top20_by_branch_count` | 0.318 |
+| `calls_edge_scan` | 1.358 |
+| `varlen_callers_1_3` | 2.875 |
+
+Build 0.342 s (mean of 3). The 0.15.13 planner wins persist through 0.16.1
+(anchored shapes stay 1–2 orders below the pre-0.15.13 era). The release-time
+anchor gate returned **REFUSE(3)** on the fixture corpus — correct and
+pre-declared: B0 added four import corpora, so the corpus digest moved; the
+release captures the new baseline per `tests/benchmarks/README.md`.
+
 ## Release 0.2.1 — 2026-08-12 (kglite 0.15.13 engine move: anchored traversals 5.7–327× faster)
 
 **No codingest source changed this release** — `git diff v0.2.0..HEAD -- crates/codingest/src`
