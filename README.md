@@ -43,7 +43,8 @@ a real `kglite.KnowledgeGraph`, ready for Cypher queries.
   Python call, or let an agent manage cached public repositories through MCP.
 - **Polyglot by default:** one graph across Python, Rust, TypeScript,
   JavaScript, Java, Go, C/C++, C#, Swift, PHP, HTML, CSS, Dart, Julia, R,
-  and AGC assembly.
+  and AGC assembly — capabilities per language in
+  [docs/languages.md](docs/languages.md).
 - **Revision-aware:** analyse a tag, branch, commit, or multiple revisions in
   one graph and query what changed.
 

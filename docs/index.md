@@ -2,7 +2,7 @@
 
 Give AI agents a live, queryable map of any codebase. codingest builds
 [KGLite](https://github.com/kkollsga/kglite) knowledge graphs with tree-sitter
-parsers for 17 languages, call / type / inheritance / route edges, an optional
+parsers for 17 languages ([per-language support matrix](languages.md)), call / type / inheritance / route edges, an optional
 documentation pass, and multi-git-revision merged graphs.
 
 codingest owns code-graph construction: KGLite's former in-tree `code_tree`
