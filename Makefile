@@ -282,8 +282,8 @@ clean:
 	cargo clean
 
 ## Mechanical bound on the gitignored dev-docs/ working folder — the one
-## accumulation with no reviewer, no CI and no remote watching it grow. Unlike
-## prune-target this NEVER deletes: which tier a file belongs in, and whether
+## accumulation with no reviewer, no CI and no remote watching it grow. The
+## gate itself NEVER deletes: which tier a file belongs in, and whether
 ## it is reproducible, is a judgement call, so the gate FAILS and hands the
 ## decision back. Stale purge-tier entries are reported as a warning (temp/bin
 ## churn is normal working state; failing on it would only teach people to
