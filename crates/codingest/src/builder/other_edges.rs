@@ -416,9 +416,24 @@ fn rust_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
         }
         Some(base)
     } else {
-        // A bare path (`alpha::Item` via 2015-style or re-export) — try it
-        // under the importer's crate root before the raw walk gives up.
-        None
+        // A bare path (`alpha::Item` in a `pub use`, 2015-style, or an
+        // external-crate name). Resolve it under the importer's own crate
+        // root — a leading segment naming a real local module is a local
+        // import (las-rs's `pub use api::…` shape, acceptance FN-2) — and
+        // claim it EITHER WAY so it never reaches the raw walk: the walk
+        // has no language anchor, and its first real-world catch was a
+        // Rust `use codingest::…` resolving into a sibling PYTHON package
+        // stub that shared the crate's name (acceptance FP-1, a wrong
+        // edge). An external crate name that matches nothing local
+        // correctly yields no edge; the workspace-sibling edge it *could*
+        // mean is the Cargo-index program's job, not string matching's.
+        Some(
+            own[..root_len]
+                .iter()
+                .map(|s| s.to_string())
+                .chain(trimmed.split("::").map(str::to_string))
+                .collect(),
+        )
     };
 
     let mut out = Vec::new();
@@ -2148,6 +2163,47 @@ mod determinism_tests {
         let edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].module, "ArgumentParser");
+    }
+
+    /// Acceptance FP-1/FN-2 (2026-08-15): a Rust bare path resolves under
+    /// the importer's own crate root — and NEVER falls through to the raw
+    /// walk, whose first real-world catch was a Rust `use codingest::…`
+    /// landing on a sibling Python package stub of the same name.
+    #[test]
+    fn rust_bare_path_resolves_locally_and_never_falls_through() {
+        use crate::parsers::rust_lang::RustParser;
+        use std::path::Path;
+        let root = Path::new("");
+        let mp = |p: &str| RustParser::file_to_module_path(Path::new(p), root);
+        let importer = FileInfo {
+            path: "src/lib.rs".into(),
+            language: "rust".into(),
+            module_path: mp("src/lib.rs"),
+            imports: vec![
+                "api::Reader".into(),      // local module — must resolve (FN-2)
+                "codingest::build".into(), // external crate name — no edge (FP-1)
+            ],
+            ..FileInfo::default()
+        };
+        let module_to_file = HashMap::from([
+            (mp("src/api.rs"), "src/api.rs".to_string()),
+            // the collision bait: a same-named NON-rust module in the map
+            (
+                "codingest".to_string(),
+                "codingest/__init__.pyi".to_string(),
+            ),
+        ]);
+        let edges = build_file_import_edges(&[importer], &module_to_file, &JsWorkspace::default());
+        let pairs: Vec<_> = edges
+            .iter()
+            .map(|e| (e.source.as_str(), e.target.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("src/lib.rs", "src/api.rs")],
+            "bare local path must resolve; external-crate name must produce \
+             no edge even when a same-named foreign module exists"
+        );
     }
 
     #[test]
