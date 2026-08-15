@@ -104,7 +104,14 @@ pub fn break_qualified_name_ties(functions: &mut [FunctionInfo]) {
 /// copies in `dart.rs`, `html.rs`, `php.rs`, `swift.rs`, `css.rs`.
 pub(super) fn file_to_module_path(filepath: &Path, src_root: &Path, separator: char) -> String {
     let stem = filepath.file_stem().and_then(|o| o.to_str()).unwrap_or("");
-    let pkg = src_root.file_name().and_then(|o| o.to_str()).unwrap_or("");
+    // Trim a dot-prefixed root's leading dot(s): with a `.` separator the
+    // dot would split into an empty leading module segment (empty-id Module
+    // node); the dot is a hiddenness marker, not part of the package name.
+    let pkg = src_root
+        .file_name()
+        .and_then(|o| o.to_str())
+        .unwrap_or("")
+        .trim_start_matches('.');
     let mut parts = Vec::new();
     if !pkg.is_empty() {
         parts.push(pkg.to_string());

@@ -111,6 +111,31 @@ struct BuildPlan {
 pub(crate) fn build(args: &BuildArgs) -> Result<Value> {
     let plan = prepare_build(args)?;
     let graph = construct_graph(args, &plan)?;
+    // CLI policy, not library behavior: an empty graph is never worth
+    // persisting. Writing one and exiting 0 is exactly what kept the
+    // walk-root bug silent — an empty artifact reported `fresh: true` and
+    // nothing objected. "Empty" means no ingested content: every parsed
+    // source yields a `File` node and every ingested doc a `Doc` node, while
+    // `Project`/`Dependency` nodes are synthesized build metadata that exist
+    // even when the walk saw nothing — so a graph without a single File or
+    // Doc node (zero-node included) is a build that ingested nothing. The
+    // library still returns such graphs unchanged; only the CLI refuses to
+    // write them.
+    use kglite::api::GraphRead as _;
+    let ingested_anything = graph.graph.node_indices().any(|index| {
+        graph
+            .node_view(index)
+            .is_some_and(|node| matches!(node.node_type_str(&graph.interner), "File" | "Doc"))
+    });
+    if !ingested_anything {
+        anyhow::bail!(
+            "graph is empty — no source files or docs were ingested under {}; \
+             not writing {}. Check that the source path points at the code you \
+             meant to ingest.",
+            plan.source.display(),
+            plan.output.display()
+        );
+    }
     persist_build(args, &plan, graph)
 }
 

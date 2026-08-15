@@ -1120,7 +1120,10 @@ mod tests {
         // With no manifest, the fallback scan derives Python module names from
         // the root directory's own name, so ids differ by construction between
         // two differently-named roots. Normalize that one name away; everything
-        // else must match the ordinary root exactly.
+        // else must match the ordinary root exactly. The module namer trims a
+        // dot-prefixed root's leading dot (`.hidden` names package `hidden`),
+        // so ids may carry either spelling — normalize the raw name first
+        // (project-level ids), then the trimmed one (module-derived ids).
         fn node_set(root: &Path) -> Vec<(String, String)> {
             std::fs::create_dir_all(root).expect("create root");
             std::fs::write(root.join("app.py"), SOURCE).expect("write source");
@@ -1130,6 +1133,7 @@ mod tests {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .expect("root basename");
+            let trimmed = base.trim_start_matches('.');
             let mut nodes: Vec<(String, String)> = graph
                 .graph
                 .node_indices()
@@ -1137,7 +1141,10 @@ mod tests {
                 .map(|node| {
                     (
                         node.node_type_str(&graph.interner).to_string(),
-                        node.id().to_string().replace(base, "plain"),
+                        node.id()
+                            .to_string()
+                            .replace(base, "plain")
+                            .replace(trimmed, "plain"),
                     )
                 })
                 .collect();
@@ -1163,19 +1170,19 @@ mod tests {
                 !nodes.is_empty(),
                 "build rooted at `{name}` produced an EMPTY graph"
             );
-            // A dot-prefixed root additionally yields one empty-id `Module`:
-            // the module path is `.hidden.app`, whose leading `.` splits into
-            // an empty first segment. That is a pre-existing naming artifact of
-            // dotted directory names, unrelated to the walk filter, and it is
-            // pinned here rather than filtered out — if the naming is ever
-            // fixed, this assertion is what says so.
-            let mut expected = baseline.clone();
-            if name.starts_with('.') {
-                expected.push(("Module".to_string(), "\"\"".to_string()));
-                expected.sort();
-            }
+            // A dot-prefixed root once yielded one extra empty-id `Module`:
+            // the module path was `.hidden.app`, whose leading `.` split into
+            // an empty first segment. The namer now trims the leading dot
+            // (`hidden.app`), so EVERY odd root — dot-prefixed included —
+            // must produce exactly the ordinary root's node set.
+            assert!(
+                !nodes
+                    .iter()
+                    .any(|(kind, id)| kind == "Module" && id == "\"\""),
+                "build rooted at `{name}` synthesized an empty-id Module node"
+            );
             assert_eq!(
-                nodes, expected,
+                nodes, baseline,
                 "build rooted at `{name}` differs from an ordinary root"
             );
         }

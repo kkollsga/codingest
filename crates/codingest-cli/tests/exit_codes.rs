@@ -322,6 +322,40 @@ fn json_status_stdout_stays_parseable_with_timing_enabled() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("[timing] source fingerprint:"));
 }
 
+/// A build that ingests NOTHING — no File node, no Doc node — must exit
+/// non-zero and must NOT write the artifact. An empty `.kgl` that exits 0 is
+/// what kept the walk-root bug silent for months: the artifact persisted,
+/// `status` reported fresh, and nothing objected. A literal zero-node graph
+/// is unreachable through the CLI today (an inferred `Project` node is
+/// synthesized even for an empty directory), so the guard keys on ingested
+/// content, which also covers zero nodes. This is CLI policy — the library
+/// API still returns the empty graph to callers that ask for one.
+#[test]
+fn empty_build_fails_and_writes_no_artifact() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("no-code");
+    std::fs::create_dir(&source).unwrap();
+    // Nothing here is ingestible: no parser extension, no doc, no manifest.
+    std::fs::write(source.join("notes.txt"), "nothing to parse\n").unwrap();
+    let graph = dir.path().join("empty.kgl");
+    let out = codingest(&[
+        "build",
+        source.to_str().unwrap(),
+        "-o",
+        graph.to_str().unwrap(),
+    ]);
+    assert_ne!(code(&out), 0, "empty build must fail: {out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("graph is empty"),
+        "failure text must say why: {stderr}"
+    );
+    assert!(
+        !graph.exists(),
+        "an empty build must not write the artifact"
+    );
+}
+
 /// `WalkDir::filter_entry` applies its predicate to the walk ROOT, so the
 /// builder's ignore-list filter used to prune its own root: a build pointed at
 /// a `.`-prefixed directory walked nothing and wrote an empty graph while

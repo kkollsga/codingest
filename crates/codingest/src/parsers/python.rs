@@ -533,7 +533,15 @@ impl PythonParser {
                 parts.pop();
             }
         }
-        let pkg = src_root.file_name().and_then(|o| o.to_str()).unwrap_or("");
+        // A dot-prefixed root (`.hidden/`) must not leak its dot into the
+        // module namespace: `.hidden.app` splits into an EMPTY leading
+        // segment, which used to synthesize a Module node with an empty id.
+        // The leading dot is a hiddenness marker, not part of the name.
+        let pkg = src_root
+            .file_name()
+            .and_then(|o| o.to_str())
+            .unwrap_or("")
+            .trim_start_matches('.');
         if parts.is_empty() {
             pkg.to_string()
         } else if pkg.is_empty() || parts.first().map(String::as_str) == Some(pkg) {

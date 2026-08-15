@@ -1100,7 +1100,13 @@ fn resolve_part_of(root: Node, source: &[u8], src_root: &Path) -> Option<String>
         if stem.is_empty() {
             return None;
         }
-        let pkg = src_root.file_name().and_then(|o| o.to_str()).unwrap_or("");
+        // Same dot-trim as `shared::file_to_module_path`: a dot-prefixed
+        // root must not create an empty leading module segment.
+        let pkg = src_root
+            .file_name()
+            .and_then(|o| o.to_str())
+            .unwrap_or("")
+            .trim_start_matches('.');
         return Some(if pkg.is_empty() {
             stem.to_string()
         } else {
