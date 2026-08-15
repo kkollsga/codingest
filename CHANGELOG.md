@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-15
+
 ### Changed
 - **One route registration mints one Route node.** `@app.post('/x')` used to
   satisfy both the flask method-shortcut detector and the fastapi holder
