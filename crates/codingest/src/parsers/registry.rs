@@ -279,6 +279,13 @@ language_registry! {
         noise_names: &[],
         make_parser: dart_parser,
     },
+    // AGC's `/` separators are correct despite its dotted qualified names
+    // (`Program.LABEL`): the separator fields are only ever applied to
+    // `FileInfo.module_path` and `FileInfo.imports`, and the AGC parser
+    // emits BOTH slash-shaped (`"Comanche055/MAIN"`, `"Comanche055/SUB"`).
+    // Qnames never flow through these fields — they only informed the
+    // `LangGroup::PythonJava` placement above. Load-bearing proof:
+    // `builder::load::tests::build_modules_splits_agc_paths_on_slash`.
     "agc" => {
         extensions: ["agc"],
         module_sep: "/",

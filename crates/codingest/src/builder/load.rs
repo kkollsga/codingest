@@ -603,7 +603,7 @@ impl<'a> LoadPipeline<'a> {
         // detectors live under `builder/routes/`. Adding a new framework is
         // one new file in that directory plus a line in routes/mod.rs.
         let (route_nodes, route_edges) =
-            super::routes::build_routes(&result.functions, &result.constants);
+            super::routes::build_routes(&result.files, &result.functions, &result.constants);
         if !route_nodes.is_empty() {
             maintain::add_nodes(
                 graph,
@@ -1479,6 +1479,22 @@ mod tests {
         assert!(qnames.contains(&"Foo"));
         assert!(qnames.contains(&"Foo.Bar"));
         assert!(qnames.contains(&"Foo.Bar.V2"));
+    }
+
+    /// AGC's registry `module_sep` is `/` and that is LOAD-BEARING, not a
+    /// typo: the AGC parser emits slash-shaped module paths
+    /// (`"Comanche055/MAIN"`, see `parsers::agc::module_path`), and this is
+    /// the string `build_modules` splits. Its *qualified names* are dotted
+    /// (`"Comanche055.FIRST"`), but qnames never pass through the separator
+    /// fields — they only informed the `LangGroup::PythonJava` placement.
+    /// Switching the field to `.` would collapse the hierarchy below into a
+    /// single unparented `Comanche055/MAIN` module.
+    #[test]
+    fn build_modules_splits_agc_paths_on_slash() {
+        let files = vec![file_with_module("agc", "Comanche055/MAIN")];
+        let modules = build_modules(&files);
+        let qnames: Vec<&str> = modules.iter().map(|m| m.qualified_name.as_str()).collect();
+        assert_eq!(qnames, vec!["Comanche055", "Comanche055/MAIN"]);
     }
 
     #[test]

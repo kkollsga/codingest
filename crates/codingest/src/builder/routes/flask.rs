@@ -8,17 +8,19 @@
 //!    `.route` follows the same arg shape, so we accept the suffix
 //!    pattern rather than enumerating blueprint variable names.
 //!
-//! FastAPI shares decorator shapes 1 and 2 but emits the `fastapi`
-//! framework label — see `fastapi.rs`. The two detectors deliberately
-//! cooperate by tagging the decorator-callee name into their own
-//! framework label, so a `@router.post(...)` registered by a FastAPI
-//! detector doesn't get a duplicate Flask emission.
+//! FastAPI shares decorator shape 2 — see `fastapi.rs`. Exactly one
+//! detector claims each registration: `@router.*`/`@api_router.*` holders
+//! are FastAPI's (skipped here via `is_fastapi_holder`), and the ambiguous
+//! `@app.<verb>(...)` shape is ceded to FastAPI for files whose imports
+//! name `fastapi` (skipped here via `fastapi_files`). Everything else,
+//! including every `.route(...)` registration, is Flask's.
 
 use super::{
     first_string_literal, keyword_arg, make_route_id, parse_methods_list, split_decorator,
     RouteEdge, RouteNode,
 };
 use crate::models::FunctionInfo;
+use std::collections::HashSet;
 
 const FRAMEWORK: &str = "flask";
 
@@ -28,7 +30,10 @@ const FRAMEWORK: &str = "flask";
 /// (the Flask app instance) and `blueprint.get`.
 const METHOD_SHORTCUTS: &[&str] = &["get", "post", "put", "delete", "patch", "options", "head"];
 
-pub(super) fn detect(functions: &[FunctionInfo]) -> (Vec<RouteNode>, Vec<RouteEdge>) {
+pub(super) fn detect(
+    functions: &[FunctionInfo],
+    fastapi_files: &HashSet<&str>,
+) -> (Vec<RouteNode>, Vec<RouteEdge>) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     for fn_info in functions {
@@ -41,14 +46,14 @@ pub(super) fn detect(functions: &[FunctionInfo]) -> (Vec<RouteNode>, Vec<RouteEd
             // Reject decorators that are FastAPI's exclusive markers
             // (e.g. `router.get` on an APIRouter). We use the variable
             // name preceding `.` as a hint: `router` and `api_router`
-            // are FastAPI conventions. False positives are rare and
-            // both detectors emit a route with their own framework
-            // label, so the worst case is a duplicated route — fine.
+            // are FastAPI conventions.
             if is_fastapi_holder(head) {
                 continue;
             }
 
             // `@app.route('/x')` — path is positional, method via kwarg.
+            // Flask-only syntax: the FastAPI detector never matches `route`,
+            // so this shape needs no import-evidence arbitration.
             if suffix == "route" {
                 if let Some(path) = first_string_literal(args) {
                     let methods = keyword_arg(args, "methods")
@@ -62,6 +67,12 @@ pub(super) fn detect(functions: &[FunctionInfo]) -> (Vec<RouteNode>, Vec<RouteEd
             }
 
             // `@app.get('/x')` / `.post` / ... — method baked into the suffix.
+            // Both frameworks accept this shape, and one registration must
+            // yield ONE Route: a file with fastapi import evidence hands it
+            // to the FastAPI detector, so Flask must stand down there.
+            if fastapi_files.contains(fn_info.file_path.as_str()) {
+                continue;
+            }
             if METHOD_SHORTCUTS.contains(&suffix.as_str()) {
                 if let Some(path) = first_string_literal(args) {
                     emit(

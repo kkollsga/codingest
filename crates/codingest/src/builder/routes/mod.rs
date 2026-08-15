@@ -28,7 +28,7 @@
 //! gains a `function_calls_with_args` channel; adding each new framework
 //! after that is one new file in this directory plus a line below.
 
-use crate::models::{ConstantInfo, FunctionInfo};
+use crate::models::{ConstantInfo, FileInfo, FunctionInfo};
 use std::collections::HashSet;
 
 mod django;
@@ -87,15 +87,27 @@ pub struct RouteEdge {
 /// duplicates — two registrations of the same method+path in the same file, and
 /// exact duplicate decorators (which collapse to one edge as well). Cross-file
 /// registrations of one path each keep their own node and source location.
+///
+/// **One registration is one Route.** The ambiguous decorator shape
+/// `@app.<verb>('/x')` is legal in both Flask (2.0 method shortcuts) and
+/// FastAPI; the id carries the framework, so letting both detectors claim it
+/// minted two Route nodes for a single registration. Ownership is settled by
+/// per-file import evidence (`fastapi_import_evidence`): a file that imports
+/// `fastapi` hands the shape to the FastAPI detector, every other file to
+/// Flask. `@app.route`/`@bp.route` stays Flask-only and `@router.<verb>` /
+/// `@api_router.<verb>` stays FastAPI-only — those shapes were never
+/// ambiguous.
 pub fn build_routes(
+    files: &[FileInfo],
     functions: &[FunctionInfo],
     constants: &[ConstantInfo],
 ) -> (Vec<RouteNode>, Vec<RouteEdge>) {
+    let fastapi_files = fastapi_import_evidence(files);
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     for (det_nodes, det_edges) in [
-        flask::detect(functions),
-        fastapi::detect(functions),
+        flask::detect(functions, &fastapi_files),
+        fastapi::detect(functions, &fastapi_files),
         django::detect(constants, functions),
     ] {
         nodes.extend(det_nodes);
@@ -106,6 +118,25 @@ pub fn build_routes(
     let mut edge_ids = HashSet::new();
     edges.retain(|edge| edge_ids.insert((edge.route_id.clone(), edge.function_qname.clone())));
     (nodes, edges)
+}
+
+/// Files whose imports name `fastapi` — the evidence that settles which
+/// framework owns the ambiguous `@app.<verb>(...)` decorator shape.
+///
+/// Python import strings are dotted origins (`"fastapi"`,
+/// `"fastapi.FastAPI"`, `"fastapi.responses.JSONResponse"`), so membership is
+/// decided on the first dotted segment. Relative imports (leading `.`) have an
+/// empty first segment and can never match.
+fn fastapi_import_evidence(files: &[FileInfo]) -> HashSet<&str> {
+    files
+        .iter()
+        .filter(|file| {
+            file.imports
+                .iter()
+                .any(|import| import.split('.').next() == Some("fastapi"))
+        })
+        .map(|file| file.path.as_str())
+        .collect()
 }
 
 // ── Per-framework shared helpers ────────────────────────────────────
@@ -252,9 +283,9 @@ pub(super) fn make_route_id(framework: &str, method: &str, path: &str, file_path
 #[cfg(test)]
 mod tests {
     use super::{build_routes, parse_methods_list};
-    use crate::models::FunctionInfo;
+    use crate::models::{FileInfo, FunctionInfo};
 
-    /// A Python function carrying one Flask decorator.
+    /// A Python function carrying one route decorator.
     fn handler(qname: &str, file: &str, line: u32, decorator: &str) -> FunctionInfo {
         FunctionInfo {
             name: qname.rsplit('.').next().unwrap_or(qname).to_string(),
@@ -263,6 +294,15 @@ mod tests {
             line_number: line,
             decorators: vec![decorator.to_string()],
             ..FunctionInfo::default()
+        }
+    }
+
+    /// A parsed file carrying only the import evidence the detectors read.
+    fn file_with_imports(path: &str, imports: &[&str]) -> FileInfo {
+        FileInfo {
+            path: path.to_string(),
+            imports: imports.iter().map(|s| s.to_string()).collect(),
+            ..FileInfo::default()
         }
     }
 
@@ -277,7 +317,7 @@ mod tests {
             handler("a.index", "a.py", 3, "app.route('/')"),
             handler("b.index", "b.py", 7, "app.route('/')"),
         ];
-        let (nodes, edges) = build_routes(&functions, &[]);
+        let (nodes, edges) = build_routes(&[], &functions, &[]);
 
         assert_eq!(
             nodes.len(),
@@ -338,7 +378,7 @@ mod tests {
             handler("a.index", "a.py", 3, "app.route('/')"),
             handler("a.alias", "a.py", 9, "app.route('/')"),
         ];
-        let (nodes, edges) = build_routes(&functions, &[]);
+        let (nodes, edges) = build_routes(&[], &functions, &[]);
         assert_eq!(nodes.len(), 1, "same file + method + path = one node");
         assert_eq!(edges.len(), 2, "both handlers keep a HANDLES edge");
     }
@@ -356,7 +396,7 @@ mod tests {
             ),
             handler("a.other", "a.py", 9, "app.route('/y')"),
         ];
-        let (nodes, _) = build_routes(&functions, &[]);
+        let (nodes, _) = build_routes(&[], &functions, &[]);
         let mut ids: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
         ids.sort();
         assert_eq!(
@@ -366,6 +406,95 @@ mod tests {
                 "flask::GET::/x::a.py",
                 "flask::POST::/x::a.py",
             ]
+        );
+    }
+
+    /// The ambiguous `@app.<verb>(...)` decorator shape is legal in BOTH
+    /// Flask and FastAPI, and the framework label is part of the Route id —
+    /// so before import-evidence arbitration one registration minted two
+    /// Route nodes (`flask::POST::...` + `fastapi::POST::...`). One
+    /// registration is one Route, with the framework decided by the file's
+    /// imports.
+    #[test]
+    fn ambiguous_app_verb_decorator_yields_one_route_per_registration() {
+        // fastapi import evidence → the FastAPI detector owns the shape.
+        let files = vec![file_with_imports("srv/app.py", &["fastapi.FastAPI"])];
+        let functions = vec![handler(
+            "srv.app.create",
+            "srv/app.py",
+            5,
+            "app.post('/api/session')",
+        )];
+        let (nodes, edges) = build_routes(&files, &functions, &[]);
+        assert_eq!(
+            nodes.len(),
+            1,
+            "one registration must be one Route, got {:?}",
+            nodes.iter().map(|n| &n.id).collect::<Vec<_>>()
+        );
+        assert_eq!(nodes[0].framework, "fastapi");
+        assert_eq!(nodes[0].id, "fastapi::POST::/api/session::srv/app.py");
+        assert_eq!(edges.len(), 1);
+
+        // flask import evidence → the Flask detector owns it.
+        let files = vec![file_with_imports("web/app.py", &["flask.Flask"])];
+        let functions = vec![handler(
+            "web.app.login",
+            "web/app.py",
+            5,
+            "app.post('/login')",
+        )];
+        let (nodes, edges) = build_routes(&files, &functions, &[]);
+        assert_eq!(
+            nodes.len(),
+            1,
+            "one registration must be one Route, got {:?}",
+            nodes.iter().map(|n| &n.id).collect::<Vec<_>>()
+        );
+        assert_eq!(nodes[0].framework, "flask");
+        assert_eq!(nodes[0].id, "flask::POST::/login::web/app.py");
+        assert_eq!(edges.len(), 1);
+
+        // No framework import at all → still exactly one Route (Flask, the
+        // default owner of the `app` holder without fastapi evidence).
+        let functions = vec![handler("x.app.ping", "x/app.py", 3, "app.get('/ping')")];
+        let (nodes, _) = build_routes(&[], &functions, &[]);
+        assert_eq!(
+            nodes.len(),
+            1,
+            "one registration must be one Route, got {:?}",
+            nodes.iter().map(|n| &n.id).collect::<Vec<_>>()
+        );
+        assert_eq!(nodes[0].framework, "flask");
+    }
+
+    /// The never-ambiguous shapes keep their unconditional owners: `.route`
+    /// is Flask even in a fastapi-importing file, and `@router.<verb>` is
+    /// FastAPI even with no import evidence at all.
+    #[test]
+    fn unambiguous_shapes_keep_their_framework() {
+        let files = vec![file_with_imports("srv/app.py", &["fastapi.FastAPI"])];
+        let functions = vec![handler(
+            "srv.app.legacy",
+            "srv/app.py",
+            9,
+            "app.route('/legacy')",
+        )];
+        let (nodes, _) = build_routes(&files, &functions, &[]);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].framework, "flask", ".route is Flask-only syntax");
+
+        let functions = vec![handler(
+            "api.users",
+            "api/users.py",
+            4,
+            "router.get('/users')",
+        )];
+        let (nodes, _) = build_routes(&[], &functions, &[]);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].framework, "fastapi",
+            "router holder is FastAPI-conventional"
         );
     }
 
