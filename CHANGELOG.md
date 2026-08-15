@@ -11,6 +11,19 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- **Engine floor moves to kglite 0.16.1.** Two things reach us. (1) The wire
+  break: `kglite_value_to_json` now emits real JSON for nine `Value` variants
+  that previously leaked Rust `Debug` syntax — `codingest query --format json`
+  returning a node/relationship/path/temporal now prints a structured object
+  (`{"id":…,"labels":[…],"properties":{…}}`) instead of a quoted Debug string.
+  Verified live against a built graph; anything parsing the old strings must
+  move. (2) The docs-pass `column_value` copy only converts `List`/`Map` of
+  scalars, and every parity corpus proves the nine variants unreachable there —
+  goldens are byte-identical across the bump. Also in 0.16.1: all four
+  `NodeData`-sentinel documentation asks codingest filed on 2026-08-14 shipped
+  (rustdoc corrected, `get_node` contracted as topology-only, `[0.16.0]`
+  changelog amended, fields sealed `pub(crate)`), so the footgun class this
+  migration fixed is now unrepresentable from outside the engine.
 - **Engine floor moves to kglite 0.16.0, whose `.kgl` container v6 is a one-way
   format break: files codingest now writes cannot be read by kglite 0.15.14 or
   earlier** (an old reader refuses by version number with `FileFormatError`

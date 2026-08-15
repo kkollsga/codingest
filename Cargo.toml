@@ -17,12 +17,15 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.0
-# floor is a HARD floor, not a preference: 0.16.0 writes `.kgl` container v6,
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.1
+# floor picks up the wire-JSON break (kglite_value_to_json emits real JSON for
+# nine variants — our CLI renders through it, so expectations pin the NEW
+# shapes and an older engine would fail them) on top of the 0.16.0
+# base, which is a HARD floor, not a preference: 0.16.0 writes `.kgl` container v6,
 # which kglite 0.15.14 and earlier refuse by version number. Because
 # `codingest.build()` writes the bytes with the Rust engine compiled in here and
 # reads them back through the separately-installed Python `kglite` wheel, the
-# two sides must be on the same side of that break — hence `>=0.16.0,<0.17` in
+# two sides must be on the same side of that break — hence `>=0.16.1,<0.17` in
 # pyproject.toml, and hence a reader on 0.15.x is not "old but workable", it is
 # a hard failure with `FileFormatError`.
 # 0.16.0 also removed `DirGraph::enable_columnar` from the public API (every
@@ -87,8 +90,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.0", default-features = false }
-kglite-mcp-server = { version = "0.16.0", default-features = false }
+kglite = { version = "0.16.1", default-features = false }
+kglite-mcp-server = { version = "0.16.1", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

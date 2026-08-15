@@ -11,7 +11,7 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.0
+## Requires kglite ≥ 0.16.1
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
