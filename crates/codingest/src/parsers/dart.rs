@@ -1015,34 +1015,54 @@ fn truncate_preview(text: &str) -> String {
     collapsed.chars().take(100).collect()
 }
 
-/// Normalise a Dart import/export URI to the synthetic `<root>.<stem>`
-/// module path so the builder's import resolver can match it against a
-/// project file. `dart:` core libraries and `package:` URIs for *other*
-/// packages are left verbatim — they are genuinely external and resolve
-/// to nothing, which is correct. Relative imports and same-package
-/// `package:` URIs resolve to a project module.
+/// Normalise a Dart import/export URI so the builder's import resolver
+/// can match it against a project file.
+///
+/// * `dart:` core libraries and `package:` URIs for *other* packages are
+///   left verbatim — they are genuinely external, resolve to nothing, and
+///   that is correct (no manufactured edges).
+/// * A same-package `package:<pkg>/<path>` URI addresses `lib/<path>`, so
+///   it is rewritten into the exact coordinate system
+///   `file_to_module_path` stamps on that file:
+///   `package:<pkg>/a/x.dart` → `<pkg_root>.lib.a.x`. Directory segments
+///   are preserved — collapsing to the stem alone made `a/x.dart` and
+///   `b/x.dart` collide on one key (mcp-servers report 2026-08-14,
+///   finding 7).
+/// * A relative URI (`import 'a/x.dart'`) resolves against the importing
+///   file's directory, which this function cannot see; it is left
+///   verbatim as a file-relative path and resolved by the builder's
+///   path-import route (`registry::uses_path_imports("dart")`), which
+///   checks candidates against the real file set and so cannot invent a
+///   target.
+///
+/// `as` / `show` / `hide` clauses affect bindings, not origins — the
+/// extracted string is the URI alone (`first_string_literal` never sees
+/// the identifier-only combinator clauses).
 fn normalize_dart_import(uri: &str, pkg_root: &str) -> String {
     if pkg_root.is_empty() || uri.starts_with("dart:") {
         return uri.to_string();
     }
-    let path_part = match uri.strip_prefix("package:") {
+    match uri.strip_prefix("package:") {
         Some(rest) => match rest.split_once('/') {
             // `package:<pkg>/...` resolves only within our own package.
-            Some((pkg, p)) if pkg == pkg_root => p,
-            _ => return uri.to_string(),
+            Some((pkg, p)) if pkg == pkg_root => {
+                let mut segments: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
+                let Some(last) = segments.last_mut() else {
+                    return uri.to_string();
+                };
+                *last = last.strip_suffix(".dart").unwrap_or(last);
+                if last.is_empty() {
+                    return uri.to_string();
+                }
+                let mut parts = vec![pkg_root, "lib"];
+                parts.extend(segments);
+                parts.join(".")
+            }
+            _ => uri.to_string(),
         },
-        None => uri,
-    };
-    let stem = path_part
-        .rsplit('/')
-        .next()
-        .unwrap_or(path_part)
-        .strip_suffix(".dart")
-        .unwrap_or(path_part);
-    if stem.is_empty() {
-        uri.to_string()
-    } else {
-        format!("{pkg_root}.{stem}")
+        // Relative URI — resolved by the builder against the importing
+        // file's directory (see doc comment above).
+        None => uri.to_string(),
     }
 }
 
@@ -1170,5 +1190,76 @@ impl LanguageParser for DartParser {
 
         result.files.push(file_info);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_dart_import;
+
+    /// `package:<pkg>/<dirs>/<file>.dart` preserves the directory segments
+    /// and lands in the `<pkg>.lib.<dirs>.<stem>` coordinates
+    /// `file_to_module_path` stamps on `lib/<dirs>/<file>.dart`.
+    #[test]
+    fn package_uri_preserves_directory_structure() {
+        assert_eq!(
+            normalize_dart_import("package:dart_import/a/x.dart", "dart_import"),
+            "dart_import.lib.a.x"
+        );
+        assert_eq!(
+            normalize_dart_import("package:pkg/src/deep/nested/util.dart", "pkg"),
+            "pkg.lib.src.deep.nested.util"
+        );
+        // A root-level lib file gets the `lib` segment too.
+        assert_eq!(
+            normalize_dart_import("package:pkg/x.dart", "pkg"),
+            "pkg.lib.x"
+        );
+    }
+
+    /// The collision that motivated the fix: `a/x.dart` and `b/x.dart`
+    /// must normalise to two distinct keys, not one shared stem.
+    #[test]
+    fn same_stem_in_different_directories_stays_distinct() {
+        let a = normalize_dart_import("package:dart_import/a/x.dart", "dart_import");
+        let b = normalize_dart_import("package:dart_import/b/x.dart", "dart_import");
+        assert_eq!(a, "dart_import.lib.a.x");
+        assert_eq!(b, "dart_import.lib.b.x");
+        assert_ne!(a, b);
+    }
+
+    /// Relative URIs resolve against the importing file's directory, which
+    /// this function cannot see — they pass through verbatim for the
+    /// builder's path-import route.
+    #[test]
+    fn relative_uri_is_left_verbatim() {
+        assert_eq!(normalize_dart_import("a/x.dart", "dart_import"), "a/x.dart");
+        assert_eq!(
+            normalize_dart_import("../shared/util.dart", "pkg"),
+            "../shared/util.dart"
+        );
+    }
+
+    /// `dart:` SDK libraries and other packages are external: verbatim,
+    /// so they resolve to nothing and produce no File→File edges.
+    #[test]
+    fn sdk_and_foreign_package_uris_are_left_verbatim() {
+        assert_eq!(normalize_dart_import("dart:core", "pkg"), "dart:core");
+        assert_eq!(
+            normalize_dart_import("package:flutter/material.dart", "pkg"),
+            "package:flutter/material.dart"
+        );
+    }
+
+    /// Degenerate URIs never panic and never produce a partial key.
+    #[test]
+    fn degenerate_uris_are_left_verbatim() {
+        assert_eq!(normalize_dart_import("package:pkg", "pkg"), "package:pkg");
+        assert_eq!(normalize_dart_import("package:pkg/", "pkg"), "package:pkg/");
+        assert_eq!(
+            normalize_dart_import("package:pkg/.dart", "pkg"),
+            "package:pkg/.dart"
+        );
+        assert_eq!(normalize_dart_import("x.dart", ""), "x.dart");
     }
 }

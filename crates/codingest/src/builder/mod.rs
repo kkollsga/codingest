@@ -1351,6 +1351,107 @@ mod tests {
         }
     }
 
+    /// Dart import resolution end to end: a same-package `package:` URI
+    /// keeps its directory segments (`a/x.dart` vs `b/x.dart` land on two
+    /// distinct files), a relative URI resolves against the importing
+    /// file's directory via the path-import route, and a `dart:` SDK
+    /// import produces no edge (mcp-servers report 2026-08-14, finding 7).
+    #[test]
+    fn dart_imports_resolve_with_directory_structure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = temp.path().join("dart_import");
+        std::fs::create_dir_all(project.join("lib/a")).expect("create lib/a");
+        std::fs::create_dir_all(project.join("lib/b")).expect("create lib/b");
+        std::fs::write(
+            project.join("lib/main.dart"),
+            "import 'dart:core';\n\
+             import 'package:dart_import/a/x.dart';\n\
+             import 'package:dart_import/b/x.dart' as bx;\n\
+             import 'a/x.dart' show aValue;\n\
+             int combine() { return aValue() + bx.bValue(); }\n",
+        )
+        .expect("write main");
+        std::fs::write(
+            project.join("lib/a/x.dart"),
+            "int aValue() { return 10; }\n",
+        )
+        .expect("write a/x");
+        std::fs::write(
+            project.join("lib/b/x.dart"),
+            "int bValue() { return 20; }\n",
+        )
+        .expect("write b/x");
+
+        let result = get_parser("dart")
+            .expect("Dart parser")
+            .parse_directory(&project, false);
+        let known_modules: HashSet<_> = result
+            .files
+            .iter()
+            .map(|file| file.module_path.clone())
+            .collect();
+        let module_pairs: Vec<_> = other_edges::build_import_edges(
+            &result.files,
+            &known_modules,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.file_path, edge.module))
+        .collect();
+        // Package URIs land in the module coordinates the files are
+        // stamped with; the relative `a/x.dart` resolves there too.
+        assert_eq!(
+            module_pairs
+                .iter()
+                .filter(|(f, m)| f == "lib/main.dart" && m == "dart_import.lib.a.x")
+                .count(),
+            2,
+            "package + relative imports of a/x: {module_pairs:?}"
+        );
+        assert_eq!(
+            module_pairs
+                .iter()
+                .filter(|(f, m)| f == "lib/main.dart" && m == "dart_import.lib.b.x")
+                .count(),
+            1,
+            "package import of b/x: {module_pairs:?}"
+        );
+        // `dart:core` resolves to nothing — three resolved rows total, and
+        // in particular no walk-shortened edge onto a bare ancestor module.
+        assert_eq!(module_pairs.len(), 3, "{module_pairs:?}");
+
+        let module_to_file = result
+            .files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_edges: Vec<_> = other_edges::build_file_import_edges(
+            &result.files,
+            &module_to_file,
+            &js_workspace::JsWorkspace::default(),
+        )
+        .into_iter()
+        .map(|edge| (edge.source, edge.target, edge.import_count))
+        .collect();
+        // The collision pair becomes TWO distinct File→File edges; the
+        // relative import aggregates into a/x's count.
+        assert_eq!(
+            file_edges,
+            vec![
+                (
+                    "lib/main.dart".to_string(),
+                    "lib/a/x.dart".to_string(),
+                    2i64
+                ),
+                (
+                    "lib/main.dart".to_string(),
+                    "lib/b/x.dart".to_string(),
+                    1i64
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn overload_identity_keeps_last_exact_duplicate_and_leaves_ordinary_ids_alone() {
         let ordinary = FunctionInfo {

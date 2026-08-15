@@ -144,10 +144,10 @@ const CORPORA: &[&str] = &[
     // corpus pins the broken pre-fix behaviour first; the fix phase
     // regenerates its golden with the reason recorded, so the golden diff IS
     // the record of what the fix changed.
-    "rust_import",   // crate::/super::/self::, use-as aliases, scoped_use_list
-    "py_import",     // relative imports, `import a, b`, aliased, from-pkg-import-sub, nested walk
-    "cpp_include",   // quoted #include vs <system>, same-dir + subdir resolution
-    "dart_import",   // package: URIs with directory structure; a/x.dart vs b/x.dart
+    "rust_import", // crate::/super::/self::, use-as aliases, scoped_use_list
+    "py_import",   // relative imports, `import a, b`, aliased, from-pkg-import-sub, nested walk
+    "cpp_include", // quoted #include vs <system>, same-dir + subdir resolution
+    "dart_import", // package: URIs with directory structure; a/x.dart vs b/x.dart
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

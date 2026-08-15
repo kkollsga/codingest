@@ -313,7 +313,12 @@ pub fn edge_sep(language: &str) -> &'static str {
 }
 
 pub fn uses_path_imports(language: &str) -> bool {
-    matches!(language, "c" | "cpp" | "html" | "css")
+    // Dart is here for its *relative* URIs only: `import 'a/x.dart'` is a
+    // real file path resolved against the importing file's directory,
+    // exactly the C/HTML/CSS shape. `dart:`/`package:` URIs never match a
+    // file path and fall through to the module-path walk (see
+    // `normalize_dart_import`).
+    matches!(language, "c" | "cpp" | "html" | "css" | "dart")
 }
 
 /// Languages whose import specifiers name a *path* but whose modules are
@@ -429,6 +434,7 @@ mod tests {
             ("php", false, true),
             ("html", true, false),
             ("css", true, false),
+            ("dart", true, false),
             ("rust", false, false),
         ];
         for (language, path_imports, hierarchy) in expected {
