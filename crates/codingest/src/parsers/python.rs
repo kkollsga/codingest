@@ -577,28 +577,86 @@ impl PythonParser {
         out
     }
 
-    fn parse_import(node: Node, source: &[u8]) -> Option<String> {
+    /// Every origin a single import statement names (mcp-servers report
+    /// 2026-08-14, findings 3+4 — the old `Option<String>` shape kept only the
+    /// first `dotted_name` and dropped relative and aliased forms entirely).
+    ///
+    /// * `import a, b` → `["a", "b"]`; `import a.b as c` → `["a.b"]` — an
+    ///   alias renames the binding, never the origin.
+    /// * `from pkg import sub` → `["pkg.sub"]`: the full dotted origin, so
+    ///   the edge can land on `pkg/sub.py` when `sub` is a module; the
+    ///   resolver's longest→shortest walk falls back to `pkg` when `sub` is
+    ///   a symbol. `from pkg import *` → `["pkg"]`.
+    /// * A MULTI-name from-import (`from pkg import a, b, c`) deliberately
+    ///   keeps the legacy single `["pkg"]` — byte-identical to what the old
+    ///   extractor emitted for that shape. Expanding it per name would count
+    ///   one statement as N imports (`import_count` 1 → 3 on the frozen
+    ///   `py_nested_defs` golden) and emit N parallel File→Module edges; if
+    ///   per-name expansion is ever wanted so `from pkg import mod_a, mod_b`
+    ///   can land on both module files, that is a conscious golden-moving
+    ///   change of its own, not part of the findings-3–5 fix.
+    /// * Relative forms keep their dots verbatim (`from . import util` →
+    ///   `[".util"]`, `from ..util import helper` → `["..util.helper"]`);
+    ///   `python_relative_import_candidates` in `builder/other_edges.rs`
+    ///   rewrites them against the importing file's own `module_path`, the
+    ///   same division of labour as Rust's `use`-path handling (B1).
+    fn parse_imports(node: Node, source: &[u8]) -> Vec<String> {
+        // The `name` field covers both statement kinds in tree-sitter-python:
+        // each is a `dotted_name` or an `aliased_import` whose own `name`
+        // field is the origin.
+        let mut names: Vec<String> = Vec::new();
         let mut cursor = node.walk();
+        for child in node.children_by_field_name("name", &mut cursor) {
+            let origin = if child.kind() == "aliased_import" {
+                child.child_by_field_name("name")
+            } else {
+                Some(child)
+            };
+            if let Some(origin) = origin {
+                names.push(node_text(origin, source).to_string());
+            }
+        }
         match node.kind() {
-            "import_statement" => {
-                for child in node.children(&mut cursor) {
-                    if child.kind() == "dotted_name" {
-                        return Some(node_text(child, source).to_string());
-                    }
-                }
-                None
-            }
+            "import_statement" => names,
             "import_from_statement" => {
-                for child in node.children(&mut cursor) {
-                    match child.kind() {
-                        "dotted_name" => return Some(node_text(child, source).to_string()),
-                        "relative_import" => return None,
-                        _ => {}
-                    }
+                let Some(module) = node.child_by_field_name("module_name") else {
+                    return Vec::new();
+                };
+                let module_text = node_text(module, source).to_string();
+                // Wildcard and multi-name forms: the module itself is the
+                // origin (see the doc comment for why multi-name is NOT
+                // expanded per name).
+                if names.len() != 1 {
+                    return vec![module_text];
                 }
-                None
+                // A relative prefix already ends in `.`; don't double it.
+                let joiner = if module_text.ends_with('.') { "" } else { "." };
+                vec![format!("{module_text}{joiner}{}", names[0])]
             }
-            _ => None,
+            _ => Vec::new(),
+        }
+    }
+
+    /// Collect every import statement in the file, wherever it sits
+    /// (mcp-servers report 2026-08-14, finding 5 — the root `children()` loop
+    /// never saw imports under `if TYPE_CHECKING:`, `try/except ImportError:`
+    /// or inside function bodies, all of which are real dependencies).
+    ///
+    /// A single depth-first walk visits each statement exactly once, so an
+    /// import is never double-counted by overlapping traversals; two distinct
+    /// statements naming the same origin still count twice, which is what the
+    /// file-edge `import_count` aggregation records.
+    fn collect_imports(node: Node, source: &[u8], out: &mut Vec<String>) {
+        match node.kind() {
+            "import_statement" | "import_from_statement" => {
+                out.extend(Self::parse_imports(node, source));
+            }
+            _ => {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    Self::collect_imports(child, source, out);
+                }
+            }
         }
     }
 
@@ -1386,11 +1444,9 @@ impl LanguageParser for PythonParser {
                 "class_definition" => {
                     Self::parse_class(child, &source, &module_path, &rel_path, &mut result, None);
                 }
-                "import_statement" | "import_from_statement" => {
-                    if let Some(imp) = Self::parse_import(child, &source) {
-                        file_info.imports.push(imp);
-                    }
-                }
+                // Imports are collected by the dedicated whole-tree walk
+                // below the loop (`collect_imports`), not here: the root loop
+                // only sees module-level statements, which is finding 5's bug.
                 "expression_statement" => {
                     let mut sub_cursor = child.walk();
                     for sub in child.children(&mut sub_cursor) {
@@ -1545,6 +1601,7 @@ impl LanguageParser for PythonParser {
             }
         }
 
+        Self::collect_imports(root, &source, &mut file_info.imports);
         file_info.annotations = extract_comment_annotations(root, &source, DEFAULT_COMMENT_TYPES);
         result.files.push(file_info);
 
@@ -1595,6 +1652,104 @@ mod module_path_tests {
         assert_eq!(
             module_of("/tmp/demo_proj/sub/mod.py", "/tmp/demo_proj"),
             "demo_proj.sub.mod"
+        );
+    }
+}
+
+/// Import extraction — mcp-servers report 2026-08-14, findings 3–5.
+#[cfg(test)]
+mod import_extraction_tests {
+    use super::*;
+    use crate::parsers::LanguageParser;
+
+    /// Parse `src` as `pkg/a.py` with `pkg` as the source root and return the
+    /// extracted import strings in document order.
+    fn imports_of(src: &str) -> Vec<String> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("pkg");
+        std::fs::create_dir(&root).expect("mkdir");
+        let path = root.join("a.py");
+        std::fs::write(&path, src).expect("write fixture");
+        let result = PythonParser::new().parse_file(&path, &root);
+        result.files[0].imports.clone()
+    }
+
+    /// Finding 4: every origin a statement names survives extraction —
+    /// multi-name `import a, b`, the aliased form's origin (not its alias),
+    /// and the full dotted origin of a single-name `from pkg import name`.
+    /// A multi-name from-import stays the legacy bare module and a wildcard
+    /// is the module itself (see the `parse_imports` doc comment).
+    #[test]
+    fn absolute_forms_keep_every_origin() {
+        let imports = imports_of(concat!(
+            "import os, sys\n",
+            "import pkg.util as u\n",
+            "from pkg import util\n",
+            "from pkg.sub import deeper\n",
+            "from pkg.deps import audit, emit, notify\n",
+            "from x import *\n",
+        ));
+        assert_eq!(
+            imports,
+            vec![
+                "os",
+                "sys",
+                "pkg.util",
+                "pkg.util",
+                "pkg.sub.deeper",
+                "pkg.deps",
+                "x",
+            ]
+        );
+    }
+
+    /// Finding 3: relative forms come through verbatim, dots intact, with the
+    /// imported name appended — the resolver owns the rewrite.
+    #[test]
+    fn relative_forms_keep_their_dots() {
+        let imports = imports_of(concat!(
+            "from . import util\n",
+            "from .util import helper as h\n",
+            "from ..util import helper\n",
+            "from .sub.deeper import deep_thing\n",
+            "from . import *\n",
+        ));
+        assert_eq!(
+            imports,
+            vec![
+                ".util",
+                ".util.helper",
+                "..util.helper",
+                ".sub.deeper.deep_thing",
+                "."
+            ]
+        );
+    }
+
+    /// Finding 5: imports inside `if TYPE_CHECKING:`, `try/except
+    /// ImportError:` and function bodies are all real dependencies and are
+    /// all collected — exactly once each.
+    #[test]
+    fn nested_blocks_and_function_bodies_are_walked() {
+        let imports = imports_of(concat!(
+            "from typing import TYPE_CHECKING\n",
+            "\n",
+            "if TYPE_CHECKING:\n",
+            "    from .b import b_fn\n",
+            "\n",
+            "try:\n",
+            "    import json\n",
+            "except ImportError:\n",
+            "    json = None\n",
+            "\n",
+            "\n",
+            "def run():\n",
+            "    import functools\n",
+            "    return functools\n",
+        ));
+        assert_eq!(
+            imports,
+            vec!["typing.TYPE_CHECKING", ".b.b_fn", "json", "functools"]
         );
     }
 }

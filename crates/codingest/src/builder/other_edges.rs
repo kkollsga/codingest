@@ -434,12 +434,81 @@ fn rust_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
     out
 }
 
+/// Candidates for a **Python** relative import (`from . import x`,
+/// `from ..util import helper`), rewritten into the same coordinate system
+/// `file_to_module_path` stamps on files — the conversion whose absence meant
+/// every relative import produced no edge at all (mcp-servers report
+/// 2026-08-14, finding 3: the parser returned `None` for `relative_import`).
+///
+/// The parser hands the form through verbatim, dots first (`.util`,
+/// `..util.helper`); this mirrors B1's `rust_import_candidates` division of
+/// labour. The importing file's own `module_path` is the anchor:
+/// * one leading dot names the **containing package** — a regular module pops
+///   its own leaf segment, while an `__init__` file's module path already *is*
+///   its package (`file_to_module_path` popped the `__init__` segment), so it
+///   pops nothing;
+/// * each extra dot pops one more segment (`from ..util import helper` in
+///   `pkg/sub/deeper.py` anchors at `…pkg`);
+/// * the remainder is appended and the result emitted longest→shortest, so
+///   `from .util import helper` tries `…pkg.util.helper` (a symbol, no file)
+///   before `…pkg.util` (the file). The walk never shortens below the anchor
+///   itself: the anchor is a real candidate (`from . import x` where `x` is a
+///   symbol defined in `__init__.py` is a dependency on the package's
+///   `__init__`), but nothing shorter can be named by a relative import.
+///
+/// Popping is clamped at one segment so a dot-count deeper than the file's
+/// own package chain (broken at runtime anyway) cannot empty the anchor.
+fn python_relative_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
+    if file.language != "python" {
+        return Vec::new();
+    }
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('.') {
+        return Vec::new();
+    }
+    let dots = trimmed.chars().take_while(|c| *c == '.').count();
+    let rest = &trimmed[dots..];
+
+    let mut base: Vec<String> = file
+        .module_path
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let leaf = file.path.rsplit('/').next().unwrap_or(&file.path);
+    let is_init = matches!(leaf, "__init__.py" | "__init__.pyi");
+    if !is_init && base.len() > 1 {
+        base.pop();
+    }
+    for _ in 1..dots {
+        if base.len() > 1 {
+            base.pop();
+        }
+    }
+    let anchor_len = base.len();
+    base.extend(
+        rest.split('.')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    );
+
+    let mut out = Vec::new();
+    for end in (anchor_len..=base.len()).rev() {
+        let candidate = base[..end].join(".");
+        if !candidate.is_empty() && !out.contains(&candidate) {
+            out.push(candidate);
+        }
+    }
+    out
+}
+
 fn module_path_prefix_candidates(file: &FileInfo, raw: &str, sep: &str) -> Vec<String> {
     if file.language != "python" {
         return Vec::new();
     }
     let trimmed = raw.trim();
-    // Relative imports (`from .util import x`) are dropped at parse time; the
+    // Relative imports (`from .util import x`) are owned by
+    // `python_relative_import_candidates` and never reach this pass; the
     // guard keeps a leading dot from ever producing an empty first segment.
     if trimmed.is_empty() || trimmed.starts_with('.') {
         return Vec::new();
@@ -548,6 +617,25 @@ pub fn build_import_edges(
                 }
                 continue;
             }
+            let relative_candidates = python_relative_import_candidates(f, use_path);
+            if !relative_candidates.is_empty() {
+                // A relative import is anchored to the importing file; the raw
+                // prefix walk has nothing to say about it, so no fallthrough.
+                // Self-guard as above: `from . import x` resolving to the
+                // importer's own package `__init__` is not an edge.
+                if let Some(module) = relative_candidates
+                    .into_iter()
+                    .find(|candidate| known_modules.contains(candidate))
+                {
+                    if module != f.module_path {
+                        out.push(ImportEdge {
+                            file_path: f.path.clone(),
+                            module,
+                        });
+                    }
+                }
+                continue;
+            }
             let parts: Vec<&str> = use_path.split(sep).collect();
             let mut resolved = false;
             for end in (1..=parts.len()).rev() {
@@ -641,6 +729,23 @@ pub fn build_file_import_edges(
                 // falling through to the raw prefix walk would re-land on the
                 // crate-root Module match the rewrite exists to prevent.
                 if let Some(target_file) = rust_candidates
+                    .into_iter()
+                    .find_map(|candidate| module_to_file.get(&candidate))
+                {
+                    if target_file != &f.path {
+                        *counts
+                            .entry((f.path.clone(), target_file.clone()))
+                            .or_insert(0) += 1;
+                    }
+                }
+                continue;
+            }
+            let relative_candidates = python_relative_import_candidates(f, use_path);
+            if !relative_candidates.is_empty() {
+                // Anchored to the importer; resolves here or not at all — the
+                // raw walk would split the dotted form into empty segments.
+                // Self-guard as above.
+                if let Some(target_file) = relative_candidates
                     .into_iter()
                     .find_map(|candidate| module_to_file.get(&candidate))
                 {
@@ -1830,6 +1935,119 @@ mod determinism_tests {
                 .map(|edge| edge.module)
                 .collect();
         assert_eq!(module_pairs, vec!["proj.src.mypkg.util".to_string()]);
+    }
+
+    /// Relative imports resolve against the importing file's own package —
+    /// mcp-servers report 2026-08-14, finding 3. Covers the four anchor
+    /// shapes: a regular module (`pkg/a.py` pops its `a` leaf), an `__init__`
+    /// (its module path already is the package), a multi-dot pop
+    /// (`..util.helper` from `pkg/sub/deeper.py` lands on `pkg/util.py`), and
+    /// the longest→shortest walk that steps over a trailing symbol name
+    /// (`.util.helper` → file `pkg/util.py`, not a phantom `helper` module).
+    #[test]
+    fn python_relative_imports_resolve_against_the_importers_package() {
+        let files = vec![
+            source_file("pkg/__init__.py", "root.pkg", "python", &[".util"]),
+            source_file(
+                "pkg/a.py",
+                "root.pkg.a",
+                "python",
+                &[".util", ".util.helper", ".sub.deeper.deep_thing"],
+            ),
+            source_file("pkg/sub/__init__.py", "root.pkg.sub", "python", &[]),
+            source_file(
+                "pkg/sub/deeper.py",
+                "root.pkg.sub.deeper",
+                "python",
+                &["..util.helper"],
+            ),
+            source_file("pkg/util.py", "root.pkg.util", "python", &[]),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        let module_pairs: Vec<_> =
+            build_import_edges(&files, &known_modules, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.file_path, edge.module))
+                .collect();
+        assert_eq!(
+            module_pairs,
+            vec![
+                ("pkg/__init__.py".to_string(), "root.pkg.util".to_string()),
+                ("pkg/a.py".to_string(), "root.pkg.util".to_string()),
+                ("pkg/a.py".to_string(), "root.pkg.util".to_string()),
+                ("pkg/a.py".to_string(), "root.pkg.sub.deeper".to_string()),
+                ("pkg/sub/deeper.py".to_string(), "root.pkg.util".to_string()),
+            ]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|f| (f.module_path.clone(), f.path.clone()))
+            .collect();
+        let file_pairs: Vec<_> =
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.source, edge.target, edge.import_count))
+                .collect();
+        assert_eq!(
+            file_pairs,
+            vec![
+                ("pkg/__init__.py".to_string(), "pkg/util.py".to_string(), 1),
+                ("pkg/a.py".to_string(), "pkg/sub/deeper.py".to_string(), 1),
+                ("pkg/a.py".to_string(), "pkg/util.py".to_string(), 2),
+                (
+                    "pkg/sub/deeper.py".to_string(),
+                    "pkg/util.py".to_string(),
+                    1
+                ),
+            ]
+        );
+    }
+
+    /// The anchor is the walk's floor and the self-guard holds there:
+    /// `from . import <symbol>` inside an `__init__.py` names the importer's
+    /// own package and produces no edge; the same form in a sibling module
+    /// lands on the package `__init__` (a real dependency on it); and a
+    /// dot-count deeper than the package chain clamps instead of emptying
+    /// the anchor, resolving to nothing rather than to a manufactured root.
+    #[test]
+    fn python_relative_imports_floor_at_the_anchor_and_never_self_target() {
+        let files = vec![
+            source_file("pkg/__init__.py", "root.pkg", "python", &[".some_symbol"]),
+            source_file(
+                "pkg/a.py",
+                "root.pkg.a",
+                "python",
+                &[".other_symbol", "...................nowhere"],
+            ),
+        ];
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        let module_pairs: Vec<_> =
+            build_import_edges(&files, &known_modules, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.file_path, edge.module))
+                .collect();
+        // `__init__` importing its own package: self, skipped. `a.py`'s
+        // `.other_symbol` falls back to the package itself; the absurd
+        // dot-run resolves to nothing.
+        assert_eq!(
+            module_pairs,
+            vec![("pkg/a.py".to_string(), "root.pkg".to_string())]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|f| (f.module_path.clone(), f.path.clone()))
+            .collect();
+        let file_pairs: Vec<_> =
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.source, edge.target, edge.import_count))
+                .collect();
+        assert_eq!(
+            file_pairs,
+            vec![("pkg/a.py".to_string(), "pkg/__init__.py".to_string(), 1)]
+        );
     }
 
     /// The clone layout the parser already handles (`xarray/core/dataset.py` →
