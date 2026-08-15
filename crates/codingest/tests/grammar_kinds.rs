@@ -20,7 +20,9 @@
 //! Extraction is deliberately narrow — two reliably-greppable shapes:
 //!   * `matches!(<expr>.kind(), "a" | "b" | …)` alternation literals
 //!   * `<expr>.kind() == "lit"` / `"lit" == <expr>.kind()` comparisons
+//!
 //! plus `child_by_field_name("name")` probed via `field_id_for_name`.
+//!
 //! `match <expr>.kind() { "lit" => … }` arms are NOT extracted (arm-literal
 //! regexes over bodies containing arbitrary strings false-positive); a kind
 //! matched only that way is outside this guard, and moving it into a
