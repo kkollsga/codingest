@@ -904,13 +904,30 @@ impl CppParser {
         });
     }
 
+    /// Quoted vs angle includes are distinct tree-sitter nodes
+    /// (`string_literal` vs `system_lib_string`) and must stay distinct in
+    /// the recorded import string: a quoted include names a project path the
+    /// compiler resolves against the including file's directory, while an
+    /// angle include names a toolchain header that no project path may claim.
+    /// The old code trimmed both delimiters, so `<local.h>` and `"local.h"`
+    /// were indistinguishable downstream and a *system* include whose name
+    /// collided with a project file manufactured a File→File edge
+    /// (mcp-servers report 2026-08-14, finding 6). Angle includes keep their
+    /// `<...>` delimiters — the marker `builder/other_edges.rs` uses to
+    /// exclude them from resolution.
     fn parse_preproc_include(node: Node, source: &[u8], file_info: &mut FileInfo) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if matches!(child.kind(), "string_literal" | "system_lib_string") {
-                let text = node_text(child, source);
-                let trimmed = text.trim_matches(|c| c == '"' || c == '<' || c == '>');
-                file_info.imports.push(trimmed.to_string());
+            match child.kind() {
+                "string_literal" => {
+                    let text = node_text(child, source);
+                    file_info.imports.push(text.trim_matches('"').to_string());
+                }
+                "system_lib_string" => {
+                    // Verbatim, delimiters included: `<vector>`.
+                    file_info.imports.push(node_text(child, source).to_string());
+                }
+                _ => {}
             }
         }
     }
@@ -2013,6 +2030,24 @@ mod export_macro_tests {
         assert!(
             !r.functions.iter().any(|f| f.name == "unknown"),
             "degenerate unknown function present"
+        );
+    }
+
+    #[test]
+    fn quoted_includes_trim_quotes_and_system_includes_keep_their_delimiters() {
+        // The `<...>` delimiters are the marker the builder's import
+        // resolution keys on to exclude system includes — trimming them here
+        // would silently re-open the `<local.h>`-collides-with-project-file
+        // false-edge path.
+        let r = parse_cpp(
+            "#include \"local.h\"\n\
+             #include \"util/helper.h\"\n\
+             #include <vector>\n\
+             #include <sys/stat.h>\n",
+        );
+        assert_eq!(
+            r.files[0].imports,
+            vec!["local.h", "util/helper.h", "<vector>", "<sys/stat.h>"]
         );
     }
 

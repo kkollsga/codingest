@@ -138,7 +138,14 @@ fn path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
     }
 
     let trimmed = raw.trim();
+    // A leading `<` is the C/C++ parser's system-include marker (`<vector>`
+    // kept verbatim): the specifier names a toolchain header searched only on
+    // the compiler's system path, so resolving it against project files would
+    // manufacture an edge whenever a project path happens to share the name
+    // (`<local.h>` vs a project-root `local.h`). Same no-edge outcome as any
+    // other unresolvable import.
     if trimmed.is_empty()
+        || trimmed.starts_with('<')
         || trimmed.starts_with('#')
         || trimmed.starts_with("//")
         || trimmed.contains("://")
@@ -497,6 +504,14 @@ pub fn build_import_edges(
     for f in files {
         let sep = get_separator(&f.language);
         for use_path in &f.imports {
+            // C/C++ system include (`<...>` kept verbatim by the parser):
+            // never resolvable to a project module or file, so it gets no
+            // edge of either kind — not even via the raw prefix walk, whose
+            // segment split could otherwise land `<sys/stat.h>` on a module
+            // by accident. No other language emits a `<`-leading specifier.
+            if use_path.starts_with('<') {
+                continue;
+            }
             if let Some((_, module)) = resolve_path_import(f, use_path, &file_to_module) {
                 out.push(ImportEdge {
                     file_path: f.path.clone(),
@@ -598,6 +613,11 @@ pub fn build_file_import_edges(
     for f in files {
         let sep = get_separator(&f.language);
         for use_path in &f.imports {
+            // Mirror of `build_import_edges`: a `<system>` include is
+            // unresolvable by definition and forms no File→File edge.
+            if use_path.starts_with('<') {
+                continue;
+            }
             if let Some((target_file, _)) = resolve_path_import(f, use_path, &file_to_module) {
                 if target_file != f.path {
                     *counts.entry((f.path.clone(), target_file)).or_insert(0) += 1;
@@ -1366,6 +1386,75 @@ mod determinism_tests {
                 ("examples/main.c", "include/header.h"),
                 ("index.html", "styles/site.css"),
                 ("styles/site.css", "styles/theme.css"),
+            ]
+        );
+    }
+
+    /// C/C++ `#include` resolution, asserted as exact edge sets. Mirrors the
+    /// `cpp_include` corpus plus the two shapes it cannot pin without moving
+    /// its golden: a root-level decoy proving the including file's own
+    /// directory wins (the compiler's quoted-include order), and an angle
+    /// include *colliding* with a real project file, which must still form no
+    /// edge — the `<...>` marker, not luck, is what excludes it.
+    #[test]
+    fn cpp_quoted_includes_resolve_dir_first_and_angle_includes_never_do() {
+        let files = vec![
+            source_file(
+                "main.cpp",
+                "main",
+                "cpp",
+                // `<local.h>` collides with the project's own `local.h`;
+                // `<vector>` collides with nothing. Neither may resolve.
+                &["local.h", "util/helper.h", "<vector>", "<local.h>"],
+            ),
+            source_file("local.h", "local", "cpp", &[]),
+            // Decoy: same basename as util/helper.h, at the root.
+            source_file("helper.h", "helper", "cpp", &[]),
+            source_file(
+                "util/helper.cpp",
+                "util/helper",
+                "cpp",
+                // Same-dir resolution from inside a subdirectory, and a
+                // parent-relative path that must normalize the `..` away.
+                &["helper.h", "../local.h"],
+            ),
+            source_file("util/helper.h", "util/helper", "cpp", &[]),
+        ];
+
+        let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
+        let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
+        let module_pairs: Vec<_> = module_edges
+            .iter()
+            .map(|edge| (edge.file_path.as_str(), edge.module.as_str()))
+            .collect();
+        assert_eq!(
+            module_pairs,
+            vec![
+                ("main.cpp", "local"),
+                ("main.cpp", "util/helper"),
+                // Dir-first: `"helper.h"` from util/ lands on util/helper,
+                // not the root decoy's `helper` module.
+                ("util/helper.cpp", "util/helper"),
+                ("util/helper.cpp", "local"),
+            ]
+        );
+
+        let module_to_file = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_edges = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default());
+        let file_pairs: Vec<_> = file_edges
+            .iter()
+            .map(|edge| (edge.source.as_str(), edge.target.as_str()))
+            .collect();
+        assert_eq!(
+            file_pairs,
+            vec![
+                ("main.cpp", "local.h"),
+                ("main.cpp", "util/helper.h"),
+                ("util/helper.cpp", "local.h"),
+                ("util/helper.cpp", "util/helper.h"),
             ]
         );
     }
