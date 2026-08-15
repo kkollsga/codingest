@@ -94,6 +94,12 @@ ship time — it's the only place the version bumps.
   copy-on-write lineage across the mutation, which the old spelling did not.
 
 ### Fixed
+- **Multi-name from-imports expand per name.** `from pkg import sub, helper`
+  previously recorded one bare-module import (the whole statement landed on
+  the package, and a call reached only through the submodule name read
+  `import_backed=false`). Each name now records its own import: submodule
+  names resolve to their files, symbol names fall back to the module, and
+  `import_count` counts names — uniform with `import a, b`.
 - **Docs-pass regression under kglite 0.16.0: MENTIONS/DOCUMENTS edges were
   silently lost.** 0.16.0 made every graph columnar from its first node, so
   the docs symbol index — which read node ids/titles via the raw

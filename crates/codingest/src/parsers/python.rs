@@ -631,15 +631,24 @@ impl PythonParser {
                     return Vec::new();
                 };
                 let module_text = node_text(module, source).to_string();
-                // Wildcard and multi-name forms: the module itself is the
-                // origin (see the doc comment for why multi-name is NOT
-                // expanded per name).
-                if names.len() != 1 {
+                // Wildcard: the module itself is the origin.
+                if names.is_empty() {
                     return vec![module_text];
                 }
-                // A relative prefix already ends in `.`; don't double it.
+                // Per-name expansion (multi-name included, closing the B2
+                // scope cut): each name becomes `module.name`. The RESOLVER
+                // decides whether that names a submodule file (edge to the
+                // file) or a symbol (falls back to the module — the
+                // longest→shortest candidate walk already does this), so
+                // `from pkg import sub, helper_fn` yields the submodule edge
+                // for `sub` and the package edge for `helper_fn`. A
+                // multi-name statement therefore counts once PER NAME, which
+                // is what the file-edge `import_count` records.
                 let joiner = if module_text.ends_with('.') { "" } else { "." };
-                vec![format!("{module_text}{joiner}{}", names[0])]
+                names
+                    .iter()
+                    .map(|n| format!("{module_text}{joiner}{n}"))
+                    .collect()
             }
             _ => Vec::new(),
         }
@@ -1684,9 +1693,9 @@ mod import_extraction_tests {
 
     /// Finding 4: every origin a statement names survives extraction —
     /// multi-name `import a, b`, the aliased form's origin (not its alias),
-    /// and the full dotted origin of a single-name `from pkg import name`.
-    /// A multi-name from-import stays the legacy bare module and a wildcard
-    /// is the module itself (see the `parse_imports` doc comment).
+    /// and the full dotted origin of every from-import name — multi-name
+    /// forms expand per name (2026-08-15, closing the B2 scope cut); a
+    /// wildcard is the module itself (see the `parse_imports` doc comment).
     #[test]
     fn absolute_forms_keep_every_origin() {
         let imports = imports_of(concat!(
@@ -1705,7 +1714,9 @@ mod import_extraction_tests {
                 "pkg.util",
                 "pkg.util",
                 "pkg.sub.deeper",
-                "pkg.deps",
+                "pkg.deps.audit",
+                "pkg.deps.emit",
+                "pkg.deps.notify",
                 "x",
             ]
         );

@@ -210,10 +210,10 @@ Two limits on that idiom, both on `import_backed`:
   (`from .util import helper`, `from ..pkg import y`, aliased forms, and
   imports inside `if TYPE_CHECKING:`/`try:`/function bodies) resolve against
   the importing file's own package — so `import_backed` is meaningful on
-  cross-file Python calls reached through either form. One documented limit:
-  a multi-name from-import of sibling *modules* (`from pkg import a, b`)
-  lands on the package rather than each module, so calls reached only through
-  that shape read `false`. (Same-file Python calls are unaffected — they are
+  cross-file Python calls reached through either form. Multi-name
+  from-imports expand per name: `from pkg import sub, helper` records one
+  import per name, the resolver sends each to its submodule file when one
+  exists and to the package otherwise. (Same-file Python calls are unaffected — they are
   `import_backed = true` on the same-file rule.) Through 0.1.7 no Python
   import resolved at all; absolute imports arrived in 0.2.0 and relative
   imports in this release.
