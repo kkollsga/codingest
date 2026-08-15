@@ -1,0 +1,4 @@
+[package]
+name = "rust_import"
+version = "0.1.0"
+edition = "2021"

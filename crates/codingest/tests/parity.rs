@@ -135,6 +135,19 @@ const CORPORA: &[&str] = &[
     // `.js` and in a `.py`, which must resolve to the JavaScript definition.
     // Its golden is captured additively (see `tests/goldens/README.md`).
     "html_js_lang_group",
+    // Added 2026-08-15 (post-016 program B0). The four corpora below exist
+    // because the import-resolution audit found the defect shapes invisible:
+    // rust_xfile carries ONE `pub mod` and zero `use` statements, the Python
+    // corpora carry only absolute happy-path imports, and C/C++ and Dart had
+    // no files at all — so five verified resolver defects (mcp-servers report,
+    // 2026-08-14) had no golden that could see a fix or a regression. Each
+    // corpus pins the broken pre-fix behaviour first; the fix phase
+    // regenerates its golden with the reason recorded, so the golden diff IS
+    // the record of what the fix changed.
+    "rust_import",   // crate::/super::/self::, use-as aliases, scoped_use_list
+    "py_import",     // relative imports, `import a, b`, aliased, from-pkg-import-sub, nested walk
+    "cpp_include",   // quoted #include vs <system>, same-dir + subdir resolution
+    "dart_import",   // package: URIs with directory structure; a/x.dart vs b/x.dart
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.
