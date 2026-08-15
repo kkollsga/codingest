@@ -64,6 +64,10 @@ tree-sitter-html = "0.23.2"
 tree-sitter-css = "0.25.0"
 tree-sitter-dart = "0.2.0"
 tree-sitter-r = "1.3.0"
+# 0.23.1 is the newest release (2024-09); it binds via tree-sitter-language
+# 0.1 (runtime-agnostic LanguageFn), so it carries no tree-sitter runtime
+# ceiling and links cleanly against tree-sitter 0.26.
+tree-sitter-julia = "0.23.1"
 toml = "1.1.3"
 walkdir = "2.5.0"
 tempfile = "3.27.0"

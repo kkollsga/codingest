@@ -20,8 +20,8 @@
 //! `manifest/mod.rs`.
 
 use super::{
-    agc, cpp, csharp, css, dart, go, html, java, php, python, r, rust_lang, swift, typescript,
-    LanguageParser,
+    agc, cpp, csharp, css, dart, go, html, java, julia, php, python, r, rust_lang, swift,
+    typescript, LanguageParser,
 };
 
 /// The language family a call may resolve within — tier 3 of
@@ -127,6 +127,10 @@ fn css_parser() -> Box<dyn LanguageParser + Send + Sync> {
 
 fn dart_parser() -> Box<dyn LanguageParser + Send + Sync> {
     Box::new(dart::DartParser::new())
+}
+
+fn julia_parser() -> Box<dyn LanguageParser + Send + Sync> {
+    Box::new(julia::JuliaParser::new())
 }
 
 fn agc_parser() -> Box<dyn LanguageParser + Send + Sync> {
@@ -283,6 +287,17 @@ language_registry! {
         noise_names: &[],
         make_parser: dart_parser,
     },
+    // Julia's coordinates are dotted throughout: `file_to_module_path` joins
+    // with `.` and every qualified name the parser emits is dotted
+    // (`pkg.src.Geometry.area`). Calls pool with the dotted-namespace family.
+    "julia" => {
+        extensions: ["jl"],
+        module_sep: ".",
+        edge_sep: ".",
+        group: LangGroup::PythonJava,
+        noise_names: julia::JULIA_NOISE_NAMES,
+        make_parser: julia_parser,
+    },
     // AGC's `/` separators are correct despite its dotted qualified names
     // (`Program.LABEL`): the separator fields are only ever applied to
     // `FileInfo.module_path` and `FileInfo.imports`, and the AGC parser
@@ -348,7 +363,18 @@ pub fn uses_path_imports(language: &str) -> bool {
     // `require(pkg)` names carry no extension and never match a file path,
     // so they fall through to the module walk; they are namespace-shaped and
     // R stays OUT of `build_file_import_edges`'s file-anchored allowlist.
-    matches!(language, "c" | "cpp" | "html" | "css" | "dart" | "r")
+    //
+    // Julia is here for `include("relative/path.jl")` — a literal file path
+    // resolved against the including file's directory, the C/HTML/CSS shape
+    // exactly. Its `using`/`import` module references carry no `.jl` suffix,
+    // so they can never match a file path here; they are namespace-shaped
+    // and julia is deliberately NOT in the file-anchored allowlist of the
+    // raw prefix walk (`other_edges.rs`), so a `using` of an external name
+    // colliding with a project file forms no File→File edge.
+    matches!(
+        language,
+        "c" | "cpp" | "html" | "css" | "dart" | "r" | "julia"
+    )
 }
 
 /// Languages whose import specifiers name a *path* but whose modules are
@@ -405,6 +431,7 @@ mod tests {
                 ("htm", "html"),
                 ("css", "css"),
                 ("dart", "dart"),
+                ("jl", "julia"),
                 ("agc", "agc"),
                 ("R", "r"),
                 ("r", "r"),
@@ -447,6 +474,7 @@ mod tests {
             ("html", ".", "."),
             ("css", ".", "."),
             ("dart", ".", "."),
+            ("julia", ".", "."),
             ("agc", "/", "/"),
             ("r", ".", "."),
             ("unknown", ".", "/"),
@@ -468,6 +496,7 @@ mod tests {
             ("html", true, false),
             ("css", true, false),
             ("dart", true, false),
+            ("julia", true, false),
             ("rust", false, false),
             // R: path imports for `source("path.R")`, no implicit hierarchy.
             ("r", true, false),
@@ -499,6 +528,7 @@ mod tests {
             cpp::CPP_NOISE_NAMES,
             swift::SWIFT_NOISE_NAMES,
             php::PHP_NOISE_NAMES,
+            julia::JULIA_NOISE_NAMES,
             agc::AGC_NOISE_NAMES,
         ]
         .into_iter()

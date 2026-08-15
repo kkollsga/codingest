@@ -468,6 +468,19 @@ pub const BRANCH_KINDS_DART: &[&str] = &[
     "for_element",
 ];
 
+pub const BRANCH_KINDS_JULIA: &[&str] = &[
+    "if_statement",
+    "elseif_clause",
+    "ternary_expression",
+    "for_statement",
+    "while_statement",
+    "catch_clause",
+    // `&&` / `||` short-circuit chains are plain `binary_expression` nodes in
+    // tree-sitter-julia — the operator is a child token, not a kind — so they
+    // are deliberately NOT counted (counting every binary_expression would
+    // count arithmetic).
+];
+
 /// Walk `body` and return (branch_count, max_nesting).
 ///
 /// `branch_count` increments for every node whose kind is in `branch_kinds`.

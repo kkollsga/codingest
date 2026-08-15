@@ -159,6 +159,20 @@ const CORPORA: &[&str] = &[
     // reference) — could be changed, or deleted, with zero golden movement.
     // Its golden is captured additively (see `tests/goldens/README.md`).
     "r_basic",
+    // Added 2026-08-15 (post-016 program E, Julia support). No other corpus
+    // contains a `.jl` file, so the entire Julia parser — long-form and
+    // short-form (`f(x) = …`) functions, a multi-dispatch pair that the
+    // builder's overload pass must keep as two nodes, `module` blocks,
+    // structs with fields and `<:` supertypes — could be changed, or deleted,
+    // with zero golden movement. It also pins Julia's split import model from
+    // both sides: an `include("…")` chain (Main.jl → geometry.jl →
+    // shapes/circle.jl) that MUST form File→File edges through the path
+    // route, and a `using Downloads` whose name collides with a never-included
+    // src/Downloads.jl file bait that must form NO File→File edge — `using`
+    // is namespace-shaped and julia is deliberately absent from the
+    // file-anchored raw-walk allowlist. Its golden is captured additively
+    // (see `tests/goldens/README.md`).
+    "julia_basic",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

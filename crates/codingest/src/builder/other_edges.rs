@@ -1600,6 +1600,82 @@ mod determinism_tests {
         );
     }
 
+    /// Julia's split import model, asserted as exact edge sets. Mirrors the
+    /// `julia_basic` corpus in miniature: `include("…")` strings are FILE
+    /// PATHS and must resolve through the path route (dir-relative, exact,
+    /// extension carried), while `using`/`import` module references are
+    /// namespace-shaped — julia is deliberately NOT in the raw prefix walk's
+    /// file-anchored allowlist, so a `using Downloads` colliding with a
+    /// project file `src/Downloads.jl` must form NO File→File edge, and a
+    /// relative `using .Geometry` must resolve to nothing rather than
+    /// something arbitrary.
+    #[test]
+    fn julia_includes_resolve_but_using_references_never_claim_files() {
+        let files = vec![
+            source_file(
+                "src/Main.jl",
+                "pkg.src.Main",
+                "julia",
+                // include, include, external-collision bait, local module ref.
+                &["geometry.jl", "util.jl", "Downloads", ".Geometry"],
+            ),
+            source_file(
+                "src/geometry.jl",
+                "pkg.src.geometry",
+                "julia",
+                &["shapes/circle.jl"],
+            ),
+            source_file(
+                "src/shapes/circle.jl",
+                "pkg.src.shapes.circle",
+                "julia",
+                &[],
+            ),
+            source_file("src/util.jl", "pkg.src.util", "julia", &[]),
+            // The bait: same name as the `using Downloads` reference.
+            source_file("src/Downloads.jl", "pkg.src.Downloads", "julia", &[]),
+        ];
+
+        let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
+        let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
+        let module_pairs: Vec<_> = module_edges
+            .iter()
+            .map(|edge| (edge.file_path.as_str(), edge.module.as_str()))
+            .collect();
+        // Only the includes resolve (to the included file's module); neither
+        // `Downloads` nor `.Geometry` matches any known module.
+        assert_eq!(
+            module_pairs,
+            vec![
+                ("src/Main.jl", "pkg.src.geometry"),
+                ("src/Main.jl", "pkg.src.util"),
+                ("src/geometry.jl", "pkg.src.shapes.circle"),
+            ]
+        );
+
+        let module_to_file = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let file_edges = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default());
+        let file_pairs: Vec<_> = file_edges
+            .iter()
+            .map(|edge| (edge.source.as_str(), edge.target.as_str()))
+            .collect();
+        assert_eq!(
+            file_pairs,
+            vec![
+                ("src/Main.jl", "src/geometry.jl"),
+                ("src/Main.jl", "src/util.jl"),
+                ("src/geometry.jl", "src/shapes/circle.jl"),
+            ]
+        );
+        // The failure this test exists to catch, stated explicitly: no edge
+        // of either kind may land on the bait file.
+        assert!(file_pairs.iter().all(|(_, t)| *t != "src/Downloads.jl"));
+        assert!(module_pairs.iter().all(|(_, m)| *m != "pkg.src.Downloads"));
+    }
+
     /// The TS/JS module-path branch, asserted as exact edge sets. Mirrors the
     /// `ts_monorepo` corpus in miniature so a break shows up here with a
     /// readable diff before it shows up as a moved golden digest.

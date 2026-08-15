@@ -11,6 +11,7 @@ pub mod dart;
 pub mod go;
 pub mod html;
 pub mod java;
+pub mod julia;
 pub mod php;
 pub mod python;
 pub mod r;

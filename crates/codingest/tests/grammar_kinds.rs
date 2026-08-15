@@ -56,6 +56,7 @@ fn grammars_for(file: &str) -> Option<Vec<tree_sitter::Language>> {
         "css.rs" => vec![tree_sitter_css::LANGUAGE.into()],
         "dart.rs" => vec![tree_sitter_dart::LANGUAGE.into()],
         "r.rs" => vec![tree_sitter_r::LANGUAGE.into()],
+        "julia.rs" => vec![tree_sitter_julia::LANGUAGE.into()],
         // agc.rs: hand-rolled assembly parser, no tree-sitter grammar.
         // shared.rs/mod.rs/registry.rs: no grammar of their own; any
         // .kind() literals there belong to callers' grammars and are

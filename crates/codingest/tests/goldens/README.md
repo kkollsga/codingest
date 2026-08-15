@@ -162,6 +162,25 @@ back byte-identical. The gate was then mutation-tested: restoring the separator
 sniff in `infer_lang_group`'s place turned it red (the call re-resolved to the
 Python definition) and the registry lookup turned it back green.
 
+The additive `julia_basic` digest was captured on 2026-08-15 with the corpus
+itself and with Julia language support (post-016 program phase E): no
+pre-existing corpus contained a `.jl` file, so the entire Julia parser had no
+golden coverage. The corpus pins long-form and short-form (`f(x) = …`)
+functions, a multiple-dispatch `area` pair the builder's overload pass must
+keep as two `#<sha256>`-decorated nodes, a `module` block with qualified
+members and a HAS_SUBMODULE declaration, structs with fields and a `<:`
+supertype (EXTENDS), and Julia's split import model from both sides: an
+`include("…")` chain (`Main.jl → geometry.jl → shapes/circle.jl`) that must
+form File→File IMPORTS edges through the path route, and a `using Downloads`
+colliding with a never-included `src/Downloads.jl` bait that must form none —
+`using`/`import` are namespace references and julia is deliberately absent
+from the raw prefix walk's file-anchored allowlist. Verified additive the
+strict way: `capture_goldens` rewrote all the files, and afterwards
+`git status` reported only `julia_basic.sha256` as new. The gate was then
+mutation-tested: removing `"julia"` from `uses_path_imports` (include edges
+vanish) and breaking short-form function extraction each turned the suite red,
+and each restore turned it back green.
+
 ## The 2026-08-10 bulk regeneration (13 of 14 digests)
 
 **This is the first bulk regeneration since the extraction**, and the only one
