@@ -11,6 +11,26 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- **File→File import edges exist for Rust, Python, C/C++ and Dart.** A
+  five-defect family (independently reported by mcp-servers, 2026-08-14,
+  upstream lead natashahirt/kglite PR #4) left the file-level dependency graph
+  near-empty outside JS/TS: import strings were written in coordinate systems
+  the resolver never converted from. Now: Rust `crate::`/`super::`/`self::`
+  paths rewrite into the module coordinates files are stamped with (a 41-file
+  scan that produced 0 File→File edges and 49 edges to one Module `"crate"`
+  now resolves per-file); `use foo as bar` and `use a::{b, c}` are extracted;
+  Python relative imports resolve against the importing file's package,
+  `import a, b`/aliased/single-name-from origins all survive, and imports
+  under `if TYPE_CHECKING:`/`try:`/function bodies are seen; Dart `package:`
+  URIs keep their directory structure (`a/x.dart` and `b/x.dart` no longer
+  collide) and relative URIs resolve file-relative; C/C++ angle includes are
+  structurally excluded from file edges (an angle include naming a real
+  project file no longer manufactures one — quoted-include resolution was
+  already correct since 0.2.2). CALLS edges over these routes gain
+  `import_backed=true`. Six goldens moved deliberately (four new import
+  corpora + regenerations), each with its reason recorded per commit; a
+  Python-`ast` oracle (machinery sharing nothing with the parsers) verifies
+  the Python edge set at 7/7 recall.
 - **Engine floor moves to kglite 0.16.1.** Two things reach us. (1) The wire
   break: `kglite_value_to_json` now emits real JSON for nine `Value` variants
   that previously leaked Rust `Debug` syntax — `codingest query --format json`
