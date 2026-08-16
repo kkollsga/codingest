@@ -10,6 +10,36 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-16
+
+### Changed
+- **Engine floor moves to kglite 0.16.2 — edge properties now carry their real
+  types.** One 0.16.2 fix reaches us, and it reaches everything: bulk-loaded
+  edge properties (`add_connections`, the only edge path codingest uses)
+  recorded every property as `Unknown` instead of its observed type. Measured
+  before/after on the same corpus, `CALL db.schema.relTypeProperties()` moves
+  `:CALLS.call_count` from `["Unknown"]` to `["Long"]` and
+  `:CALLS.import_backed` to `["Boolean"]`, so schema consumers — `graph_overview`,
+  Neo4j-shaped clients reading `db.schema.*` / `apoc.meta.*` — get a typed
+  edge schema for the first time. **A graph built before this keeps its
+  `Unknown`s until its edges are rewritten: rebuild stale `.kgl` artifacts,
+  re-reading them on the new engine does not fix them.** The property *values*
+  are unchanged, so the frozen parity goldens are byte-identical across the
+  bump. Nothing else in 0.16.2 touches us (Bolt-server Neo4j/APOC
+  compatibility, Java bindings, an `id(n)` projection fast path).
+
+### Fixed
+- **Published crates no longer carry local working state.** The `dev-docs/`
+  ignore rules are root-anchored (they must be, for the
+  `!/dev-docs/bench/scripts/` re-include), so a `dev-docs/` created under a
+  crate directory was merely untracked — and `cargo package` ships
+  untracked-but-unignored files. A stray `crates/codingest/dev-docs/` had put
+  15 scratch files into the `codingest` package. Caught before publish;
+  0.2.3 on crates.io is clean. Fixed at both ends: `crates/**/dev-docs/` is
+  ignored, and a release gate now asserts `cargo package --list` for all four
+  publishable crates carries no `dev-docs/` or `inbox/` path — read from
+  cargo's real list, not re-derived from the ignore rules.
+
 ## [0.2.3] - 2026-08-15
 
 ### Changed

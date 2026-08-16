@@ -7,6 +7,23 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.4 — 2026-08-16: 21 corpora, all green across the kglite 0.16.2 engine move
+
+Released state: unchanged corpus set (**21 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`). The engine floor moved kglite 0.16.1 → 0.16.2, whose
+one change reaching codingest is the `add_connections` edge-property **type
+registry** fix — every edge property we write (`CALLS.call_count`,
+`IMPORTS.import_count`, …) was recorded as `Unknown` and now carries its
+observed type. **Every golden digest is byte-identical across that move.** That
+is the expected result and worth stating precisely: the fix changes edge
+property *type metadata*, which the canonical digest does not cover, and not
+the property *values*, which it does. So a green `golden_parity` here confirms
+the values did not move; it is not evidence about the schema, which was verified
+separately by querying `CALL db.schema.relTypeProperties()` on graphs built by
+each engine (`["Unknown"]` → `["Long"]`/`["Boolean"]`). No builder source
+changed this release.
+
 ## Post-016 program, closing reconciliation — 2026-08-15: 21 corpora
 
 Three golden events post-date the entry below and are recorded here per this

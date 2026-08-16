@@ -58,6 +58,13 @@ docs/autoapi/
 /dev-docs/bench/scripts/**/*.kgl
 /dev-docs/bench/scripts/**/*.kgle
 /inbox/
+# The rules above are root-anchored so `!/dev-docs/bench/scripts/` can re-include
+# a subdir — which means a `dev-docs/` created anywhere ELSE is NOT ignored, and
+# `cargo package` ships untracked-but-unignored files. A stray
+# `crates/codingest/dev-docs/temp/release-0.2.1/` put 15 scratch files into the
+# 0.2.4 package that way (caught before publish; 0.2.3 on crates.io is clean).
+# Only the root copy is a working folder; anywhere under crates/ it is a stray.
+crates/**/dev-docs/
 
 # macOS
 .DS_Store

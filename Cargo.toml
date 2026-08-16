@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,15 +17,29 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.1
-# floor picks up the wire-JSON break (kglite_value_to_json emits real JSON for
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.2
+# floor fixes the edge-property type registry: `add_connections` — the ONLY
+# edge path codingest uses (builder/load.rs, other_edges.rs, cross_lang.rs,
+# docs/mod.rs) — registered every property as "Unknown" instead of its observed
+# type. Measured on a two-function Python corpus: `CALL
+# db.schema.relTypeProperties()` answered `:CALLS.call_count -> ["Unknown"]`
+# built on 0.16.1 and `["Long"]` built on 0.16.2. So this is output-affecting
+# for schema consumers (graph_overview, Neo4j-shaped clients) and a real floor,
+# not a lockfile refresh — but it is metadata beside the property values, so
+# the frozen parity goldens are byte-identical across the bump. Per the
+# changelog a graph written before the fix keeps its "Unknown"s until its edges
+# are rewritten: a stale `.kgl` must be REBUILT, not just re-read on the new
+# engine. Nothing else in 0.16.2 reaches us — it is Bolt-server Neo4j/APOC
+# compatibility, Java binding work, and an `id(n)` projection fast path.
+# It sits on the 0.16.1
+# floor, which picks up the wire-JSON break (kglite_value_to_json emits real JSON for
 # nine variants — our CLI renders through it, so expectations pin the NEW
 # shapes and an older engine would fail them) on top of the 0.16.0
 # base, which is a HARD floor, not a preference: 0.16.0 writes `.kgl` container v6,
 # which kglite 0.15.14 and earlier refuse by version number. Because
 # `codingest.build()` writes the bytes with the Rust engine compiled in here and
 # reads them back through the separately-installed Python `kglite` wheel, the
-# two sides must be on the same side of that break — hence `>=0.16.1,<0.17` in
+# two sides must be on the same side of that break — hence `>=0.16.2,<0.17` in
 # pyproject.toml, and hence a reader on 0.15.x is not "old but workable", it is
 # a hard failure with `FileFormatError`.
 # 0.16.0 also removed `DirGraph::enable_columnar` from the public API (every
@@ -90,8 +104,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.1", default-features = false }
-kglite-mcp-server = { version = "0.16.1", default-features = false }
+kglite = { version = "0.16.2", default-features = false }
+kglite-mcp-server = { version = "0.16.2", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

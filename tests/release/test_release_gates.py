@@ -979,6 +979,51 @@ def test_kglite_cargo_and_python_floors_are_in_lockstep():
     )
 
 
+def test_published_crates_ship_no_local_working_state():
+    """`cargo package` ships untracked files that are merely UNIGNORED.
+
+    The `.gitignore` rules for the working folder are root-anchored (`/dev-docs/*`
+    plus a `!/dev-docs/bench/scripts/` re-include, which only works anchored), so
+    a `dev-docs/` created anywhere else is not ignored — and cargo packages
+    untracked-but-unignored files with only a warning. A stray
+    `crates/codingest/dev-docs/temp/release-0.2.1/` put 15 scratch files into the
+    `codingest` package this way; every prior gate step was green, because
+    nothing here reads the package manifest cargo actually builds.
+
+    Asserted against `cargo package --list` — the real list, not a re-derivation
+    of the ignore rules, which is the thing that was wrong.
+    """
+    crates = ["codingest", "codingest-cli", "codingest-mcp", "codingest-py"]
+    for crate in crates:
+        res = subprocess.run(
+            ["cargo", "package", "--list", "--allow-dirty", "-p", crate],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO),
+        )
+        assert res.returncode == 0, (
+            f"`cargo package --list -p {crate}` failed, so this gate checked "
+            f"nothing:\n{res.stderr}"
+        )
+        files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        assert files, f"`cargo package --list -p {crate}` listed no files at all"
+        strays = [
+            f
+            for f in files
+            if f.startswith("dev-docs/")
+            or "/dev-docs/" in f
+            or f.startswith("inbox/")
+            or "/inbox/" in f
+        ]
+        assert not strays, (
+            f"the {crate} package would publish local working state to "
+            f"crates.io: {strays} — these are gitignored-by-intent working "
+            "folders that escaped a root-anchored ignore rule. Move the stray "
+            "out of the crate directory; do not add a cargo `exclude`, which "
+            "would hide the next one."
+        )
+
+
 def test_ci_pytest_pins_are_internally_consistent():
     """`ci.yml` pins pytest twice and its own comment claims they agree.
 

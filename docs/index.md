@@ -11,12 +11,16 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.1
+## Requires kglite ≥ 0.16.2
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The 0.16.1 floor adds the structured wire-JSON shapes and
-the documentation contract for raw `NodeData` reads on top of 0.16.0's
+in-tree builder. The 0.16.2 floor makes bulk-loaded edge properties record
+their observed types — every edge property codingest writes through
+`add_connections` (`CALLS.call_count`, `IMPORTS.import_count`, …) reported
+`Unknown` to schema consumers before it. It sits on 0.16.1's structured
+wire-JSON shapes and the documentation contract for raw `NodeData` reads, on
+top of 0.16.0's
 columnar-from-first-node storage and `.kgl` v6; beneath those sit the
 workspace lifecycle and
 containment controls introduced through 0.15.5, the corrected mixed-selection
