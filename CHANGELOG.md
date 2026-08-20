@@ -10,6 +10,35 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.16.5 — a lockstep refresh, not a fix we
+  needed.** Nothing in 0.16.3-0.16.5 reaches a path codingest exercises, and
+  the graph you get is byte-for-byte the graph 0.16.2 produced: the frozen
+  parity goldens hold, `kgl_bytes_are_stable_across_builds` holds, and the
+  fixture corpus builds the same 405 nodes / 616 edges docs-on and 398 / 596
+  docs-off on both engines. **If you install the wheel, upgrade the Python
+  engine too** — `codingest.build()` writes `.kgl` bytes with the Rust engine
+  and reads them back through your separately-installed `kglite` wheel, so the
+  requirement moves to `kglite>=0.16.5,<0.17` and the two halves stay on one
+  release.
+
+  0.16.5's one breaking change does not reach the codingest API: node,
+  relationship and map properties became a `kglite::datatypes::PropMap` instead
+  of a `BTreeMap<String, Value>`, and codingest names neither
+  `NodeValue::properties` nor `RelValue::properties` — its single `Value::Map`
+  site matches a wildcard. No file format moved. The rest of the range is
+  engine and server surface we do not consume: relationship constraints,
+  change-data-capture, an opt-in parallel Cypher runtime (off by default and
+  not exposed by the MCP server), and the MCP-side `reload_graph` /
+  `graph_watch` / `tools_allow` additions. mcp-methods 0.4.5 comes along and
+  makes the GitHub tools require an explicit `builtins.github: true`;
+  codingest-mcp registers no GitHub tools, so its tool surface is unchanged.
+
+  Query performance is flat. Measured release-mode as three interleaved A/B
+  pairs per docs mode on corpus `ad8b3084…`, control `defs_per_file` moving
+  +0.0%: every cell flat except `varlen_callers_1_3`, which improves 9.7% in
+  both modes (0.031 -> 0.028 ms).
+
 ## [0.2.4] - 2026-08-16
 
 ### Changed

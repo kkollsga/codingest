@@ -17,8 +17,51 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.2
-# floor fixes the edge-property type registry: `add_connections` — the ONLY
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.5
+# floor is a LOCKSTEP REFRESH, not a fix we need: nothing in 0.16.3-0.16.5
+# reaches a path codingest exercises, and the evidence is the gate rather than
+# the changelog. `golden_parity` is green and `kgl_bytes_are_stable_across_builds`
+# holds, so the frozen goldens are byte-identical across the bump; the fixture
+# corpus builds 405 nodes / 616 edges docs-on and 398 / 596 docs-off on both
+# 0.16.2 and 0.16.5. Perf is flat: three interleaved A/B pairs per docs mode on
+# corpus ad8b3084…, control `defs_per_file` moving +0.0%, every cell flat except
+# `varlen_callers_1_3` at -9.7% in BOTH modes (0.031 -> 0.028 ms) — a small
+# consistent win, plausibly the PropMap refcount clone below. A same-machine
+# before/after pair taken 20 minutes apart instead read +50% on three cells with
+# the control at +15%; that is the instrument, and the interleaved pairs are why
+# the flat reading is the one recorded (doctrine R11).
+#
+# What each release contains, and why none of it lands on us:
+#   * 0.16.5 is a BREAKING Rust API change — node, relationship and map
+#     properties are a `kglite::datatypes::PropMap`, not a
+#     `BTreeMap<String, Value>`. We are not exposed: codingest names neither
+#     `NodeValue::properties` nor `RelValue::properties`, and its one
+#     `Value::Map` site (docs/mod.rs) matches the wildcard `Value::Map(_)` to
+#     stringify a non-scalar, which binds nothing. The workspace compiles clean
+#     with no source change. No file format moved — postcard's map framing is
+#     identical — which is what lets the goldens hold. Also in 0.16.5:
+#     relationship constraints, CDC before-images and selectors, and a
+#     re-save determinism fix. codingest declares no constraints, consumes no
+#     CDC, and only ever writes FRESH saves, so the re-save fix (and its
+#     property-name reordering) cannot reach our bytes.
+#   * 0.16.4 adds the opt-in parallel Cypher runtime (off by default and NOT
+#     exposed by the MCP server), property-type constraints, and CDC v1. Its
+#     one format note — a `.kgl` carrying a property-type constraint does not
+#     load on 0.16.3 or earlier — is inert here because codingest declares
+#     none, so our files stay readable by an older engine. That is why the
+#     Python floor moves for LOCKSTEP, not because the format broke: the
+#     `test_kglite_cargo_and_python_floors_are_in_lockstep` gate requires
+#     Cargo.toml, pyproject.toml and ci.yml to state one floor, and a
+#     "the reader could stay lower" argument is exactly the drift it exists to
+#     stop.
+#   * 0.16.3 is MCP-side: `reload_graph`, `extensions.graph_watch`, and
+#     `extensions.tools_allow`. It also carries mcp-methods 0.4.5, which makes
+#     the GitHub tools require an explicit `builtins.github: true` — codingest-mcp
+#     registers no GitHub tools and ships no manifest declaring them, so its
+#     agent-visible tool surface is unchanged.
+#
+# Floor history below; the 0.16.2 entry is the last one that changed our output.
+# The 0.16.2 floor fixed the edge-property type registry: `add_connections` — the ONLY
 # edge path codingest uses (builder/load.rs, other_edges.rs, cross_lang.rs,
 # docs/mod.rs) — registered every property as "Unknown" instead of its observed
 # type. Measured on a two-function Python corpus: `CALL
@@ -104,8 +147,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.2", default-features = false }
-kglite-mcp-server = { version = "0.16.2", default-features = false }
+kglite = { version = "0.16.5", default-features = false }
+kglite-mcp-server = { version = "0.16.5", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

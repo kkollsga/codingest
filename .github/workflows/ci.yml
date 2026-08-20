@@ -257,7 +257,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install maturin==1.14.1 pytest==9.1.1 pytest-timeout==2.4.0 kglite==0.16.2
+          .venv/bin/python -m pip install maturin==1.14.1 pytest==9.1.1 pytest-timeout==2.4.0 kglite==0.16.5
 
       - name: Build the codingest extension into the venv (maturin develop)
         # DECISION (2026-08-10): this job keeps `--release`, deliberately — it
