@@ -88,6 +88,48 @@ Consequences for this document:
   with its machine state recorded. The next release capture starts the new
   comparable series.
 
+## Release 0.2.5 — 2026-08-20 (kglite 0.16.2 → 0.16.5 engine move: flat, one small win)
+
+No builder source changed this release (`git diff v0.2.4..HEAD --
+crates/codingest/src` is empty), so this section measures the **engine move
+alone**. Corpus `ad8b3084…` (`tests/corpus`, 94 files, 33 KB), release profile,
+same machine.
+
+**Method — and it is the point of this entry.** The two engines were measured as
+**three interleaved A/B pairs per docs mode**: build both `codingest_bench`
+binaries first, then alternate them back-to-back within each round so any drift
+lands on both sides equally. Min per query across the three pairs.
+
+| query | 0.16.2 | 0.16.5 | delta |
+|---|---:|---:|---|
+| `defs_per_file` (CONTROL) | 0.023 | 0.023 | **+0.0 %** |
+| `varlen_callers_1_3` | 0.031 | 0.028 | **−9.7 %** |
+| `top20_by_branch_count` | 0.015 | 0.015 | +0.0 % |
+| `calls_edge_scan` | 0.012 | 0.012 | +0.0 % |
+| `anchored_callers` | 0.004 | 0.004 | +0.0 % |
+| `two_hop_into_hot` | 0.001 | 0.001 | +0.0 % |
+| `method_calls_mix` | 0.001 | 0.001 | +0.0 % |
+| `contains_new` | 0.003 | 0.003 | +0.0 % |
+| `reverse_callees_of_hub` | 0.003 | 0.003 | +0.0 % |
+
+(ms, docs-on; docs-off agrees, including `varlen_callers_1_3` at −9.7 %.) Node
+and edge counts are identical on both engines in both modes — 405 / 616 docs-on,
+398 / 596 docs-off.
+
+`varlen_callers_1_3` is the only cell that moved, it moved the same way in both
+docs modes, and it is plausibly 0.16.5's `PropMap` change — materialised node
+properties now travel between rows for a refcount rather than a deep copy, which
+is the shape of a var-length traversal collecting `count(DISTINCT)`. It is
+0.003 ms on a 33 KB corpus; it is recorded as a direction, not a headline.
+
+**Why the interleaving is in this record.** A plain before/after pair of the
+same two engines, taken twenty minutes apart on this machine, instead read
+**+50 % on three cells with the control at +15 %** — the whole capture drifting,
+which the control correctly flagged and which would otherwise have read as a
+regression to bisect. Doctrine `R11`: a control that moves voids the capture
+rather than licensing a choice about which cells to believe. The interleaved
+pairs are why the flat reading above is the one published.
+
 ## Post-016 program — 2026-08-15 (kglite 0.16.1 + import-resolution fixes; fresh capture, no cross-comparison)
 
 **No before/after comparison is published for this program, deliberately.**

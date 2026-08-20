@@ -7,6 +7,30 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.5 — 2026-08-20: 21 corpora, all green across the kglite 0.16.5 engine move
+
+Released state: unchanged corpus set (**21 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, with `kgl_bytes_are_stable_across_builds` alongside
+them). The engine floor moved kglite 0.16.2 → 0.16.5 and **no builder source
+changed this release** — `git diff v0.2.4..HEAD -- crates/codingest/src` is
+empty.
+
+**Every golden digest is byte-identical across that move**, and here that is a
+stronger statement than at 0.2.4: 0.16.5 carries a breaking Rust API change —
+node, relationship and map properties became a `kglite::datatypes::PropMap`
+instead of a `BTreeMap<String, Value>` — so the claim under test was that a
+change to how properties are *held in memory* leaves both the property values
+and the serialized bytes alone. It does. codingest is not exposed to the API
+break itself (it names neither `NodeValue::properties` nor
+`RelValue::properties`, and its one `Value::Map` site matches a wildcard), and
+upstream reports no file-format change, postcard's map framing being identical
+either way. The frozen goldens and the `.kgl` byte-stability test are what turn
+both of those from a changelog claim into a verified one.
+
+The fixture corpus builds the same **405 nodes / 616 edges** docs-on and
+**398 / 596** docs-off on 0.16.2 and on 0.16.5.
+
 ## Release 0.2.4 — 2026-08-16: 21 corpora, all green across the kglite 0.16.2 engine move
 
 Released state: unchanged corpus set (**21 corpora**), all green in the

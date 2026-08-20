@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-20
+
 ### Changed
 - **Engine floor moves to kglite 0.16.5 — a lockstep refresh, not a fix we
   needed.** Nothing in 0.16.3-0.16.5 reaches a path codingest exercises, and
