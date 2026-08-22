@@ -28,6 +28,16 @@ find dev-docs/bench/out -type f -mtime +14    -print -delete   # heavy built .kg
 find dev-docs/bin       -type f -mtime +7     -print -delete   # soft-deleted docs, >7 days
 ```
 
+**The grace period starts at soft-deletion, not at last edit** — `mtime`
+survives a `mv`, so a doc last edited eight days ago would be hard-deleted the
+moment it lands in `bin/`, silently bypassing its own grace (three docs went
+that way on 2026-08-22). Every move into `dev-docs/bin/` therefore gets a
+`touch`:
+
+```bash
+mv <doc> dev-docs/bin/ && touch dev-docs/bin/<doc-basename>
+```
+
 Report what was purged (path list, or "nothing aged out"). Only `bench/out/` is
 purged from `bench/` — the small csv/json regression record in `bench/results/`
 is kept indefinitely.
