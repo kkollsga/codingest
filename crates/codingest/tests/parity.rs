@@ -173,6 +173,114 @@ const CORPORA: &[&str] = &[
     // file-anchored raw-walk allowlist. Its golden is captured additively
     // (see `tests/goldens/README.md`).
     "julia_basic",
+    // Added 2026-08-22. Not one corpus contained a `.cs` file, so the entire
+    // C# parser — and with it the ONE call tier that needs a namespace
+    // import to fire — could be changed, or deleted, with every digest green.
+    // It pins the using-alias fix from BOTH sides, because the pre-fix graph
+    // was well-formed and wrong rather than empty: `using_directive` took its
+    // first identifier child, so `using Log = MyApp.Logging;` recorded the
+    // ALIAS as the imported namespace, and `src/Decoy/Log/Logger.cs` declares
+    // a real `namespace Log` holding a real `Logger.Emit` for that mistake to
+    // land on. Measured pre-fix on this corpus: `Service.cs` IMPORTS `Log`
+    // and `Run` CALLS `Log.Logger.Emit` — a plausible edge onto the decoy, at
+    // the same resolution and candidate count as the right one. Post-fix the
+    // import lands on `MyApp.Logging` and the call on
+    // `MyApp.Logging.Logger.Emit`, still through the `namespace_import` tier,
+    // which no other corpus can reach: the tier requires a `.`/`::` after the
+    // imported prefix, so PHP's `\`-separated namespaces can never exercise
+    // it. `using System` must attract no edge, `Missing.Publish` must resolve
+    // to nothing, and the corpus deliberately declares no method with a bare
+    // user-defined return type — the second half of the same fix, pinned by
+    // unit tests, because the pre-fix parser named such a method after its
+    // return type and would have hidden the alias evidence behind a second
+    // defect. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "csharp_using_alias",
+    // Added 2026-08-22. Not one corpus contained a `.php` file, so PHP's
+    // grouped `use` — `use App\Domain\{Billing\Invoice, Catalog\Product};` —
+    // had no coverage: `extract_use_imports` never matched the
+    // `namespace_use_group` body and recorded ONE import, the bare ancestor
+    // `App\Domain`, dropping both members. That is the ancestor-edge family
+    // the import walk's `min_end` bound exists to prevent, reintroduced at
+    // extraction where the bound cannot see it. Measured pre-fix on this
+    // corpus: two IMPORTS edges (`App\Models` and `App\Domain`); post-fix,
+    // three (`App\Models`, `App\Domain\Billing`, `App\Domain\Catalog`). The
+    // group members are deliberately SUB-NAMESPACE-qualified — a bare
+    // `{User, Post}` group trims straight back to the ancestor module and
+    // would pin nothing. The corpus also pins the `is_method` inversion from
+    // the same commit: top-level `build_report` was stored `is_method=true`
+    // and is now `false`, while the four class methods stay `true`. A
+    // `use … as Logger` for a package that does not exist must attract no
+    // edge, `compute_missing_total` must resolve to nothing, `User
+    // implements Identified` pins the IMPLEMENTS edge, and `displayName`
+    // — declared on both the interface and the class — pins the `lang_group`
+    // fan-out to two candidates. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "php_group_use",
+    // Added 2026-08-22. Not one corpus contained a `.java` file, so Java's
+    // docstring extraction — `get_doc_comment`, the ONLY producer of a
+    // `docstring` property in this parser — could be changed, or deleted,
+    // with every digest green. It pins the property from both sides: eight
+    // javadoc'd declarations (four types — an interface, an abstract class,
+    // a concrete subclass, a final utility class — and one method on each)
+    // carry a docstring, and `quiet`, the one method preceded by a plain
+    // `//` line comment instead of a javadoc block, must carry NULL. The
+    // same `//` line is the other half of the pin: a `// TODO:` inside
+    // `AbstractGreeter` must appear in that FILE's `annotations`, which is a
+    // different extraction path over the same comment vocabulary. It also
+    // pins the namespace import walk's one-segment `min_end` bound with live
+    // bait — `import com.acme.Formatter` must form NO edge even though
+    // Module `com` exists in the graph (a deeper trim is what landed 252
+    // measured false edges on gson's ancestor modules), while
+    // `import com.example.util.Text` next to it must resolve. IMPLEMENTS and
+    // EXTENDS are pinned across three files, and Java's short
+    // `source_type` spelling with them. Its golden is captured additively
+    // (see `tests/goldens/README.md`).
+    "java_javadoc",
+    // Added 2026-08-22. Not one corpus contained a `.go` file, so Go's
+    // interface-method arm — `method_elem`, the node tree-sitter-go 0.25
+    // renamed `method_spec` to, and the sole producer of interface-method
+    // Functions and their HAS_METHOD edges — could be deleted and every
+    // digest would stay green. The corpus pins that arm twice over, by two
+    // independent detectors: the `Reader.Fetch`/`Reader.Reset` nodes and
+    // their two HAS_METHOD edges, and the fan-out of `s.Fetch(…)` in
+    // `main`, which must reach BOTH `Reader.Fetch` and `Memory.Fetch` as a
+    // two-candidate `lang_group` resolution — if the arm dies, that
+    // collapses silently into one `unique_name` edge onto the struct method.
+    // `NewMemory` (cross-file, `unique_name`) and `normalize` (called from
+    // the sibling file in the same package) pin the ordinary routes;
+    // `fmt.Println`, `strings.TrimSpace` and `missingHelper` must resolve to
+    // nothing. Two absences are deliberate. Go's implicit interface
+    // conformance is unmodeled, so `Memory` satisfying `Reader` produces NO
+    // IMPLEMENTS edge. And `import "demo/store"` — the ordinary shape, the
+    // module path from `go.mod` plus the package directory — produces NO
+    // File→Module IMPORTS edge: `go.mod` is not read (the manifest reader
+    // takes only `pyproject.toml` and `Cargo.toml`), and a Go module path is
+    // built package-name-FIRST (`store/store` for `store/*.go` in package
+    // `store`), so no prefix of any real import specifier can ever match
+    // one. Both absences are pinned so that a fix has to move this digest.
+    // Its golden is captured additively (see `tests/goldens/README.md`).
+    "go_interface",
+    // Added 2026-08-22. Not one corpus contained a `.swift` file, so the
+    // whole Swift parser was invisible to the golden net. It pins the
+    // `is_method` inversion fixed alongside PHP's: top-level `trim` was
+    // stored `is_method=true` (the parser's own comment asserted the
+    // opposite of its code) and is now `false`, while the struct's and the
+    // enum's methods stay `true`. `Package.swift` is REAL PARSED SOURCE
+    // here, not an inert manifest — it pins the non-SwiftPM fallback module
+    // path `swift_basic.Package`, derived from the corpus directory name,
+    // and `import PackageDescription` inside it must attract no edge.
+    // Swift is one of only two languages in the set with an implicit module
+    // hierarchy, so the `Demo`/`Support` parents and their HAS_SUBMODULE
+    // chains are pinned here too, together with `Greeter.swift`'s
+    // `import Support` resolving onto the `Support` Module. Two absences are
+    // deliberate and are what a future fix would move: `struct Greeter:
+    // Greeting` produces NO IMPLEMENTS edge (the inheritance specifier is
+    // unparsed, as the parser's header admits), and `Text.shout` is reached
+    // by its terminal segment alone because Swift call extraction never
+    // keeps the receiver. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "swift_basic",
     // Added 2026-08-22. `dart_import` is the only other Dart corpus and it
     // contains no `part` file at all, so Dart's `part of` handling — the one
     // place a file's module path comes from something other than its own

@@ -287,6 +287,73 @@ there, so the project root is still tried first and the linking file's own
 directory only after it. `dup_minified_assets` and `html_js_lang_group`, the
 other web corpora, are the controls and do not move.
 
+The additive `csharp_using_alias`, `php_group_use`, `java_javadoc`,
+`go_interface` and `swift_basic` digests were captured on 2026-08-22 with the
+corpora themselves. Before them the golden set contained not one `.cs`, `.php`,
+`.java`, `.go` or `.swift` file, so five whole parsers — and the one CALLS tier
+that only a namespace-shaped import can reach — could have been changed, or
+deleted, with every digest staying green. Three of the five pin a defect fixed
+earlier in the same program, and because each fix landed before its corpus, the
+pre-fix behaviour was measured on these exact trees rather than asserted:
+
+* `csharp_using_alias` — `using_directive` took its first identifier child, so
+  `using Log = MyApp.Logging;` recorded the ALIAS as the imported namespace.
+  The corpus makes that mistake land somewhere real: `src/Decoy/Log/Logger.cs`
+  declares an actual `namespace Log` with an actual `Logger.Emit`. Measured
+  pre-fix, `src/App/Service.cs` imported `Log` and `Run` called
+  `Log.Logger.Emit` at `namespace_import`/1 candidate — the same shape as the
+  right answer, onto the wrong node. Post-fix the import is `MyApp.Logging` and
+  the call is `MyApp.Logging.Logger.Emit`. This is the only corpus that reaches
+  the `namespace_import` tier at all; the tier needs a `.`/`::` after the
+  imported prefix, which PHP's `\` can never supply.
+* `php_group_use` — `extract_use_imports` never matched the
+  `namespace_use_group` body, so `use App\Domain\{Billing\Invoice,
+  Catalog\Product};` recorded one import, the bare ancestor `App\Domain`, and
+  dropped both members. Measured pre-fix: two IMPORTS edges; post-fix: three
+  (`App\Models`, `App\Domain\Billing`, `App\Domain\Catalog`). The group members
+  are sub-namespace-qualified on purpose — a bare `{User, Post}` trims straight
+  back to the ancestor and pins nothing.
+* `php_group_use` and `swift_basic` together — `parse_block` passed
+  `owner_prefix.is_empty()` as `is_method`, so every TOP-LEVEL function was
+  stored `is_method=true`. Measured pre-fix, PHP's `build_report` and Swift's
+  `trim` were both `true`; both are now `false`, with every class/struct/enum
+  method in the two corpora unchanged at `true`.
+
+The other two pin extraction that had no defect behind it, only no coverage.
+`java_javadoc` pins `get_doc_comment` from both sides — eight javadoc'd
+declarations (four types and one method on each) carry a docstring while
+`quiet`, the one method preceded by a plain `//` line comment instead of a
+javadoc block, must carry NULL — plus the second reader of the same comment
+vocabulary, a `// TODO:` that must land in that file's `annotations`, and the
+namespace walk's one-segment `min_end` bound with live bait:
+`import com.acme.Formatter` must form no edge even though Module `com` is in
+the graph, while `import com.example.util.Text` beside it resolves.
+`go_interface` pins the `method_elem` arm (tree-sitter-go 0.25's rename of
+`method_spec`), the sole producer of interface-method Functions and their
+HAS_METHOD edges, by two independent detectors: the `Reader.Fetch`/
+`Reader.Reset` nodes with their two HAS_METHOD edges, and the `s.Fetch(…)`
+call in `main` fanning out to both `Reader.Fetch` and `Memory.Fetch` as a
+two-candidate `lang_group` resolution — a shape that collapses to one
+`unique_name` edge, silently, if the arm dies.
+
+Four absences in these corpora are pinned deliberately, so that a fix has to
+move a digest rather than slip in unobserved: Swift's `struct Greeter:
+Greeting` produces no IMPLEMENTS edge (the inheritance specifier is unparsed);
+Go's `Memory` satisfying `Reader` produces none either (implicit conformance is
+unmodeled); Swift call extraction keeps only a call's terminal segment, never
+its receiver; and `go_interface`'s `import "demo/store"` — the ordinary Go
+shape, `go.mod`'s module path plus the package directory — produces NO
+File→Module IMPORTS edge. That last one is a live defect, not a modelling
+choice: `go.mod` is never read (the manifest reader takes only `pyproject.toml`
+and `Cargo.toml`), and a Go module path is built package-name-FIRST
+(`store/store` for `store/*.go` in package `store`), so no prefix of a real
+import specifier can match one. Only a single-segment specifier resolves, and
+only onto the ancestor Module the package-first path accidentally creates.
+
+Verified additive the strict way: `capture_goldens` rewrote every file, and
+afterwards `git status` reported exactly the five new digests as additions,
+with no pre-existing golden modified.
+
 **`docs_mdx` was deliberately regenerated on 2026-08-22** for the markdown
 link-classification fix. `discover_docs` has always matched doc extensions
 case-insensitively — `README.MD` is why the corpus exists — but the link

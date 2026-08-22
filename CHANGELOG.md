@@ -72,6 +72,12 @@ ship time — it's the only place the version bumps.
   directory through the same path-to-module conversion the parent gets.
 
 ### Added
+- **Five new parity corpora — go, java, csharp, swift, php** — ending zero
+  corpus coverage for those languages. Each pins this release's extraction
+  fixes from both sides (measured pre-fix: C# imported the decoy alias
+  namespace and resolved calls into it; PHP collapsed a grouped use to its
+  ancestor) plus deliberately-pinned gaps (Go implicit conformance and Go
+  intra-repo import resolution, Swift protocol conformance).
 - **Traversal-semantics gate** (`tests/traversal_semantics.rs`): pins the
   hand-derived answer *sets* of `<-[:CALLS*1..3]-` over a real call cycle, so
   an engine-side change to query semantics is caught even when the built graph
