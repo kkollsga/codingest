@@ -184,6 +184,11 @@ impl PhpParser {
                     );
                 }
                 "function_definition" => {
+                    // `is_method` means "is a method": true only when this
+                    // definition sits inside an owning type. A top-level
+                    // `function` has an empty owner prefix, so the flag is the
+                    // *negation* of `is_empty()` — passing `is_empty()` marked
+                    // every top-level PHP function as a method.
                     Self::parse_function(
                         child,
                         source,
@@ -191,7 +196,7 @@ impl PhpParser {
                         owner_prefix,
                         rel_path,
                         result,
-                        owner_prefix.is_empty(),
+                        !owner_prefix.is_empty(),
                     );
                 }
                 "const_declaration" => {
@@ -202,8 +207,48 @@ impl PhpParser {
         }
     }
 
-    /// Extract `use Foo\Bar;` / `use Foo\{Bar, Baz};` declarations.
+    /// Extract `use Foo\Bar;` / `use Foo\Bar as Baz;` / `use Foo\{Bar, Baz};`
+    /// declarations into `file_info.imports`, one entry per imported symbol.
+    ///
+    /// tree-sitter-php gives the two shapes different trees:
+    ///   * plain — `namespace_use_declaration` holds one or more
+    ///     `namespace_use_clause` children, each carrying the full path.
+    ///   * grouped — `namespace_use_declaration` holds a `namespace_name`
+    ///     *prefix* plus a `namespace_use_group` in field `body`, whose
+    ///     `namespace_use_clause` children carry paths **relative** to that
+    ///     prefix. Each member is recorded as `prefix\member`; a member may
+    ///     itself be qualified (`use App\Domain\{Billing\Invoice};`).
+    ///
+    /// The group body used to be unmatched, so a grouped `use` collapsed to a
+    /// single import naming the bare prefix and every member was lost.
+    ///
+    /// An `as` alias is ignored in both shapes — the import records the path
+    /// that was imported, not the local name it was bound to.
     fn extract_use_imports(node: Node, source: &[u8], file_info: &mut FileInfo) {
+        if let Some(group) = node.child_by_field_name("body") {
+            let mut pc = node.walk();
+            let prefix = node
+                .named_children(&mut pc)
+                .find(|c| c.kind() == "namespace_name")
+                .map(|c| node_text(c, source).trim_end_matches('\\').to_string())
+                .unwrap_or_default();
+            let mut gc = group.walk();
+            for clause in group.named_children(&mut gc) {
+                if clause.kind() != "namespace_use_clause" {
+                    continue;
+                }
+                let Some(member) = Self::use_clause_path(clause, source) else {
+                    continue;
+                };
+                if prefix.is_empty() {
+                    file_info.imports.push(member.to_string());
+                } else {
+                    file_info.imports.push(format!("{prefix}\\{member}"));
+                }
+            }
+            return;
+        }
+
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             match child.kind() {
@@ -214,21 +259,32 @@ impl PhpParser {
                     }
                 }
                 "namespace_use_clause" => {
-                    // `Foo\Bar` or `Foo\Bar as Baz`. The first
-                    // named child is the path.
-                    let mut sub = child.walk();
-                    for c in child.named_children(&mut sub) {
-                        if matches!(c.kind(), "namespace_name" | "qualified_name" | "name") {
-                            let text = node_text(c, source).to_string();
-                            if !text.is_empty() {
-                                file_info.imports.push(text);
-                            }
-                            break;
-                        }
+                    if let Some(text) = Self::use_clause_path(child, source) {
+                        file_info.imports.push(text.to_string());
                     }
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// The imported path of a `namespace_use_clause`, ignoring any `as` alias.
+    ///
+    /// The alias is a `name` node in field `alias`, indistinguishable by kind
+    /// from a bare unqualified path, so it is excluded by identity rather than
+    /// by position.
+    fn use_clause_path<'a>(clause: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+        let alias = clause.child_by_field_name("alias");
+        let mut cursor = clause.walk();
+        let path = clause
+            .named_children(&mut cursor)
+            .filter(|c| alias.is_none_or(|a| a.id() != c.id()))
+            .find(|c| matches!(c.kind(), "namespace_name" | "qualified_name" | "name"))?;
+        let text = node_text(path, source);
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
         }
     }
 
@@ -741,5 +797,170 @@ impl LanguageParser for PhpParser {
 
         result.files.push(file_info);
         result
+    }
+}
+
+/// P8 — `use` declarations, including the grouped form the old extractor
+/// collapsed to its bare prefix.
+#[cfg(test)]
+mod use_import_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn parse_imports(source: &str) -> Vec<String> {
+        let tmp = tempfile::Builder::new()
+            .prefix("codingest-php-use-")
+            .tempdir()
+            .expect("tempdir");
+        let root = tmp.path().join("proj");
+        let path: PathBuf = root.join("index.php");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        std::fs::write(&path, source).expect("write snippet");
+        let result = PhpParser::new().parse_file(&path, &root);
+        result.files[0].imports.clone()
+    }
+
+    /// The reported defect: `use App\Models\{User, Post};` recorded a single
+    /// import naming the prefix `App\Models`, and both members were lost.
+    #[test]
+    fn grouped_use_records_every_member() {
+        assert_eq!(
+            parse_imports("<?php\nuse App\\Models\\{User, Post};\n"),
+            vec![
+                "App\\Models\\User".to_string(),
+                "App\\Models\\Post".to_string()
+            ]
+        );
+    }
+
+    /// A group member may itself be qualified — the prefix and the member's
+    /// own path both belong to the recorded import.
+    #[test]
+    fn grouped_use_joins_qualified_members() {
+        assert_eq!(
+            parse_imports("<?php\nuse App\\Domain\\{Billing\\Invoice, Catalog\\Product};\n"),
+            vec![
+                "App\\Domain\\Billing\\Invoice".to_string(),
+                "App\\Domain\\Catalog\\Product".to_string(),
+            ]
+        );
+    }
+
+    /// Inside a group an `as` alias is still ignored: the import is the path.
+    #[test]
+    fn grouped_use_with_alias_records_the_path() {
+        assert_eq!(
+            parse_imports("<?php\nuse App\\{Foo as Bar};\n"),
+            vec!["App\\Foo".to_string()]
+        );
+        assert_eq!(
+            parse_imports("<?php\nuse App\\Models\\{User, Post as Article};\n"),
+            vec![
+                "App\\Models\\User".to_string(),
+                "App\\Models\\Post".to_string()
+            ]
+        );
+    }
+
+    /// `use function`/`use const` groups carry the same prefix join.
+    #[test]
+    fn grouped_function_use_records_every_member() {
+        assert_eq!(
+            parse_imports("<?php\nuse function App\\Support\\{head, tail};\n"),
+            vec![
+                "App\\Support\\head".to_string(),
+                "App\\Support\\tail".to_string(),
+            ]
+        );
+    }
+
+    /// The non-grouped shapes are untouched.
+    #[test]
+    fn plain_and_aliased_use_are_unchanged() {
+        assert_eq!(
+            parse_imports("<?php\nuse App\\Models\\Thing;\n"),
+            vec!["App\\Models\\Thing".to_string()]
+        );
+        assert_eq!(
+            parse_imports("<?php\nuse App\\Models\\Other as Alias;\n"),
+            vec!["App\\Models\\Other".to_string()]
+        );
+        assert_eq!(
+            parse_imports("<?php\nuse function App\\helper;\n"),
+            vec!["App\\helper".to_string()]
+        );
+        // Several clauses in one statement: `use A\B, C\D;`
+        assert_eq!(
+            parse_imports("<?php\nuse App\\A, App\\B;\n"),
+            vec!["App\\A".to_string(), "App\\B".to_string()]
+        );
+    }
+}
+
+/// P8b — `is_method` marks methods, not top-level functions.
+#[cfg(test)]
+mod is_method_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn parse_snippet(source: &str) -> ParseResult {
+        let tmp = tempfile::Builder::new()
+            .prefix("codingest-php-is-method-")
+            .tempdir()
+            .expect("tempdir");
+        let root = tmp.path().join("proj");
+        let path: PathBuf = root.join("index.php");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        std::fs::write(&path, source).expect("write snippet");
+        PhpParser::new().parse_file(&path, &root)
+    }
+
+    /// The reported inversion: a top-level `function` was stored with
+    /// `is_method = true` and a class method with `is_method = false`.
+    #[test]
+    fn top_level_function_is_not_a_method_and_a_method_is() {
+        let result = parse_snippet(
+            "<?php\n\
+             function helper($x) { return $x; }\n\
+             class Svc {\n\
+               public function run($x) { return $x; }\n\
+             }\n",
+        );
+        let seen: Vec<(&str, bool)> = result
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.is_method))
+            .collect();
+        assert_eq!(seen, vec![("helper", false), ("run", true)]);
+    }
+
+    /// A namespaced top-level function is still not a method — the namespace
+    /// lands in `module_path`, not in the owner prefix.
+    #[test]
+    fn namespaced_top_level_function_is_not_a_method() {
+        let result = parse_snippet(
+            "<?php\n\
+             namespace App\\Support;\n\
+             function head(array $xs) { return $xs[0]; }\n",
+        );
+        assert_eq!(result.functions.len(), 1);
+        assert_eq!(result.functions[0].name, "head");
+        assert!(!result.functions[0].is_method);
+    }
+
+    /// Trait and interface methods are methods too.
+    #[test]
+    fn trait_and_interface_methods_are_methods() {
+        let result = parse_snippet(
+            "<?php\n\
+             trait T { public function fromTrait() { } }\n\
+             interface I { public function fromInterface(); }\n",
+        );
+        let seen: Vec<(&str, bool)> = result
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.is_method))
+            .collect();
+        assert_eq!(seen, vec![("fromTrait", true), ("fromInterface", true)]);
     }
 }

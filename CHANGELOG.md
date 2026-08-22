@@ -16,6 +16,24 @@ ship time — it's the only place the version bumps.
   used one picked label for BOTH endpoints, minting a phantom `_provisional`
   Class stub beside the real Struct and attaching the edge to it. EXTENDS now
   resolves each endpoint's type per edge, like IMPLEMENTS always did.
+- **C# `using Alias = Ns.Target;` recorded the alias as the import.** The
+  directive arm took the first identifier child — the alias precedes the
+  target, so `using Log = MyApp.Logging;` imported `Log`, feeding a wrong
+  File→Module edge (when a decoy namespace exists) and mis-narrowing CALLS
+  resolution toward the alias namespace. The target type is now read from the
+  grammar's field. In the same family: a C# method with a bare user-defined
+  return type (`public User Build()`) was NAMED after the type with a null
+  return type, and fields/properties of such types lost their type annotation —
+  all three sites now use field-based lookup with the old scan as fallback.
+- **PHP grouped `use App\Domain\{Billing\Invoice, Catalog\Product};` kept only
+  the group prefix.** The group body node was never matched, so one ancestor
+  import (`App\Domain`) replaced every member — the same ancestor-edge family
+  the import walk was bounded against, reintroduced at extraction. Each member
+  now records prefix + member path; aliases inside groups are ignored by field,
+  not by kind.
+- **Top-level PHP and Swift functions were stored `is_method=true`** (and the
+  Swift comment beside the inversion claimed the opposite). Both sites now
+  follow the cross-parser convention.
 - **Dart `part of` files now share their library's module.** The resolver
   collapsed the URI to `{pkg}.{stem}`, so every URI-form part file landed in a
   phantom module no other file inhabited (its symbols invisible under the

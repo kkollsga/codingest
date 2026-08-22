@@ -114,7 +114,12 @@ impl SwiftParser {
                         owner_prefix,
                         rel_path,
                         result,
-                        owner_prefix.is_empty(), // top-level → not a method
+                        // `is_method` means "is a method". A declaration in
+                        // this block is a method only when it sits inside an
+                        // owning type, i.e. when the owner prefix is NOT
+                        // empty. Passing `is_empty()` here marked every
+                        // top-level Swift function as a method.
+                        !owner_prefix.is_empty(),
                     );
                 }
                 _ => {}
@@ -567,6 +572,67 @@ mod module_path_tests {
         assert_eq!(
             swift_module_path(Path::new("/repo/Parser.swift"), Path::new("/repo")),
             "repo.Parser"
+        );
+    }
+}
+
+/// P8b — `is_method` marks methods, not top-level functions.
+#[cfg(test)]
+mod is_method_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn parse_snippet(source: &str) -> ParseResult {
+        let tmp = tempfile::Builder::new()
+            .prefix("codingest-swift-is-method-")
+            .tempdir()
+            .expect("tempdir");
+        let root = tmp.path().join("proj");
+        let path: PathBuf = root.join("Main.swift");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        std::fs::write(&path, source).expect("write snippet");
+        SwiftParser::new().parse_file(&path, &root)
+    }
+
+    /// The reported inversion: a top-level `func` was stored with
+    /// `is_method = true` and a type's own method with `is_method = false`.
+    #[test]
+    fn top_level_function_is_not_a_method_and_a_method_is() {
+        let result = parse_snippet(
+            "func helper(_ x: Int) -> Int { return x }\n\
+             class Svc {\n\
+             \x20   func run(_ x: Int) -> Int { return x }\n\
+             }\n",
+        );
+        let seen: Vec<(&str, bool)> = result
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.is_method))
+            .collect();
+        assert_eq!(seen, vec![("helper", false), ("run", true)]);
+    }
+
+    /// Struct and extension members are methods as well — only the file's own
+    /// top level is method-free.
+    #[test]
+    fn struct_and_extension_members_are_methods() {
+        let result = parse_snippet(
+            "struct Point {\n\
+             \x20   func norm() -> Int { return 0 }\n\
+             }\n\
+             extension Point {\n\
+             \x20   func scaled() -> Int { return 0 }\n\
+             }\n\
+             func free() -> Int { return 0 }\n",
+        );
+        let seen: Vec<(&str, bool)> = result
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.is_method))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![("norm", true), ("scaled", true), ("free", false)]
         );
     }
 }
