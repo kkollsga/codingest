@@ -946,6 +946,26 @@ fn markdown_link_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r#"\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)"#).unwrap())
 }
 
+/// The `concept_id` a markdown link destination names, or `None` when the
+/// destination is not a markdown doc and so names a source File.
+///
+/// Only the segment after the LAST `.` is considered, and only if it is `md`
+/// or `mdx` **case-insensitively** — exactly the match [`discover_docs`] and
+/// [`strip_doc_ext`] already apply, so `Guide.MDX` and `README.MD` classify
+/// as docs. A case-sensitive strip here filed every upper-cased destination
+/// as a File, and since the doc it named is a Doc node (never a File node)
+/// the existence check dropped it and the link produced no edge at all.
+///
+/// (`.rst` is deliberately absent — unlike [`strip_doc_ext`], which admits
+/// every [`DOC_EXTENSIONS`] entry: a markdown link into an RST tree is
+/// vanishingly rare and adding it here would change existing edges for no
+/// measured gain.)
+fn strip_markdown_link_ext(target: &str) -> Option<&str> {
+    let dot = target.rfind('.')?;
+    let ext = &target[dot + 1..];
+    (ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("mdx")).then(|| &target[..dot])
+}
+
 /// Markdown link targets: `[text](dest)` → a Doc (`.md`/`.mdx` target) or File (other),
 /// fenced code + image links skipped.
 fn markdown_link_targets(body: &str, src_dir: &str) -> Vec<LinkTarget> {
@@ -969,14 +989,7 @@ fn markdown_link_targets(body: &str, src_dir: &str) -> Vec<LinkTarget> {
             let Some(target) = resolve_rel_path(dest.as_str(), src_dir) else {
                 continue;
             };
-            // A `.md` / `.mdx` destination names another doc; anything else is
-            // a source file. (`.rst` is deliberately absent: a markdown link
-            // into an RST tree is vanishingly rare and adding it here would
-            // change existing edges for no measured gain.)
-            match target
-                .strip_suffix(".md")
-                .or_else(|| target.strip_suffix(".mdx"))
-            {
+            match strip_markdown_link_ext(&target) {
                 Some(rest) => out.push(LinkTarget::Doc(rest.to_string())),
                 None => out.push(LinkTarget::File(target)),
             }
@@ -1720,5 +1733,62 @@ mod tests {
             ".txt contributes no mentions"
         );
         assert_eq!(count_conn(&g, "DOCUMENTS"), 0, ".txt contributes no links");
+    }
+
+    /// A markdown link destination is classified by the SAME case-insensitive
+    /// extension match that discovered the doc it names. Before this, a
+    /// `[g](Guide.MDX)` was filed as a File target and — because the thing it
+    /// names is a Doc node, never a File node — produced no edge at all.
+    #[test]
+    fn markdown_link_ext_strip_is_case_insensitive() {
+        for (dest, want) in [
+            ("docs/guide.md", Some("docs/guide")),
+            ("docs/guide.MD", Some("docs/guide")),
+            ("docs/Guide.mdx", Some("docs/Guide")),
+            ("docs/guide.MDX", Some("docs/guide")),
+            ("docs/guide.MdX", Some("docs/guide")),
+            ("README.Md", Some("README")),
+        ] {
+            assert_eq!(strip_markdown_link_ext(dest), want, "dest={dest}");
+        }
+    }
+
+    /// The other direction: what must stay a File target. `.rst` is
+    /// deliberately excluded (unlike `strip_doc_ext`), a non-markup extension
+    /// is untouched, an extensionless path has nothing to strip, and only the
+    /// LAST segment counts — `a.mdx.md` loses just its `.md`, and a dot in a
+    /// DIRECTORY name is not an extension.
+    #[test]
+    fn markdown_link_ext_strip_rejects_non_markdown_targets() {
+        for dest in [
+            "docs/intro.rst",
+            "docs/intro.RST",
+            "src/toolkit.ts",
+            "notes.txt",
+            "Makefile",
+            "v1.2/guide",
+        ] {
+            assert_eq!(strip_markdown_link_ext(dest), None, "dest={dest}");
+        }
+        assert_eq!(strip_markdown_link_ext("a.mdx.md"), Some("a.mdx"));
+        assert_eq!(strip_markdown_link_ext("a.md.MDX"), Some("a.md"));
+    }
+
+    /// End to end through the link scanner: an upper-cased destination lands
+    /// in the `Doc` arm, a source file stays in the `File` arm.
+    #[test]
+    fn markdown_link_targets_classify_uppercase_destinations_as_docs() {
+        let targets = markdown_link_targets(
+            "See [readme](../README.MD) and the [source](../src/toolkit.ts).",
+            "docs",
+        );
+        let rendered: Vec<String> = targets
+            .iter()
+            .map(|t| match t {
+                LinkTarget::Doc(cid) => format!("Doc:{cid}"),
+                LinkTarget::File(path) => format!("File:{path}"),
+            })
+            .collect();
+        assert_eq!(rendered, vec!["Doc:README", "File:src/toolkit.ts"]);
     }
 }
