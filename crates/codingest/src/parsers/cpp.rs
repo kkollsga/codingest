@@ -932,6 +932,48 @@ impl CppParser {
         }
     }
 
+    /// Route the well-formed `#include` directives out of a subtree the
+    /// top-level router does not otherwise descend into.
+    ///
+    /// Two shapes reach this, both produced by the single most common
+    /// real-world header prologue — `#ifdef __cplusplus` / `extern "C" {` /
+    /// `#endif`, whose opening brace is closed under a MATCHING `#ifdef` that
+    /// tree-sitter, having no preprocessor, never pairs it with:
+    ///
+    /// * `linkage_specification` in a **C** file. tree-sitter-c still builds
+    ///   the node (`extern "C"` is not C, so it only ever appears
+    ///   `#ifdef`-guarded), but `parse_c_top_level` has no arm for it, so the
+    ///   entire body — includes included — was never visited. This is the
+    ///   cJSON `cJSON_Utils.h` → `cJSON.h` miss: the library's own core edge.
+    /// * `ERROR`. When the block is left open in this translation unit (a
+    ///   `*_begin.h` closed by its caller, or any earlier parse break), the
+    ///   remainder of the file collapses into one error-recovery subtree.
+    ///
+    /// **Structural only.** It routes nodes the grammar itself labelled
+    /// `preproc_include`, and reads them with the same
+    /// [`Self::parse_preproc_include`] every other arm uses — so the
+    /// quoted/angle split is preserved exactly and `<vector.h>` still forms no
+    /// edge. It never rescans text: an ERROR region has no reliable structure,
+    /// and a text-shaped scan there would invent includes the compiler never
+    /// sees, re-opening the false-positive risk the quoted/angle split closed.
+    /// An include-SHAPED line that is not a directive (`include "x.h"`, no
+    /// `#`) parses as an expression, not a `preproc_include`, and is skipped.
+    ///
+    /// Descent is limited to the container kinds these two shapes nest in —
+    /// never a blanket walk of every descendant.
+    fn harvest_includes(node: Node, source: &[u8], file_info: &mut FileInfo) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "preproc_include" => Self::parse_preproc_include(child, source, file_info),
+                "ERROR" | "linkage_specification" | "declaration_list" => {
+                    Self::harvest_includes(child, source, file_info);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn parse_preproc_def(
         &self,
         node: Node,
@@ -1481,6 +1523,10 @@ impl CppParser {
                     }
                 }
             }
+            // See `harvest_includes`: an unclosed `extern "C" {` collapses the
+            // rest of the file into one error-recovery subtree, taking every
+            // `#include` in it out of the router's reach.
+            "ERROR" => Self::harvest_includes(node, source, file_info),
             _ => {}
         }
     }
@@ -1542,6 +1588,12 @@ impl CppParser {
                     self.parse_c_top_level(sub, source, module_path, rel_path, result, file_info);
                 }
             }
+            // The `#ifdef __cplusplus` / `extern "C" {` header prologue, both
+            // ways tree-sitter-c renders it — see `harvest_includes`. Only the
+            // `#include`s are lifted out: routing the block's declarations
+            // through this router as well would be a separate, much wider
+            // behaviour change than the include miss this closes.
+            "linkage_specification" | "ERROR" => Self::harvest_includes(node, source, file_info),
             _ => {}
         }
     }
@@ -2095,6 +2147,61 @@ mod export_macro_tests {
             .collect();
         assert!(vals.contains(&"108"), "if-branch value missing: {vals:?}");
         assert!(vals.contains(&"0"), "else-branch value missing: {vals:?}");
+    }
+
+    /// The cJSON header shape, closed: `#ifdef __cplusplus` / `extern "C" {`
+    /// / `#endif` with the matching close at the bottom. tree-sitter-c builds
+    /// a `linkage_specification`, which `parse_c_top_level` had no arm for, so
+    /// every `#include` in the body was invisible. `cJSON_Utils.h` →
+    /// `cJSON.h`, the library's own core edge, is exactly this.
+    #[test]
+    fn includes_inside_a_closed_extern_c_block_are_extracted() {
+        let src = "#ifndef UTILS_H\n#define UTILS_H\n\n                   #ifdef __cplusplus\nextern \"C\" {\n#endif\n\n                   #include \"core.h\"\n#include <vector.h>\n\n                   int utils_run(void);\n\n                   #ifdef __cplusplus\n}\n#endif\n\n#endif\n";
+        let r = parse_c(src);
+        assert_eq!(r.files[0].imports, vec!["core.h", "<vector.h>"]);
+    }
+
+    /// The same prologue left OPEN in this translation unit (a `*_begin.h`
+    /// closed by its caller, or any earlier parse break): the remainder of the
+    /// file collapses into one top-level `ERROR` recovery subtree.
+    #[test]
+    fn includes_inside_an_error_recovery_subtree_are_extracted() {
+        let src = "#ifndef DECLS_BEGIN_H\n#define DECLS_BEGIN_H\n\n                   #ifdef __cplusplus\nextern \"C\" {\n#endif\n\n                   #include \"core.h\"\n#include <vector.h>\n\n                   int marker(void);\n";
+        let r = parse_c(src);
+        assert_eq!(r.files[0].imports, vec!["core.h", "<vector.h>"]);
+    }
+
+    /// The false-positive bar the fix must clear. An ERROR region has no
+    /// reliable structure, so a TEXT-shaped scan of it would invent includes
+    /// the compiler never sees. Only grammar-labelled `preproc_include` nodes
+    /// are routed: an include-shaped line with no `#` parses as an expression
+    /// and contributes nothing, and neither does an `#include` token the
+    /// grammar could not assemble into a directive.
+    #[test]
+    fn include_shaped_text_in_an_error_subtree_is_not_an_import() {
+        let src = "#ifndef DECLS_BEGIN_H\n#define DECLS_BEGIN_H\n\n                   #ifdef __cplusplus\nextern \"C\" {\n#endif\n\n                   #include \"real.h\"\n\n                   include \"phantom.h\"\n                   /* #include \"commented.h\" */\n                   const char *s = \"#include \\\"quoted.h\\\"\";\n";
+        let r = parse_c(src);
+        assert_eq!(
+            r.files[0].imports,
+            vec!["real.h"],
+            "only the grammar-labelled directive is an import"
+        );
+    }
+
+    /// A `#define` inside the `extern "C"` body is NOT lifted out. The fix is
+    /// deliberately scoped to includes: routing the block's declarations
+    /// through the C router as well is a separate, much wider behaviour
+    /// change, and this pins that it did not happen by accident.
+    #[test]
+    fn extern_c_harvest_is_scoped_to_includes() {
+        let src = "#ifdef __cplusplus\nextern \"C\" {\n#endif\n                   #include \"core.h\"\n#define IN_BLOCK 3\n                   #ifdef __cplusplus\n}\n#endif\n";
+        let r = parse_c(src);
+        assert_eq!(r.files[0].imports, vec!["core.h"]);
+        assert!(
+            const_named(&r, "IN_BLOCK").is_none(),
+            "harvest must lift includes only: {:?}",
+            r.constants.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
     }
 
     #[test]
