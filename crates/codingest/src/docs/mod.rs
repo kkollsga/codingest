@@ -697,9 +697,10 @@ impl SymbolIndex {
     /// Strategies, most precise first: (1) exact qualified-name; (2) when the
     /// token is itself a dotted path, a segment-aligned **suffix** match against
     /// a qualified name (`Dataset.mean` → `…core.dataset.Dataset.mean`); (3) a
-    /// **unique** bare last-segment name; (4) when the bare name is ambiguous, a
-    /// unique **module-level** def (free function over class methods — recovers
-    /// re-exported top-level API like `concat` / `merge`).
+    /// **unique** bare last-segment name, for QUALIFIED tokens only; (4) a
+    /// unique **module-level** def (free function over class methods —
+    /// recovers re-exported top-level API like `concat` / `merge`), which is
+    /// also the only bare-name route a single-segment token gets.
     fn resolve(&self, token: &str, allow_name_fallback: bool) -> Option<(String, &'static str)> {
         if let Some(&label) = self.qname_to_label.get(token) {
             return Some((token.to_string(), label));
@@ -731,12 +732,24 @@ impl SymbolIndex {
             }
         }
 
-        // (3) Unique bare name.
-        if cands.len() == 1 {
+        // (3) Unique bare name — QUALIFIED tokens only. A single-segment
+        // backticked token that happens to name exactly one graph node is
+        // not evidence the doc meant that node: measured against real docs,
+        // 3 of 4 such links were wrong (the token was a prose word, a config
+        // key or a CLI flag that collided with some private helper's name).
+        // A token the author qualified (`Type.method`, `mod::item`) carries
+        // that evidence in its own spelling, so it keeps the rule; a bare one
+        // must earn its link through (4)'s module-level preference instead.
+        if segs.len() > 1 && cands.len() == 1 {
             return Some((cands[0].qname.clone(), cands[0].label));
         }
 
-        // (4) Ambiguous bare name → prefer a unique module-level def.
+        // (4) Prefer a unique module-level def (free function over class
+        // methods — recovers re-exported top-level API like `concat` /
+        // `merge`). This is also the ONLY route left for a single-segment
+        // token, including an unambiguous one: a lone candidate that is
+        // module-level still links here, while a lone candidate that is a
+        // method no longer does.
         let mut module_level = cands.iter().filter(|s| !s.method);
         if let Some(first) = module_level.next() {
             if module_level.next().is_none() {
@@ -1051,6 +1064,84 @@ mod tests {
     /// leave the CLI's freshness fingerprint blind to every AsciiDoc file —
     /// editing one would not flip the fingerprint, and the graph would read
     /// fresh with stale docs in it.
+    /// Hand-build a `SymbolIndex` from `(qualified_name, label, is_method)`
+    /// triples so the resolution strategies can be exercised in isolation.
+    fn index_of(symbols: &[(&str, &'static str, bool)]) -> SymbolIndex {
+        let mut qname_to_label = HashMap::new();
+        let mut by_name: HashMap<String, Vec<Symbol>> = HashMap::new();
+        for &(qname, label, method) in symbols {
+            qname_to_label.insert(qname.to_string(), label);
+            let name = (*qname_segments(qname).last().unwrap()).to_string();
+            by_name.entry(name).or_default().push(Symbol {
+                qname: qname.to_string(),
+                label,
+                method,
+            });
+        }
+        SymbolIndex {
+            qname_to_label,
+            by_name,
+        }
+    }
+
+    /// Strategy (3) — "exactly one node in the whole graph bears this name" —
+    /// no longer applies to a single-segment token. Uniqueness in the graph
+    /// is not evidence the doc's backticked word meant that symbol.
+    #[test]
+    fn a_single_segment_token_unique_in_the_graph_no_longer_links_via_strategy_3() {
+        // The only `render` in the graph, and it is a method: (3) is gone and
+        // (4) has no module-level candidate, so nothing links.
+        let index = index_of(&[("pkg.view.Widget.render", "Function", true)]);
+        assert_eq!(index.resolve("render", true), None);
+    }
+
+    /// A token the author qualified carries the evidence in its own spelling,
+    /// so (3) still applies to it.
+    #[test]
+    fn a_qualified_token_unique_in_the_graph_still_links_via_strategy_3() {
+        let index = index_of(&[("pkg.view.Widget.render", "Function", true)]);
+        // No qualified name ends with `Canvas.render`, so (2) misses and (3)
+        // is what resolves this.
+        assert_eq!(
+            index.resolve("Canvas.render", true),
+            Some(("pkg.view.Widget.render".to_string(), "Function"))
+        );
+    }
+
+    /// Strategy (4) is untouched, and is now the only bare-name route: a
+    /// single-segment token still links when the name has a unique
+    /// module-level definition — both when it is the lone candidate and when
+    /// it wins against same-named methods.
+    #[test]
+    fn a_single_segment_token_with_a_unique_module_level_def_still_links_via_strategy_4() {
+        let lone = index_of(&[("pkg.api.concat", "Function", false)]);
+        assert_eq!(
+            lone.resolve("concat", true),
+            Some(("pkg.api.concat".to_string(), "Function"))
+        );
+
+        let ambiguous = index_of(&[
+            ("pkg.api.concat", "Function", false),
+            ("pkg.frame.Frame.concat", "Function", true),
+            ("pkg.series.Series.concat", "Function", true),
+        ]);
+        assert_eq!(
+            ambiguous.resolve("concat", true),
+            Some(("pkg.api.concat".to_string(), "Function"))
+        );
+    }
+
+    /// An exact qualified-name hit (strategy 1) is ahead of every fallback
+    /// and is unaffected by the single-segment rule.
+    #[test]
+    fn an_exact_qualified_name_still_resolves() {
+        let index = index_of(&[("pkg.view.Widget.render", "Function", true)]);
+        assert_eq!(
+            index.resolve("pkg.view.Widget.render", true),
+            Some(("pkg.view.Widget.render".to_string(), "Function"))
+        );
+    }
+
     #[test]
     fn doc_extensions_match_crate_root() {
         let from_table: Vec<&str> = DOC_EXTENSIONS.iter().map(|(ext, _)| *ext).collect();

@@ -34,6 +34,20 @@ ship time — it's the only place the version bumps.
 - **Top-level PHP and Swift functions were stored `is_method=true`** (and the
   Swift comment beside the inversion claimed the opposite). Both sites now
   follow the cross-parser convention.
+- **Rust `use super::…` inside an inline `mod` now anchors at the inline
+  module's scope**, not the file's — `mod tests { use super::helper; }` no
+  longer emits a plausible-looking IMPORTS edge to the parent module's file
+  (~5-10 wrong edges per crate on real code). Paths are re-anchored at
+  extraction; the resolver's coordinate contract is unchanged.
+- **CSS selector and HTML element ids include the start column.** Minified
+  one-line files produced colliding ids (two `.card` rules, two same-id spans
+  on one line), silently dropping nodes behind duplicate-id warnings. Ids are
+  now `{file}:{line}:{col}:{slug}` (HTML: `{file}:{tag}:{line}:{col}:{slug}`).
+- **Backticked single names in docs no longer link to a code entity just
+  because the graph holds exactly one node with that name** (measured 3-of-4
+  wrong on real docs — prose words like `Default` linked to unrelated types).
+  A bare single-segment token now links only through a module-level
+  definition; qualified tokens are unaffected.
 - **Dart `part of` files now share their library's module.** The resolver
   collapsed the URI to `{pkg}.{stem}`, so every URI-form part file landed in a
   phantom module no other file inhabited (its symbols invisible under the
