@@ -219,6 +219,49 @@ once the three files share a module. Verified additive the strict way:
 modified, `julia_basic.sha256`, moved in the preceding EXTENDS-typing commit
 and not in this capture.
 
+The additive `rust_inline_mod` digest was captured on 2026-08-22 with the
+corpus itself. Every Rust `use` in `rust_import` and `rust_xfile` sits at file
+level, so the scope a `use` is written in never mattered to any golden — and a
+`use` written *inside* an inline `mod` block was resolved one level too
+shallow, because `FileInfo::imports` is a flat list with no scope column and
+the resolver anchors every path at the FILE's module. `mod tests { use
+super::*; }`, the most common shape in Rust source, is exactly that bug: it
+recorded a bare `super`, popped the file's own module, and produced a
+plausible-but-wrong IMPORTS edge to the parent module's file. On this corpus
+the pre-fix build emitted four such edges (three `src/alpha.rs -> crate::src`
+Module edges and one `src/alpha.rs -> src/lib.rs` File edge) that the fix
+removes. The corpus pins all three arms of the re-anchoring: supers equal to
+the inline depth land on the file itself and form no edge (the self-guard eats
+them), a surplus super still pops the file's real parent and reaches
+`beta.rs`, and two nested inline levels cancel two supers. `beta.rs`'s
+file-level `use crate::alpha::helper` is the control that must not move.
+Verified additive the strict way: `capture_goldens` rewrote every file, and
+afterwards `git status` reported only `rust_inline_mod.sha256` as new — and a
+canonical dump of all corpora before and after the fix differed in
+`rust_inline_mod` alone.
+
+**`dup_minified_assets` and `html_js_lang_group` were deliberately regenerated
+on 2026-08-22** for the CSS/HTML id-collision fix. A `Selector` id was
+`{rel_path}:{line}:{slug}` and an `Element` id `{rel_path}:{tag}:{line}:{slug}`
+— neither identifies a node in a MINIFIED file, where every rule and every
+element sits on line 1. `dup_minified_assets` is the corpus that reproduces it:
+`.card{…}.card{…}` produced two `app.min.css:1:card` rules and
+`<span id="x">…<span id="x">` two `index.html:span:1:x` elements, and the build
+printed `warning: 1 duplicate id(s) on type 'Element'` /
+`warning: 2 duplicate id(s) on type 'Selector'` — ids the engine collapses, so
+`MATCH (n {id: …})` returned one node per pair and each collision lost a real
+node. Both id builders now carry the 1-based start COLUMN (`{rel_path}:{line}:
+{col}:{slug}`, `{rel_path}:{tag}:{line}:{col}:{slug}`), matching the 1-based
+line convention the same call sites already use. The digest movement is the
+record of the fix: `dup_minified_assets` goes from 5 to 8 DEFINES edges (two
+recovered `Selector`s, one recovered `Element`) and the build prints no
+duplicate-id warning at all. `html_js_lang_group` moved too — it is the only
+other corpus with an HTML element node, and its single `index.html:div:4:panel`
+became `index.html:div:4:5:panel` with no count changing anywhere, which is
+what shows the change is pure identity and not behaviour. Verified the strict
+way: `capture_goldens` rewrote every file, and afterwards `git status` reported
+exactly those two digests as modified.
+
 ## The 2026-08-10 bulk regeneration (13 of 14 digests)
 
 **This is the first bulk regeneration since the extraction**, and the only one

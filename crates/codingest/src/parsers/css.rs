@@ -93,6 +93,12 @@ impl CssParser {
     fn emit_rule_set(node: Node, source: &[u8], rel_path: &str, result: &mut ParseResult) {
         let line = node.start_position().row as u32 + 1;
         let end_line = node.end_position().row as u32 + 1;
+        // 1-based, matching the line convention above. The column is part of
+        // the id because line alone does not identify a rule in a MINIFIED
+        // stylesheet: `.card{…}.card{…}` on one line produced two rules with
+        // the same `{rel_path}:{line}:{slug}`, i.e. one node silently
+        // overwriting the other.
+        let col = node.start_position().column as u32 + 1;
 
         // The selectors are a `selectors` child whose raw text is the
         // canonical name (e.g. `.foo, .bar, .baz` or `#nav > li`).
@@ -108,7 +114,7 @@ impl CssParser {
         // logical rule produces the same name regardless of source
         // formatting.
         let canonical = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-        let qname = format!("{rel_path}:{line}:{}", slugify(&canonical));
+        let qname = format!("{rel_path}:{line}:{col}:{}", slugify(&canonical));
 
         result.selectors.push(SelectorInfo {
             name: canonical,
@@ -303,5 +309,39 @@ impl LanguageParser for CssParser {
 
         result.files.push(file_info);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn selector_ids(source: &str) -> Vec<String> {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        let file = root.join("app.min.css");
+        fs::write(&file, source).unwrap();
+        let parsed = CssParser::new().parse_file(&file, &root);
+        parsed
+            .selectors
+            .iter()
+            .map(|s| s.qualified_name.clone())
+            .collect()
+    }
+
+    /// A minified stylesheet puts every rule on line 1, so the line alone
+    /// cannot tell two same-named rules apart — the id carries the start
+    /// column for exactly that case.
+    #[test]
+    fn two_same_name_rules_on_one_line_get_distinct_ids() {
+        let ids = selector_ids(".card{color:red}.card{padding:1em}");
+        assert_eq!(ids, ["app.min.css:1:1:card", "app.min.css:1:17:card"]);
+    }
+
+    #[test]
+    fn rules_on_separate_lines_keep_their_own_column() {
+        let ids = selector_ids(".card {\n  color: red;\n}\n  .card {\n  padding: 1em;\n}\n");
+        assert_eq!(ids, ["app.min.css:1:1:card", "app.min.css:4:3:card"]);
     }
 }

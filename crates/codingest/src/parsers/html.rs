@@ -120,6 +120,13 @@ impl HtmlParser {
 
                 let line = node.start_position().row as u32 + 1;
                 let end_line = node.end_position().row as u32 + 1;
+                // 1-based, matching the line convention above. The column is
+                // part of every Element id because line alone does not
+                // identify an element in a MINIFIED document: two
+                // `<span id="x">` on one line produced two elements with the
+                // same `{rel_path}:{tag}:{line}:{slug}`, i.e. one node
+                // silently overwriting the other.
+                let col = node.start_position().column as u32 + 1;
 
                 // Decide whether this element warrants an Element node.
                 let id = attrs
@@ -132,7 +139,7 @@ impl HtmlParser {
                     let text = Self::extract_inner_text(node, source);
                     let name = truncate(&text, 100);
                     let anchor = id.clone().unwrap_or_else(|| name.clone());
-                    let qname = format!("{rel_path}:{tag}:{}:{}", line, slugify(&anchor));
+                    let qname = format!("{rel_path}:{tag}:{}:{}:{}", line, col, slugify(&anchor));
                     result.elements.push(ElementInfo {
                         name,
                         qualified_name: qname.clone(),
@@ -158,7 +165,7 @@ impl HtmlParser {
                         .map(|(_, v)| v.clone());
                     if action.is_some() {
                         let name = action.clone().unwrap();
-                        let qname = format!("{rel_path}:form:{}:{}", line, slugify(&name));
+                        let qname = format!("{rel_path}:form:{}:{}:{}", line, col, slugify(&name));
                         result.elements.push(ElementInfo {
                             name,
                             qualified_name: qname.clone(),
@@ -178,7 +185,7 @@ impl HtmlParser {
                     }
                 } else if let Some(id_val) = id.clone() {
                     // Generic element with an `id` attribute.
-                    let qname = format!("{rel_path}:{tag}:{}:{}", line, slugify(&id_val));
+                    let qname = format!("{rel_path}:{tag}:{}:{}:{}", line, col, slugify(&id_val));
                     result.elements.push(ElementInfo {
                         name: id_val.clone(),
                         qualified_name: qname.clone(),
@@ -546,5 +553,51 @@ impl LanguageParser for HtmlParser {
 
         result.files.push(file_info);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn element_ids(source: &str) -> Vec<String> {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        let file = root.join("index.html");
+        fs::write(&file, source).unwrap();
+        let parsed = HtmlParser::new().parse_file(&file, &root);
+        parsed
+            .elements
+            .iter()
+            .map(|e| e.qualified_name.clone())
+            .collect()
+    }
+
+    /// A minified document puts every element on line 1, so the line alone
+    /// cannot tell two same-`id` elements apart — the element id carries the
+    /// start column for exactly that case.
+    #[test]
+    fn two_same_id_elements_on_one_line_get_distinct_ids() {
+        let ids =
+            element_ids("<html><body><span id=\"x\">a</span><span id=\"x\">b</span></body></html>");
+        assert_eq!(ids, ["index.html:span:1:13:x", "index.html:span:1:34:x"]);
+    }
+
+    /// Headings and `action`-bearing forms build their ids the same way.
+    #[test]
+    fn headings_and_forms_on_one_line_get_distinct_ids() {
+        let ids = element_ids(
+            "<h1>Same</h1><h1>Same</h1><form action=\"/a\"></form><form action=\"/a\"></form>",
+        );
+        assert_eq!(
+            ids,
+            [
+                "index.html:h1:1:1:same",
+                "index.html:h1:1:14:same",
+                "index.html:form:1:27:a",
+                "index.html:form:1:52:a",
+            ]
+        );
     }
 }
