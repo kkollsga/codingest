@@ -90,7 +90,9 @@ pub enum QueryFormat {
     /// Header line of column names, then one TSV row per result row.
     #[default]
     Human,
-    /// `CypherResult::to_csv()` — byte-identical to the MCP `FORMAT CSV` export.
+    /// `CypherResult::to_csv()` — the same renderer as the MCP `FORMAT CSV`
+    /// export, but uncapped. Since kglite 0.16.6 the MCP inline body stops at
+    /// 200 data rows and appends a truncation notice; stdout gets every row.
     Csv,
     /// One compact `{"columns": [...], "rows": [[...]]}` object.
     Json,

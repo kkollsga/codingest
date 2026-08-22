@@ -19,6 +19,13 @@ ship time — it's the only place the version bumps.
   verified in both directions.
 
 ### Changed
+- **Code-review skill recipes refreshed for kglite 0.16.6.** The
+  test-reachability recipe is now anchored (point lookup start — fast and
+  immune to seed caps); string-splicing guidance is replaced with MCP `params`
+  placeholders; a first-witness `EXISTS` reachability recipe is added; notes on
+  whole-value `=~` matching and query `warnings:` blocks. `docs/mcp.md` and the
+  CLI CSV comment now state the MCP 200-row inline CSV cap (the CLI export
+  stays uncapped).
 - **Engine floor moves to kglite 0.16.6.** This release changes what queries
   *answer*, not what codingest builds: the builder's graph is unchanged and the
   frozen parity goldens hold. Three query-visible engine changes land on code

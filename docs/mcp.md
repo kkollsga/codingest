@@ -215,9 +215,13 @@ it appends to the preview.
 server already prints a **15-row preview** with the true row count in the header
 (`38 row(s) (showing first 15):`). What can trip it:
 
-- **`FORMAT CSV`** renders the *entire* result inline. That is the right tool for
-  bulk export and the one that will hit the 50 KiB cap — use it deliberately,
-  with `LIMIT`, not as a default.
+- **`FORMAT CSV`** carries the header plus the first **200 data rows** inline
+  (capped since kglite 0.16.6), then a notice naming the true row count, the
+  full byte size, and the `csv_http_server` extension that serves the complete
+  file as a fetch URL. It is still the widest per-row rendering the server
+  produces, so 200 rows can reach the 50 KiB cap on their own — narrow the query
+  rather than re-running it hoping for more. The CLI's `codingest query --format
+  csv` is uncapped: it writes every row to stdout, not into a tool result.
 - Wide projections. `RETURN n` on a node type carrying source text can blow the
   byte budget inside 15 rows. Project the columns you actually need.
 - `read_source` / `grep` over large files.
@@ -227,6 +231,15 @@ If you routinely need more headroom, raise it in opencode's config:
 truncated, opencode's message points at the spill file — and, if the agent has
 the task tool, tells the model to delegate reading it to a sub-agent rather than
 pull it back into context.
+
+Two kglite 0.16.6 changes alter what a runaway or capped query does. A deep
+unbounded traversal is charged against the 10,000,000-row internal ceiling *as
+it expands*, so it now stops with a quantified error naming the expansion that
+overflowed instead of exhausting the host's memory (`max_rows` still governs on
+its own if you set it). And a `LIMIT`-bearing relationship pattern no longer
+truncates silently: the executor's candidate seed caps are advisory, and a pass
+that hits one and comes back short of the `LIMIT` is re-run without them — a
+short result is the graph's answer, not the cap's.
 
 ### Timeouts
 

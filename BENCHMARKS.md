@@ -243,6 +243,18 @@ the historical captures stand as taken. `CONTROL_FLOOR_MARGIN = 2.0` in
 `tests/release/test_bench_anchor.py` now rejects a marginal control at commit
 time, which is what would have caught the original choice.
 
+**Superseded at 0.2.3 — the paragraph above is history, not the current
+control.** `varlen_callers_1_3` was demoted when the 0.2.3 corpus regrowth made
+it the *slowest* query on the corpus, and the slowest cell is the gate's trip
+witness: a control there turns a FAIL into a VOID. The control has been
+`defs_per_file (grouped aggregation)` ever since — see the `control_query` field
+of `tests/benchmarks/baselines/0.2.3.json` and later. The demotion was the right
+call for a second reason recorded at 0.2.5: `varlen_callers_1_3` moved **-9.7 %**
+across the kglite 0.16.2 -> 0.16.5 engine move, while `defs_per_file` measured
+flat (+0.0 %) over the same move — the immunity a control needs, and the same
+failure the 2026-08-13 replacement was made to fix. No measured value recorded
+above or in any baseline was altered by either change.
+
 Capturing the replacement surfaced a second defect in the procedure itself: the
 documented "three runs per mode" had no warmup, and the first run after a build
 reads high in *every cell at once* (top20 0.054 then 0.043–0.045; varlen 0.034
