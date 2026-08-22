@@ -88,6 +88,43 @@ Consequences for this document:
   with its machine state recorded. The next release capture starts the new
   comparable series.
 
+## Release 0.2.6 — 2026-08-22 (kglite 0.16.5 → 0.16.6 engine move + correctness program; corpus regrew, anchor REFUSE honored)
+
+The engine move was measured in isolation BEFORE the builder program landed
+(same protocol as 0.2.5: both `codingest_bench` binaries built first, **three
+interleaved A/B pairs per docs mode**, min per query, corpus `ad8b3084…`,
+control `defs_per_file` + shadow `top20_by_branch_count`):
+
+| query | 0.16.5 | 0.16.6 | delta |
+|---|---:|---:|---|
+| `defs_per_file` (CONTROL) | 0.020 | 0.020 | **+0.0 %** (docs-off −4.5 %, raw 0.001 ms — sub-floor) |
+| `top20_by_branch_count` (shadow) | 0.013 | 0.013 | +0.0 % |
+| `calls_edge_scan` | 0.012 | 0.010 | **−16.7 %** (docs-on; docs-off already 0.010) |
+| `varlen_callers_1_3` | 0.027 | 0.026 | **−3.7 %** (both modes) |
+| `contains_new` | 0.002 | 0.003 | +0.001 ms — deterministic BOTH modes but sub-floor (floor 0.005); recorded, not chased |
+| every other cell | | | flat |
+
+Rows identical across engines in both modes; node/edge counts identical
+(405/616 docs-on). The two movers are upstream 0.16.6 traversal work
+(`calls_edge_scan` plausibly the fused-count path; `varlen` the
+DISTINCT-pushdown + visited-buffer fixes, small at this corpus size as
+predicted). `eq_filter_pub` — upstream −37/−47 % on 400 K-node scans — is
+sub-floor here and unmeasurable, on purpose left unclaimed.
+
+**Perf phases of the program landed nothing, by pre-registered bar** — the
+record is the point: the calls-phase micro-fixes measured −5.3 %/−5.1 % on a
+≥10 % bar and were reverted; the `Arc<str>` candidate's premise was falsified
+by measurement (dedup never clones the field; the columnar store forces an
+owned string per entity either way); the save slice is 7.5 % of wall, half the
+bar for a dedicated phase. Raw tables: 52 rows in the local results history
+(`phase19/20/21-*`, 2026-08-22).
+
+**Corpus regrowth + anchor:** nine corpora were added at 0.2.6, so the bench
+corpus digest moved (`ad8b3084…` → `c449542e…`, 567/880 nodes/edges docs-on)
+and `bench_anchor compare` correctly exited **3 REFUSE** in both modes — no
+cross-corpus delta was read, and `0.2.6.json` is the first baseline of the new
+corpus epoch.
+
 ## Release 0.2.5 — 2026-08-20 (kglite 0.16.2 → 0.16.5 engine move: flat, one small win)
 
 No builder source changed this release (`git diff v0.2.4..HEAD --

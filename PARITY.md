@@ -7,6 +7,38 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.6 — 2026-08-22: 30 corpora (21 → 30), all green on kglite 0.16.6; four intended golden moves, each with a recorded reason
+
+Released state: **30 corpora**, all green in the release-mode gate
+(`cargo test --workspace --release`; `golden_parity` + `rev_self_consistency`,
+`kgl_bytes_are_stable_across_builds` and `reloaded_graph_renders_identically`
+alongside). This release is the kglite 0.16.6 engine move **plus** a 13-fix
+builder correctness program, so unlike 0.2.4/0.2.5 the goldens were expected to
+move — and exactly four did, each regenerated in the same commit as its fix
+with the reason recorded there: `julia_basic` (EXTENDS endpoint typing — the
+phantom `_provisional` Class stub is gone), `dup_minified_assets` (CSS/HTML ids
+gained the start column; the corpus exists to pin that collision),
+`html_js_lang_group` (pure id-string identity from the same change, every count
+unchanged), `docs_mdx` (one new DOCUMENTS edge from the case-fold fix, via a
+fixture link added for it). Nine corpora were added: `dart_part_of`,
+`rust_inline_mod`, `py_src_layout`, `cpp_extern_c`, `web_served_root`, and the
+first-ever `go_interface`, `java_javadoc`, `csharp_using_alias`,
+`php_group_use`, `swift_basic` — all captured additively (five of them pin
+fixes whose pre-fix graphs were measured and recorded in the commit messages).
+
+**The engine move itself cannot move goldens** — verified, not assumed: the
+0.16.6 Rust API delta is purely additive for every symbol codingest names and
+`add_nodes`/`add_connections` behavior is unchanged upstream. What 0.16.6 DOES
+change is query *answers* on cyclic graphs (breaking trail-semantics fix). The
+parity gate is blind to that by construction, so this release adds
+`crates/codingest/tests/traversal_semantics.rs`: hand-derived reachable-caller
+sets over `rust_import`'s real 2-cycle, red on 0.16.5 with the old
+distance-semantics answer and green on 0.16.6 — verified in both directions.
+
+The fixture corpus now builds **567 nodes / 880 edges** docs-on (was 405/616) —
+the growth is the nine new corpora, and the bench anchor correctly REFUSEd the
+cross-corpus comparison (fresh baseline captured for the new corpus).
+
 ## Release 0.2.5 — 2026-08-20: 21 corpora, all green across the kglite 0.16.5 engine move
 
 Released state: unchanged corpus set (**21 corpora**), all green in the

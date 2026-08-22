@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-08-22
+
 ### Fixed
 - **EXTENDS edges connect the child's real node type to the parent's.** A
   `struct Circle <: Shape` hierarchy (julia; C++ mixed hierarchies identical)
