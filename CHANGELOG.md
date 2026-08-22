@@ -78,6 +78,17 @@ ship time — it's the only place the version bumps.
   namespace and resolved calls into it; PHP collapsed a grouped use to its
   ancestor) plus deliberately-pinned gaps (Go implicit conformance and Go
   intra-repo import resolution, Swift protocol conformance).
+- **The grammar-kinds guard now reads parser sources with `syn`** instead of
+  regexes, so `match node.kind() { "literal" => … }` arms — where both of this
+  release's high-impact extraction bugs and both dead grammar arms lived — are
+  exactly guarded (223 → 423 literals). Its first run caught two more dead
+  arms, fixed here: C++ `Ns::func()` call extraction (grammar spells it
+  `qualified_identifier`) and C# `params` variadic detection (grammar
+  collapsed to `modifier`); a provably-dead C# default-value branch was
+  removed and filed.
+- **Multi-revision builds name their extraction after the repository**, so
+  rev-built node ids equal a working-tree build of the same manifestless repo
+  (previously every rev graph lived under a phantom `snapshot` project).
 - **Traversal-semantics gate** (`tests/traversal_semantics.rs`): pins the
   hand-derived answer *sets* of `<-[:CALLS*1..3]-` over a real call cycle, so
   an engine-side change to query semantics is caught even when the built graph

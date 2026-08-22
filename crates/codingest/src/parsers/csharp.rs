@@ -560,22 +560,32 @@ impl CSharpParser {
             }
             let mut name: Option<String> = None;
             let mut type_ann: Option<String> = None;
-            let mut default: Option<String> = None;
+            // C# parameter defaults are NOT captured. The branch that used to
+            // claim to capture them tested for an `equals_value_clause` child,
+            // a node kind tree-sitter-c-sharp does not define — it was dead,
+            // and `default` has been `None` for every C# parameter for as long
+            // as it has been written this way. Restoring it is not a rename:
+            // the grammar gives `parameter` a bare `expression` child after an
+            // anonymous `=` token, so it needs position-aware logic and a
+            // corpus that exercises it (`csharp_using_alias` declares no
+            // defaulted parameter). Deleting the dead branch is behaviour-
+            // neutral, including for a `typeof(...)` default, which the
+            // `k.contains("type")` arm below already mis-files as the type
+            // annotation and did so before too.
+            let default: Option<String> = None;
             let mut is_params = false;
             let mut tcursor = child.walk();
             for sub in child.children(&mut tcursor) {
                 let k = sub.kind();
                 if k == "identifier" && name.is_none() {
                     name = Some(node_text(sub, source).to_string());
-                } else if k == "parameter_modifier" {
+                // `modifier`, not `parameter_modifier`: tree-sitter-c-sharp
+                // collapsed the per-position modifier nodes into one `modifier`
+                // kind, so this arm had stopped firing and every `params T[]`
+                // parameter was recorded as Positional instead of Variadic.
+                } else if k == "modifier" {
                     if node_text(sub, source).contains("params") {
                         is_params = true;
-                    }
-                } else if k == "equals_value_clause" {
-                    let txt = node_text(sub, source);
-                    let cleaned = txt.trim_start_matches('=').trim().to_string();
-                    if !cleaned.is_empty() {
-                        default = Some(cleaned);
                     }
                 } else if k.contains("type")
                     || k == "predefined_type"

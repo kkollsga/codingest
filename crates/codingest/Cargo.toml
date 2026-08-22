@@ -75,3 +75,12 @@ aho-corasick = "1.1.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# `tests/grammar_kinds.rs` parses the parser sources as Rust instead of
+# regexing them, which is what makes `match node.kind() { "lit" => … }` arms
+# exactly extractable (a regex over arm bodies false-positives on every other
+# string literal in the body). `full` = item/statement/expression syntax,
+# `visit` = the borrowing visitor the extractor implements. `span-locations`
+# on proc-macro2 is what gives the failure message a real `file:line` for each
+# offending literal; without it every span reports line 1.
+syn = { version = "2.0.119", features = ["full", "visit"] }
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }

@@ -415,7 +415,14 @@ impl CppParser {
                                 _ => {}
                             }
                         }
-                        "scoped_identifier" => {
+                        // `qualified_identifier`, not `scoped_identifier` —
+                        // the latter is the Rust/Java spelling and matches
+                        // nothing in either the C++ or the C grammar, so
+                        // `Ns::func()` call sites went unrecorded. Every other
+                        // site in this file already spells it the C++ way;
+                        // this one arm was the outlier, and it was invisible
+                        // because a dead match arm fails silently.
+                        "qualified_identifier" => {
                             let text = node_text(func, source);
                             let parts: Vec<&str> = text.split("::").collect();
                             if parts.len() >= 2 {
