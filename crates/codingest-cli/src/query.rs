@@ -44,6 +44,14 @@ pub struct QueryArgs {
     /// instead of warning on stderr and running anyway.
     #[arg(long)]
     pub require_fresh: bool,
+    /// Permit the engine's parallel runtime for this query. Off by default:
+    /// one heavy analytical scan may use the whole machine, but nothing should
+    /// claim every core by omission. The flag is a *permission*, not an
+    /// instruction — only operators that can partition deterministically
+    /// honour it, and each still applies its own row-count gate, so a small
+    /// graph runs single-threaded either way and the rows are identical.
+    #[arg(long)]
+    pub parallel: bool,
 }
 
 /// Upper bound for `--timeout`, in seconds (~31.7 years). Past it a value is a
@@ -179,7 +187,9 @@ pub(crate) fn run_query(args: &QueryArgs, query: &str) -> Result<QueryOutput> {
     let params: HashMap<String, Value> = HashMap::new();
     // `ExecuteOptions::eager` is mandatory here: the lazy path yields silently
     // empty row sets for any caller without a lazy materializer.
-    let mut opts = ExecuteOptions::eager(&params).with_csv_import(CsvImportPolicy::LocalFilesystem);
+    let mut opts = ExecuteOptions::eager(&params)
+        .with_csv_import(CsvImportPolicy::LocalFilesystem)
+        .with_parallel(args.parallel);
     if let Some(seconds) = args.timeout {
         let seconds = check_timeout(seconds).map_err(|message| anyhow::anyhow!("{message}"))?;
         opts.deadline = Some(Instant::now() + Duration::from_secs_f64(seconds));
@@ -326,6 +336,7 @@ mod tests {
             timeout: None,
             format,
             require_fresh: false,
+            parallel: false,
         }
     }
 
@@ -632,6 +643,27 @@ mod tests {
                 "unexpected error for {seconds}: {error}"
             );
         }
+    }
+
+    /// The `--parallel` opt-in is plumbed through to `ExecuteOptions`, and
+    /// opting in never changes the answer.
+    ///
+    /// This fixture cannot demonstrate a speedup and does not try to: the
+    /// engine's fan-out gate needs thousands of candidate rows, so a
+    /// two-function graph runs single-threaded whichever way the flag is set.
+    /// What is asserted is the contract the flag has to keep — same columns,
+    /// same rows, same order — because a `true` here is a *permission* handed
+    /// to the planner, not a different query.
+    #[test]
+    fn parallel_opt_in_is_wired_and_returns_the_same_rows() {
+        let fx = fixture();
+        let serial = run_query(&args(&fx.graph, QueryFormat::Human), ROWS).unwrap();
+        let mut parallel_args = args(&fx.graph, QueryFormat::Human);
+        parallel_args.parallel = true;
+        let parallel = run_query(&parallel_args, ROWS).unwrap();
+        assert_eq!(parallel.stdout, serial.stdout);
+        assert_eq!(parallel.rows, serial.rows);
+        assert_eq!(serial.rows, 2, "fixture lost its functions");
     }
 
     #[test]

@@ -97,6 +97,9 @@ ship time — it's the only place the version bumps.
   verified in both directions.
 
 ### Changed
+- **`codingest query --parallel`** opts a query into kglite's parallel
+  execution runtime (0.16.4 engine lever; off by default, effective on
+  scan-dominated shapes above the engine's candidate-row gates).
 - **Code-review skill recipes refreshed for kglite 0.16.6.** The
   test-reachability recipe is now anchored (point lookup start — fast and
   immune to seed caps); string-splicing guidance is replaced with MCP `params`

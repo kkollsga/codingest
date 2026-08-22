@@ -94,6 +94,21 @@ fn require_fresh_on_a_stale_graph_exits_three() {
     assert!(out.stdout.is_empty(), "refusal wrote rows to stdout");
 }
 
+/// `--parallel` is accepted by the parser and changes nothing observable.
+///
+/// The fixture is far below the engine's fan-out threshold, so no speedup is
+/// claimed or asserted — this pins the plumbing: the flag parses, the run
+/// still exits `0`, and the rows are byte-identical to the serial run.
+#[test]
+fn parallel_flag_is_accepted_and_leaves_the_rows_unchanged() {
+    let (_dir, _source, graph) = fixture();
+    let serial = query(&graph, &[]);
+    let parallel = query(&graph, &["--parallel"]);
+    assert_eq!(code(&parallel), 0, "{parallel:?}");
+    assert_eq!(parallel.stdout, serial.stdout);
+    assert_eq!(String::from_utf8_lossy(&parallel.stdout), "f.name\nalpha\n");
+}
+
 #[test]
 fn require_fresh_on_a_fresh_graph_exits_zero() {
     let (_dir, _source, graph) = fixture();

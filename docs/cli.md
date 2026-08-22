@@ -112,6 +112,13 @@ Options:
   bound are rejected as usage errors (exit `2`) — "no timeout" is spelled by
   omitting the flag, so a `--timeout=0` can only be a mistake.
 - `--require-fresh` — refuse to query a graph that is not provably fresh.
+- `--parallel` — permit the engine's parallel runtime for this query
+  (default off). It is a *permission*, not an instruction: only operators
+  that partition deterministically honour it, and each applies its own
+  candidate-row gate, so a small graph runs single-threaded either way and
+  the result is identical. Worth setting on a scan-dominated query over a
+  large artifact; pointless — and mildly wasteful of cores a concurrent
+  process may want — on a small one.
 - `-` in place of the query reads the query text from stdin:
 
   ```bash
