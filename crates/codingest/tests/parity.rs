@@ -173,6 +173,22 @@ const CORPORA: &[&str] = &[
     // file-anchored raw-walk allowlist. Its golden is captured additively
     // (see `tests/goldens/README.md`).
     "julia_basic",
+    // Added 2026-08-22. `dart_import` is the only other Dart corpus and it
+    // contains no `part` file at all, so Dart's `part of` handling — the one
+    // place a file's module path comes from something other than its own
+    // location on disk — had zero golden coverage and could be changed, or
+    // broken, with every digest staying green. It pins the property the
+    // feature exists for: a library split across `lib/collection.dart` and
+    // two parts under `lib/src/` is ONE module, with all three files hanging
+    // off `dart_part_of.lib.collection`. The pre-fix derivation kept only the
+    // URI's stem (`{pkg}.{stem}`), so the parts landed in a phantom
+    // `dart_part_of.collection` module that no file declared and the parent
+    // library never joined; the `../collection.dart` spelling is what makes
+    // the dropped directory segments visible. `fromA` calling the parent
+    // file's `seed` pins that the cross-file CALLS edge still resolves once
+    // the three files share a module. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "dart_part_of",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

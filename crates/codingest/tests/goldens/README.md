@@ -200,6 +200,25 @@ mutation-tested: removing `"julia"` from `uses_path_imports` (include edges
 vanish) and breaking short-form function extraction each turned the suite red,
 and each restore turned it back green.
 
+The additive `dart_part_of` digest was captured on 2026-08-22 with the corpus
+itself. `dart_import`, the only other Dart corpus, contains no `part` file, so
+Dart's `part of` handling — the one place a file's module path comes from
+something other than its own location on disk — had no golden coverage and
+could be changed, or broken, with every digest staying green. The corpus pins
+the property the feature exists for: `lib/collection.dart` and its two parts
+under `lib/src/` are ONE module, with all three files hanging off
+`dart_part_of.lib.collection`. The fix that landed with it is what makes that
+true — the previous derivation kept only the URI's stem (`{pkg}.{stem}`), so
+the parts landed in a phantom `dart_part_of.collection` module that no file
+declared and the parent library never joined, and the `../collection.dart`
+spelling is what makes the dropped directory segments visible. `fromA` calling
+the parent file's `seed` pins that the cross-file CALLS edge still resolves
+once the three files share a module. Verified additive the strict way:
+`capture_goldens` rewrote every file, and afterwards `git status` reported only
+`dart_part_of.sha256` as new — the one pre-existing digest that also shows as
+modified, `julia_basic.sha256`, moved in the preceding EXTENDS-typing commit
+and not in this capture.
+
 ## The 2026-08-10 bulk regeneration (13 of 14 digests)
 
 **This is the first bulk regeneration since the extraction**, and the only one

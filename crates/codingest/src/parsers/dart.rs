@@ -1082,38 +1082,80 @@ fn first_string_literal(node: Node, source: &[u8]) -> Option<String> {
 
 /// If the file is a library `part`, resolve the parent library's module
 /// path so `part` files collapse into one logical module. Only the URI
-/// form (`part of 'parent.dart';`) maps onto the synthetic per-file module
-/// scheme; the dotted-name form is left to the file's own module path.
-fn resolve_part_of(root: Node, source: &[u8], src_root: &Path) -> Option<String> {
+/// form (`part of 'parent.dart';`) names a file; the dotted library-name
+/// form (`part of my_lib;`) names a `library` declaration, carries no
+/// string literal, and is left to the file's own module path.
+fn resolve_part_of(root: Node, source: &[u8], filepath: &Path, src_root: &Path) -> Option<String> {
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
         if child.kind() != "part_of_directive" {
             continue;
         }
         let uri = first_string_literal(child, source)?;
-        let stem = uri
-            .rsplit('/')
-            .next()
-            .unwrap_or(&uri)
-            .strip_suffix(".dart")
-            .unwrap_or(&uri);
-        if stem.is_empty() {
-            return None;
-        }
+        return part_of_module_path(&uri, filepath, src_root);
+    }
+    None
+}
+
+/// Module path of the parent library a `part of '<uri>'` names, expressed
+/// in the exact coordinates `file_to_module_path` stamps on that parent
+/// file — that identity is the whole point, since the parent reaches its
+/// module path through `file_to_module_path` and the two must meet.
+///
+/// A `package:<pkg>/…` URI takes the same same-package rewrite
+/// `normalize_dart_import` performs. Every other URI is filesystem-relative
+/// — per the Dart spec, relative to the PART file's own directory — so it is
+/// resolved lexically against that directory and then pushed through
+/// `file_to_module_path` itself.
+///
+/// Deriving `{pkg}.{stem}` instead (the pre-fix shape) dropped every
+/// intermediate directory, so a part of `lib/collection.dart` landed in
+/// `<pkg>.collection` while the parent library sat in
+/// `<pkg>.lib.collection`: a phantom module holding the parts, and a split
+/// library that never rejoined — the exact opposite of what `part of`
+/// handling exists to do.
+///
+/// `None` means the URI cannot be placed inside this project (a `dart:` or
+/// foreign-package library, or a `../` chain escaping the source root); the
+/// caller then keeps the part file's own module path rather than inventing
+/// coordinates for it.
+fn part_of_module_path(uri: &str, filepath: &Path, src_root: &Path) -> Option<String> {
+    let uri = uri.trim();
+    if uri.is_empty() || uri.starts_with("dart:") {
+        return None;
+    }
+    if uri.starts_with("package:") {
         // Same dot-trim as `shared::file_to_module_path`: a dot-prefixed
         // root must not create an empty leading module segment.
-        let pkg = src_root
+        let pkg_root = src_root
             .file_name()
             .and_then(|o| o.to_str())
             .unwrap_or("")
             .trim_start_matches('.');
-        return Some(if pkg.is_empty() {
-            stem.to_string()
-        } else {
-            format!("{pkg}.{stem}")
-        });
+        let normalized = normalize_dart_import(uri, pkg_root);
+        // `normalize_dart_import` hands back the URI verbatim when it names
+        // another package — not a module path of ours.
+        return (normalized != uri).then_some(normalized);
     }
-    None
+    let mut resolved = filepath.parent()?.to_path_buf();
+    for segment in uri.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if !resolved.pop() {
+                    return None;
+                }
+            }
+            other => resolved.push(other),
+        }
+    }
+    // Must land inside the project: outside it `file_to_module_path`'s
+    // `strip_prefix` fails and it silently falls back to `<pkg>.<stem>` —
+    // the very phantom this function exists to avoid.
+    if !resolved.starts_with(src_root) {
+        return None;
+    }
+    Some(file_to_module_path(&resolved, src_root, '.'))
 }
 
 /// Strip one matching pair of surrounding `'` or `"` quotes.
@@ -1159,7 +1201,7 @@ impl LanguageParser for DartParser {
 
         // A `part of` file adopts its parent library's module path so the
         // split-across-files library collapses into one logical module.
-        let module_path = resolve_part_of(root, source_bytes, src_root)
+        let module_path = resolve_part_of(root, source_bytes, filepath, src_root)
             .unwrap_or_else(|| file_to_module_path(filepath, src_root, '.'));
 
         let filename = filepath
@@ -1201,7 +1243,7 @@ impl LanguageParser for DartParser {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_dart_import;
+    use super::{file_to_module_path, normalize_dart_import, part_of_module_path, Path};
 
     /// `package:<pkg>/<dirs>/<file>.dart` preserves the directory segments
     /// and lands in the `<pkg>.lib.<dirs>.<stem>` coordinates
@@ -1267,5 +1309,70 @@ mod tests {
             "package:pkg/.dart"
         );
         assert_eq!(normalize_dart_import("x.dart", ""), "x.dart");
+    }
+
+    /// The defect `part_of_module_path` was written to close: a part file
+    /// must land in its PARENT's module, i.e. in the coordinates
+    /// `file_to_module_path` hands the parent file, so the split library is
+    /// one module. The pre-fix `{pkg}.{stem}` derivation dropped every
+    /// directory segment and parked the parts in a module of their own.
+    #[test]
+    fn part_of_relative_uri_lands_in_the_parent_library_module() {
+        let root = Path::new("/w/dart_part_of");
+        let part = root.join("lib/src/a.dart");
+        let parent = root.join("lib/collection.dart");
+        assert_eq!(
+            part_of_module_path("../collection.dart", &part, root).as_deref(),
+            Some("dart_part_of.lib.collection")
+        );
+        // …which is exactly what the parent file itself is stamped with.
+        assert_eq!(
+            file_to_module_path(&parent, root, '.'),
+            "dart_part_of.lib.collection"
+        );
+    }
+
+    /// A URI without a `../` prefix resolves against the part file's own
+    /// directory, so the part file's intermediate directories survive.
+    #[test]
+    fn part_of_relative_uri_keeps_intermediate_directories() {
+        let root = Path::new("/w/pkg");
+        let part = root.join("lib/src/a.dart");
+        assert_eq!(
+            part_of_module_path("parent.dart", &part, root).as_deref(),
+            Some("pkg.lib.src.parent")
+        );
+        assert_eq!(
+            part_of_module_path("./nested/parent.dart", &part, root).as_deref(),
+            Some("pkg.lib.src.nested.parent")
+        );
+    }
+
+    /// The `package:` spelling takes the same same-package rewrite imports
+    /// take; a foreign package or an SDK library is not a module of ours.
+    #[test]
+    fn part_of_package_uri_reuses_import_normalisation() {
+        let root = Path::new("/w/pkg");
+        let part = root.join("lib/src/a.dart");
+        assert_eq!(
+            part_of_module_path("package:pkg/collection.dart", &part, root).as_deref(),
+            Some("pkg.lib.collection")
+        );
+        assert_eq!(
+            part_of_module_path("package:other/x.dart", &part, root),
+            None
+        );
+        assert_eq!(part_of_module_path("dart:core", &part, root), None);
+    }
+
+    /// A `../` chain that escapes the source root yields no module path:
+    /// `file_to_module_path`'s `strip_prefix` would fail there and it would
+    /// fall back to `<pkg>.<stem>` — the phantom module all over again.
+    #[test]
+    fn part_of_uri_escaping_the_source_root_is_rejected() {
+        let root = Path::new("/w/pkg");
+        let part = root.join("lib/a.dart");
+        assert_eq!(part_of_module_path("../../outside.dart", &part, root), None);
+        assert_eq!(part_of_module_path("", &part, root), None);
     }
 }
