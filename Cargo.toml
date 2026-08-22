@@ -17,8 +17,22 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.5
-# floor is a LOCKSTEP REFRESH, not a fix we need: nothing in 0.16.3-0.16.5
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.6
+# floor picks up the advisory traversal caps (our reported LIMIT bug: capped
+# pass + exact uncapped retry), the BREAKING var-length trail-semantics fixes
+# (a closed trail re-emits its source; a segment's relationships are visible to
+# its clause's uniqueness check), and per-section .kgl CRC32s. Zero source
+# changes: the Rust API delta is purely additive for every symbol we name, and
+# add_nodes/add_connections behavior is unchanged, so the frozen goldens hold.
+# The .kgl format gains a `section_digests` metadata field — additive in BOTH
+# directions (serde default/skip), so unlike 0.16.2 a stale .kgl needs NO
+# rebuild; saves pay the CRC pass (upstream ~+11-15%). The semantics change IS
+# observable in query answers on cyclic graphs — pinned by
+# crates/codingest/tests/traversal_semantics.rs, which is red on 0.16.5 and
+# green on 0.16.6 by design.
+#
+# History — the 0.16.5 floor was a LOCKSTEP REFRESH, not a fix we needed:
+# nothing in 0.16.3-0.16.5
 # reaches a path codingest exercises, and the evidence is the gate rather than
 # the changelog. `golden_parity` is green and `kgl_bytes_are_stable_across_builds`
 # holds, so the frozen goldens are byte-identical across the bump; the fixture
@@ -147,8 +161,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.5", default-features = false }
-kglite-mcp-server = { version = "0.16.5", default-features = false }
+kglite = { version = "0.16.6", default-features = false }
+kglite-mcp-server = { version = "0.16.6", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

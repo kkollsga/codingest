@@ -10,6 +10,20 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.16.6.** This release changes what queries
+  *answer*, not what codingest builds: the builder's graph is unchanged and the
+  frozen parity goldens hold. Three query-visible engine changes land on code
+  graphs: (1) `LIMIT`-bearing traversals no longer silently drop results past
+  the engine's seed caps — the caps are now advisory with an exact uncapped
+  retry (the bug codingest reported on 2026-08-15); (2) **breaking upstream
+  semantics fix** — variable-length traversals use trail reachability, so on a
+  cyclic call graph `<-[:CALLS*1..3]-` now counts a function reached through a
+  closed call cycle (including itself) as a caller; (3) unbounded queries hit a
+  quantified 10M-row ceiling during expansion instead of exhausting memory.
+  Saved `.kgl` files gain per-section integrity checksums (additive both
+  directions — no rebuild of existing graphs is needed).
+
 ## [0.2.5] - 2026-08-20
 
 ### Changed
