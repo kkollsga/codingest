@@ -19,6 +19,7 @@ use kglite::api::GraphRead;
 use kglite::datatypes::Value;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -65,16 +66,15 @@ pub fn archive_and_build(
         .tempdir()
         .map_err(|e| format!("could not create tempdir: {}", e))?;
 
-    // Extract into a FIXED-basename subdir, not into the randomly-named
-    // tempdir itself. When the build target is the repo root, the build
-    // root's own directory name is user-visible output: the fallback scan
-    // derives Python module names from it (`<root>.app.compute`) and the
-    // inferred `:Project` is named after it. Building at `tmp.path()`
-    // therefore stamped a fresh random `kglite-rev-XXXXXX` into every such id,
-    // so two builds of the *same* revision disagreed. `snapshot` is the same
-    // basename the multi-rev path fixes (Decision 4), so single-rev and
-    // multi-rev builds of one revision also now agree with each other.
-    let snapshot = tmp.path().join("snapshot");
+    // Extract into a STABLY-named subdir, not into the randomly-named tempdir
+    // itself. When the build target is the repo root, the build root's own
+    // directory name is user-visible output: the fallback scan derives Python
+    // module names from it (`<root>.app.compute`) and the inferred `:Project`
+    // is named after it. Building at `tmp.path()` therefore stamped a fresh
+    // random `kglite-rev-XXXXXX` into every such id, so two builds of the
+    // *same* revision disagreed. The multi-rev path uses the identical
+    // basename, so single-rev and multi-rev builds of one revision agree too.
+    let snapshot = tmp.path().join(snapshot_basename(&repo_root));
     std::fs::create_dir_all(&snapshot)
         .map_err(|e| format!("could not create snapshot dir: {}", e))?;
 
@@ -132,6 +132,36 @@ fn archive_and_build_into(
         max_loc_per_file,
         include_docs,
     )
+}
+
+/// The basename every revision's tree is extracted into, under the throwaway
+/// tempdir: **the repo root's own directory name**.
+///
+/// Two properties ride on this one string, because for a manifestless repo the
+/// build root's basename IS user-visible identity — the fallback scan makes it
+/// the leading module segment (`<root>.app.compute`) and the inferred
+/// `:Project` is named after it:
+///
+/// 1. *Stable across builds of one rev* — any fixed basename buys this, and a
+///    fixed literal (`snapshot`) is what the code used until this function
+///    existed. It is why the extraction cannot happen at `tmp.path()` itself.
+/// 2. *Equal to a working-tree build of the same repo* — only the repo's own
+///    name buys this. `codingest.build("/x/myrepo")` and
+///    `codingest.build("/x/myrepo", rev="HEAD")` on a clean tree now answer
+///    with the same ids (`myrepo.app.compute`) instead of the second one
+///    inventing a `snapshot.` namespace no working-tree build ever produces.
+///
+/// No sanitizing: an odd directory name reaches exactly the same
+/// `file_to_module_path` normalization (leading dots trimmed, so `.hidden`
+/// contributes `hidden`) on both routes, and reproducing that normalization
+/// verbatim is the point — a name this path "cleaned up" would break the
+/// convergence rather than protect it. `snapshot` remains the fallback for a
+/// root with no final component (`/`, or a path ending in `..`), which is the
+/// only case `Path::file_name` cannot answer.
+fn snapshot_basename(repo_root: &Path) -> &OsStr {
+    repo_root
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("snapshot"))
 }
 
 /// `git -C <src_dir> rev-parse --show-toplevel` → the repo's work-tree root.
@@ -379,8 +409,8 @@ fn node_fingerprint(node_type: &str, props: &HashMap<String, Value>) -> i64 {
 /// `HEAD`), oldest → newest in list order.
 ///
 /// Each rev is archived-and-built independently (reusing [`archive_and_build`]'s
-/// machinery via a shared **fixed snapshot basename**, so qualified_names / ids
-/// align natively across revs), then folded into an accumulator by
+/// machinery via a shared **repo-named snapshot basename**, so qualified_names
+/// / ids align natively across revs), then folded into an accumulator by
 /// `(node_type, id)` node identity + `(connection_type, src, tgt)` edge identity
 /// — the exact identity [`extend_graph`] already uses. The newest rev an entity
 /// appears in wins its ordinary property columns (so plain Cypher reports HEAD's
@@ -423,15 +453,17 @@ pub fn build_code_tree_revs(
         None => resolve_repo_root(src_dir)?,
     };
 
-    // Fixed snapshot basename (Decision 4): every rev extracts into
-    // `<tmp>/snapshot`, so all revs share one build-root prefix and their
-    // qualified_names / ids align natively across revs — the empirical
-    // `_root_alias` heuristic that `_diff.py` needs is unnecessary here.
+    // Shared snapshot basename (Decision 4): every rev extracts into
+    // `<tmp>/<repo-dir-name>`, so all revs share one build-root prefix and
+    // their qualified_names / ids align natively across revs — the empirical
+    // `_root_alias` heuristic that `_diff.py` needs is unnecessary here. See
+    // [`snapshot_basename`] for why that prefix is the repo's own name rather
+    // than a literal.
     let tmp = tempfile::Builder::new()
         .prefix("kglite-revs-")
         .tempdir()
         .map_err(|e| format!("could not create tempdir: {}", e))?;
-    let snapshot = tmp.path().join("snapshot");
+    let snapshot = tmp.path().join(snapshot_basename(&repo_root));
 
     // Per-rev provenance manifests, keyed by cross-rev identity. Small (a few
     // strings + ints per entity), independent of per-rev graph size — this is
@@ -1089,15 +1121,80 @@ mod tests {
             ids(&second),
             "single-rev build ids must be stable"
         );
+        // The EXTRACTION tempdir's name (prefix `kglite-rev-`) must still not
+        // leak; the repo's own directory name appearing in an id is the
+        // intended behaviour, not a leak, and the fixture's repo prefix
+        // (`kglite-revhtml-`) is deliberately not a match for this needle.
         assert!(
             first_ids.iter().all(|(_, id)| !id.contains("kglite-rev-")),
-            "no temp-dir name may leak into an id: {first_ids:?}"
+            "no extraction temp-dir name may leak into an id: {first_ids:?}"
         );
+        let repo_name = tmp
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("fixture repo has a directory name");
         assert!(
             first_ids
                 .iter()
-                .any(|(kind, id)| kind == "Project" && id.contains("snapshot")),
-            "the manifestless rev build is anchored by an inferred project: {first_ids:?}"
+                .any(|(kind, id)| kind == "Project" && id.contains(repo_name)),
+            "the manifestless rev build is anchored by an inferred project named \
+             after the REPO dir {repo_name:?} (it was the literal `snapshot` \
+             before the basename converged with the working tree): {first_ids:?}"
+        );
+    }
+
+    /// The point of naming the extraction dir after the repo: a rev build and a
+    /// working-tree build of the SAME manifestless repo must agree on ids. They
+    /// did not while the extraction dir was the literal `snapshot` — the rev
+    /// build invented a `snapshot.` module/project namespace that no
+    /// working-tree build ever produces, so `build(path)` and `build(path,
+    /// rev="HEAD")` on a clean tree described the same code under two different
+    /// identity spaces (and `diff`-ing one against the other saw every entity
+    /// as removed-and-re-added).
+    #[test]
+    fn rev_build_ids_match_a_working_tree_build_of_the_same_repo() {
+        let (tmp, sha) = commit_files(&[("app.py", "def compute():\n    return 1\n")]);
+
+        let ids = |graph: &DirGraph| {
+            let mut out: Vec<(String, String)> = graph
+                .graph
+                .node_indices()
+                .filter_map(|index| graph.node_view(index))
+                .map(|node| {
+                    (
+                        node.node_type_str(&graph.interner).to_string(),
+                        node.id().to_string(),
+                    )
+                })
+                .collect();
+            out.sort();
+            out
+        };
+
+        // The committed tree and the working tree are identical here, so the
+        // only thing that can make the two id sets differ is the build root's
+        // basename.
+        let from_rev = archive_and_build(
+            tmp.path(),
+            &sha,
+            Some(tmp.path()),
+            false,
+            true,
+            None,
+            None,
+            false,
+        )
+        .expect("rev build");
+        let from_tree =
+            crate::builder::run_with_options(tmp.path(), false, true, None, None, false)
+                .expect("working-tree build");
+
+        assert_eq!(
+            ids(&from_rev),
+            ids(&from_tree),
+            "a rev build and a working-tree build of the same clean repo must \
+             produce the same ids"
         );
     }
 
