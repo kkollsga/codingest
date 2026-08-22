@@ -659,6 +659,71 @@ impl RustParser {
         }
     }
 
+    /// Re-anchor one `use` path recorded `inline_depth` levels deep inside
+    /// inline `mod` blocks, so the flat, scope-less `FileInfo::imports` list
+    /// still resolves against the scope the `use` was written in.
+    ///
+    /// `builder::other_edges::rust_import_candidates` anchors every Rust
+    /// `use` at the **file's** module path and pops one segment per leading
+    /// `super::`; `self::` pops none. Inside `mod inner { … }` the true
+    /// anchor is one level deeper than the file, so every enclosing inline
+    /// mod cancels exactly one `super`:
+    ///
+    /// * `use super::helper;` inside one inline mod names the file's own
+    ///   module — which the resolver spells `self::helper` (zero pops).
+    /// * more `super`s than enclosing mods: the remainder still pops the
+    ///   file's real parents (`super::super::x` inside one inline mod pops
+    ///   one, i.e. `super::x`).
+    /// * fewer `super`s than enclosing mods: the target is a sibling *inside*
+    ///   this file, whose nearest node in the graph is the file itself —
+    ///   `self::` again.
+    ///
+    /// Anything without a `super` prefix is returned verbatim: `crate::…` is
+    /// absolute, `self::…` already anchors at the file, and a bare path was
+    /// always a file-scope approximation.
+    ///
+    /// Without this, `mod tests { use super::*; }` — the single most common
+    /// shape in Rust source — recorded a bare `super`, which the resolver
+    /// popped against the FILE, producing a plausible-but-wrong IMPORTS edge
+    /// to the parent module's file.
+    fn rebase_inline_mod_use(raw: &str, inline_depth: usize) -> String {
+        if inline_depth == 0 {
+            return raw.to_string();
+        }
+        let mut rest = raw.trim();
+        let mut supers = 0usize;
+        loop {
+            if let Some(r) = rest.strip_prefix("super::") {
+                supers += 1;
+                rest = r;
+            } else if rest == "super" {
+                supers += 1;
+                rest = "";
+                break;
+            } else {
+                break;
+            }
+        }
+        if supers == 0 {
+            return raw.to_string();
+        }
+        let remaining = supers.saturating_sub(inline_depth);
+        let mut out = String::new();
+        for _ in 0..remaining {
+            out.push_str("super::");
+        }
+        if remaining == 0 {
+            out.push_str("self::");
+        }
+        out.push_str(rest);
+        // `use super::*;` / `use super::{self};` leave an empty remainder:
+        // trim the dangling separator so the anchor stands alone.
+        if let Some(trimmed) = out.strip_suffix("::") {
+            return trimmed.to_string();
+        }
+        out
+    }
+
     pub(crate) fn file_to_module_path(filepath: &Path, src_root: &Path) -> String {
         let rel = filepath.strip_prefix(src_root).unwrap_or(filepath);
         let mut parts: Vec<String> = rel
@@ -1286,10 +1351,25 @@ impl RustParser {
                     // it never resolved) and skipped `use_as_clause`
                     // entirely, so `use foo::Bar as Baz;` recorded nothing
                     // (mcp-servers report 2026-08-14, finding 2).
+                    //
+                    // `FileInfo::imports` is a flat list with no scope
+                    // column, so a `use` written inside an inline `mod`
+                    // block has to carry its own anchor: the prefixes are
+                    // pre-resolved here (see `rebase_inline_mod_use`).
+                    let inline_depth = module_path
+                        .strip_prefix(file_info.module_path.as_str())
+                        .map(|rest| rest.matches("::").count())
+                        .unwrap_or(0);
+                    let mut leaves: Vec<String> = Vec::new();
                     let mut uc = child.walk();
                     for sub in child.children(&mut uc) {
-                        Self::collect_use_paths(sub, source, "", &mut file_info.imports);
+                        Self::collect_use_paths(sub, source, "", &mut leaves);
                     }
+                    file_info.imports.extend(
+                        leaves
+                            .into_iter()
+                            .map(|leaf| Self::rebase_inline_mod_use(&leaf, inline_depth)),
+                    );
                 }
                 "mod_item" => {
                     let Some(mod_name) = Self::get_name(child, source, "identifier") else {
@@ -1505,5 +1585,85 @@ impl LanguageParser for RustParser {
         file_info.annotations = extract_comment_annotations(root, &source, DEFAULT_COMMENT_TYPES);
         result.files.push(file_info);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Parse one source string as `<root>/src/alpha.rs` under a root named
+    /// `pkg`, so the file's own module path is `crate::src::alpha`.
+    fn imports_of(source: &str) -> Vec<String> {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("pkg");
+        fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src/alpha.rs");
+        fs::write(&file, source).unwrap();
+        let parsed = RustParser::new().parse_file(&file, &root);
+        parsed.files[0].imports.clone()
+    }
+
+    #[test]
+    fn file_level_use_is_recorded_verbatim() {
+        assert_eq!(
+            imports_of("use crate::beta::thing;\nuse super::sibling;\nuse self::inner_mod::x;\n"),
+            ["crate::beta::thing", "super::sibling", "self::inner_mod::x"]
+        );
+    }
+
+    #[test]
+    fn use_inside_inline_mod_is_pre_resolved_to_the_file_scope() {
+        // One inline level cancels one `super`: the target is this file's own
+        // module, which the import resolver spells `self::…`.
+        assert_eq!(
+            imports_of("pub mod inner {\n    use super::helper;\n}\n"),
+            ["self::helper"]
+        );
+        // `mod tests { use super::*; }` — the bare-`super` form.
+        assert_eq!(
+            imports_of("#[cfg(test)]\nmod tests {\n    use super::*;\n}\n"),
+            ["self"]
+        );
+    }
+
+    #[test]
+    fn surplus_supers_inside_an_inline_mod_still_pop_the_file_parent() {
+        assert_eq!(
+            imports_of("pub mod inner {\n    use super::super::beta::thing;\n}\n"),
+            ["super::beta::thing"]
+        );
+        assert_eq!(
+            imports_of("pub mod inner {\n    use super::super::super::x;\n}\n"),
+            ["super::super::x"]
+        );
+    }
+
+    #[test]
+    fn nested_inline_mods_cancel_one_super_each() {
+        // Two inline levels, two supers -> back at the file's own module.
+        assert_eq!(
+            imports_of(
+                "pub mod a {\n    pub mod b {\n        use super::super::helper;\n    }\n}\n"
+            ),
+            ["self::helper"]
+        );
+        // Two inline levels, one super -> a sibling INSIDE this file; the
+        // nearest real node is the file, so `self::` again.
+        assert_eq!(
+            imports_of("pub mod a {\n    pub mod b {\n        use super::sib;\n    }\n}\n"),
+            ["self::sib"]
+        );
+    }
+
+    #[test]
+    fn non_super_use_inside_an_inline_mod_is_untouched() {
+        assert_eq!(
+            imports_of(
+                "pub mod inner {\n    use crate::beta::thing;\n    use self::deep::x;\n    use serde::Serialize;\n}\n"
+            ),
+            ["crate::beta::thing", "self::deep::x", "serde::Serialize"]
+        );
     }
 }

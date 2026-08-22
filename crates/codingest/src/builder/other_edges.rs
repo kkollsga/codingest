@@ -394,9 +394,15 @@ fn rust_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
         )
     } else if trimmed == "crate" {
         Some(own[..root_len].iter().map(|s| s.to_string()).collect())
-    } else if trimmed.starts_with("super::") || trimmed == "super" || trimmed.starts_with("self::")
+    } else if trimmed.starts_with("super::")
+        || trimmed == "super"
+        || trimmed.starts_with("self::")
+        || trimmed == "self"
     {
         // `self` = the file's own module; each `super` pops one segment.
+        // Bare `self` is the anchor with nothing appended — the form
+        // `RustParser::rebase_inline_mod_use` produces for `mod tests {
+        // use super::*; }`, whose target is this very file.
         let mut base: Vec<String> = own.iter().map(|s| s.to_string()).collect();
         let mut rest = trimmed;
         while let Some(r) =
@@ -410,6 +416,8 @@ fn rust_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
         }
         if let Some(r) = rest.strip_prefix("self::") {
             rest = r;
+        } else if rest == "self" {
+            rest = "";
         }
         if !rest.is_empty() {
             base.extend(rest.split("::").map(str::to_string));

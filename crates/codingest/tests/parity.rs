@@ -189,6 +189,21 @@ const CORPORA: &[&str] = &[
     // the three files share a module. Its golden is captured additively (see
     // `tests/goldens/README.md`).
     "dart_part_of",
+    // Added 2026-08-22. Every Rust `use` in every other corpus sits at file
+    // level, so the scope a `use` is written in never mattered and the flat,
+    // scope-less `FileInfo::imports` list could stay wrong indefinitely: a
+    // `use super::…` inside an inline `mod` was popped against the FILE's
+    // module, one level too shallow, and landed on the parent module's file.
+    // `mod tests { use super::*; }` — the most common shape in Rust source —
+    // is exactly that bug. The corpus pins all three arms of the re-anchoring
+    // (`parsers::rust_lang::RustParser::rebase_inline_mod_use`): supers equal
+    // to the inline depth resolve to the file itself and form NO edge (the
+    // self-guard eats them), a surplus super still pops the file's real
+    // parent and reaches `beta.rs`, and two nested inline levels cancel two
+    // supers. `beta.rs`'s file-level `use crate::…` is the control that must
+    // not move. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "rust_inline_mod",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.
