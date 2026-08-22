@@ -209,7 +209,27 @@ impl CSharpParser {
         }
     }
 
+    /// The declaration's own name.
+    ///
+    /// Every declaration node in tree-sitter-c-sharp carries a `name` field
+    /// (`method_declaration`, `class_declaration`, `property_declaration`,
+    /// `enum_member_declaration`, `variable_declarator`, …), so ask for it by
+    /// field. The positional "first `identifier` child" scan is wrong for any
+    /// member whose *type* is a bare user-defined type: in this grammar the
+    /// `type` rule includes `identifier`, so `public User Build()` scanned to
+    /// the return type `User` and the method was recorded under that name.
+    ///
+    /// The scan is kept as the fallback for node kinds with no `name` field,
+    /// and for the one kind whose `name` field is not an `identifier` —
+    /// `attribute`, where it may be a `qualified_name`/`generic_name` the scan
+    /// deliberately declines (an attribute written `[System.Obsolete]` has
+    /// always yielded `None` here).
     fn get_name<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+        if let Some(name) = node.child_by_field_name("name") {
+            if name.kind() == "identifier" {
+                return Some(node_text(name, source));
+            }
+        }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "identifier" {
@@ -231,7 +251,23 @@ impl CSharpParser {
         parts.join(" ")
     }
 
+    /// The declared return type.
+    ///
+    /// `method_declaration` names it `returns`; `local_function_statement` and
+    /// `delegate_declaration` name it `type`. Take the field when the node has
+    /// one. The positional scan below stops at the first `identifier`, but in
+    /// this grammar a bare user-defined return type *is* an `identifier`
+    /// (`type` has `identifier` among its subtypes), so `public User Build()`
+    /// broke out of the loop on the type itself and reported `None`. The scan
+    /// survives as the fallback for kinds with neither field — notably
+    /// `constructor_declaration`, which has no return type at all.
     fn get_return_type(node: Node, source: &[u8]) -> Option<String> {
+        if let Some(ty) = node
+            .child_by_field_name("returns")
+            .or_else(|| node.child_by_field_name("type"))
+        {
+            return Some(node_text(ty, source).to_string());
+        }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "identifier" {
@@ -742,19 +778,25 @@ impl CSharpParser {
         let is_const = Self::has_modifier(node, source, "const");
         let is_readonly = Self::has_modifier(node, source, "readonly");
         let visibility = Self::get_visibility(node, source, "private");
-        let mut type_ann: Option<String> = None;
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() != "variable_declaration" {
                 continue;
             }
+            // `variable_declaration` has a required `type` field. The
+            // positional TYPE_NODES scan below it cannot see a bare
+            // user-defined type — this grammar spells one as a plain
+            // `identifier`, the same kind as the declarator name — so
+            // `private User owner;` recorded no type annotation at all.
             let mut vc = child.walk();
-            for sub in child.children(&mut vc) {
-                if TYPE_NODES.contains(&sub.kind()) {
-                    type_ann = Some(node_text(sub, source).to_string());
-                    break;
-                }
-            }
+            let type_ann: Option<String> = child
+                .child_by_field_name("type")
+                .or_else(|| {
+                    child
+                        .children(&mut vc)
+                        .find(|sub| TYPE_NODES.contains(&sub.kind()))
+                })
+                .map(|t| node_text(t, source).to_string());
             let mut vc2 = child.walk();
             for sub in child.children(&mut vc2) {
                 if sub.kind() != "variable_declarator" {
@@ -823,14 +865,17 @@ impl CSharpParser {
             return;
         };
         let name = name.to_string();
-        let mut type_ann: Option<String> = None;
+        // Same field-vs-scan story as `parse_field`: `property_declaration`
+        // has a required `type` field, and a bare user-defined property type
+        // is an `identifier` that TYPE_NODES does not list.
         let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if TYPE_NODES.contains(&child.kind()) {
-                type_ann = Some(node_text(child, source).to_string());
-                break;
-            }
-        }
+        let type_ann = node
+            .child_by_field_name("type")
+            .or_else(|| {
+                node.children(&mut cursor)
+                    .find(|child| TYPE_NODES.contains(&child.kind()))
+            })
+            .map(|t| node_text(t, source).to_string());
         result.attributes.push(AttributeInfo {
             qualified_name: format!("{}.{}", type_qname, name),
             owner_qualified_name: type_qname.to_string(),
@@ -913,12 +958,24 @@ impl CSharpParser {
                 }
             }
             "using_directive" => {
+                // The alias form `using Log = MyApp.Logging;` puts the *alias*
+                // in the `name` field and the aliased target in the `type`
+                // child that follows it, so taking the first qualified-name or
+                // identifier recorded `Log` — a name that resolves to nothing.
+                // When the `name` field is present, record the child after it.
+                // `using X.Y;` and `using static X.Y;` have no `name` field
+                // (the grammar's `_name` branch) and keep the original scan.
+                let alias = node.child_by_field_name("name");
                 let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if matches!(child.kind(), "qualified_name" | "identifier") {
-                        file_info.imports.push(node_text(child, source).to_string());
-                        break;
-                    }
+                let mut named = node.named_children(&mut cursor);
+                let target = match alias {
+                    Some(a) => named.find(|c| c.id() != a.id()),
+                    None => named.find(|c| matches!(c.kind(), "qualified_name" | "identifier")),
+                };
+                if let Some(target) = target {
+                    file_info
+                        .imports
+                        .push(node_text(target, source).to_string());
                 }
             }
             "global_statement" => {
@@ -1035,5 +1092,207 @@ impl LanguageParser for CSharpParser {
         file_info.annotations = extract_comment_annotations(root, &source, DEFAULT_COMMENT_TYPES);
         result.files.push(file_info);
         result
+    }
+}
+
+/// P7 — `using` directives. The alias form records the aliased *target*,
+/// not the alias.
+#[cfg(test)]
+mod using_directive_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn parse_imports(source: &str) -> Vec<String> {
+        let tmp = tempfile::Builder::new()
+            .prefix("codingest-csharp-using-")
+            .tempdir()
+            .expect("tempdir");
+        let root = tmp.path().join("proj");
+        let path: PathBuf = root.join("Program.cs");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        std::fs::write(&path, source).expect("write snippet");
+        let result = CSharpParser::new().parse_file(&path, &root);
+        result.files[0].imports.clone()
+    }
+
+    /// `using Log = MyApp.Logging;` binds the local name `Log` to the
+    /// namespace `MyApp.Logging`. The import is the namespace — recording
+    /// `Log` (the grammar's `name` field) produced an import that resolves
+    /// to nothing.
+    #[test]
+    fn using_alias_records_the_target_not_the_alias() {
+        assert_eq!(
+            parse_imports("using Log = MyApp.Logging;\n"),
+            vec!["MyApp.Logging".to_string()]
+        );
+        // An aliased generic type keeps its full spelling.
+        assert_eq!(
+            parse_imports("using IntList = System.Collections.Generic.List<int>;\n"),
+            vec!["System.Collections.Generic.List<int>".to_string()]
+        );
+    }
+
+    /// The two non-alias shapes are untouched: both have no `name` field
+    /// and keep the first-qualified-name scan.
+    #[test]
+    fn plain_and_static_using_are_unchanged() {
+        assert_eq!(
+            parse_imports("using MyApp.Models;\n"),
+            vec!["MyApp.Models".to_string()]
+        );
+        assert_eq!(
+            parse_imports("using static System.Math;\n"),
+            vec!["System.Math".to_string()]
+        );
+        assert_eq!(parse_imports("using System;\n"), vec!["System".to_string()]);
+    }
+
+    /// All three shapes in one file, in source order.
+    #[test]
+    fn mixed_using_shapes_keep_source_order() {
+        assert_eq!(
+            parse_imports(
+                "using System;\n\
+                 using Log = MyApp.Logging;\n\
+                 using static System.Math;\n"
+            ),
+            vec![
+                "System".to_string(),
+                "MyApp.Logging".to_string(),
+                "System.Math".to_string(),
+            ]
+        );
+    }
+}
+
+/// P7b — member name / return type must come from the grammar's fields.
+/// In tree-sitter-c-sharp the `type` rule includes `identifier`, so a bare
+/// user-defined type is indistinguishable by kind from a name.
+#[cfg(test)]
+mod member_extraction_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn parse_snippet(source: &str) -> ParseResult {
+        let tmp = tempfile::Builder::new()
+            .prefix("codingest-csharp-members-")
+            .tempdir()
+            .expect("tempdir");
+        let root = tmp.path().join("proj");
+        let path: PathBuf = root.join("Program.cs");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        std::fs::write(&path, source).expect("write snippet");
+        CSharpParser::new().parse_file(&path, &root)
+    }
+
+    /// The reported defect: `public User Build()` was extracted as a method
+    /// *named* `User` with no return type, because the return type is an
+    /// `identifier` node and both helpers scanned for the first one.
+    #[test]
+    fn bare_user_defined_return_type_keeps_the_method_name() {
+        let result = parse_snippet(
+            "namespace N {\n\
+               class Builder {\n\
+                 public User Build() { return null; }\n\
+               }\n\
+             }\n",
+        );
+        assert_eq!(result.functions.len(), 1);
+        let f = &result.functions[0];
+        assert_eq!(f.name, "Build");
+        assert!(f.qualified_name.ends_with(".Builder.Build"));
+        assert_eq!(f.return_type.as_deref(), Some("User"));
+        assert!(f.is_method);
+    }
+
+    /// Predefined, generic, qualified and `void` return types went through
+    /// the old scan correctly and must be unchanged.
+    #[test]
+    fn predefined_and_generic_return_types_are_unchanged() {
+        let result = parse_snippet(
+            "namespace N {\n\
+               class Emitter {\n\
+                 public string Emit(int x) { return \"\"; }\n\
+                 public void Reset() { }\n\
+                 public System.Threading.Tasks.Task<int> RunAsync() { return null; }\n\
+                 public int[] Buffer() { return null; }\n\
+               }\n\
+             }\n",
+        );
+        let seen: Vec<(&str, Option<&str>)> = result
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.return_type.as_deref()))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("Emit", Some("string")),
+                ("Reset", Some("void")),
+                ("RunAsync", Some("System.Threading.Tasks.Task<int>")),
+                ("Buffer", Some("int[]")),
+            ]
+        );
+    }
+
+    /// A constructor has a `name` field but no return type at all — it must
+    /// keep falling through to `None` rather than picking up a parameter type.
+    #[test]
+    fn constructor_has_a_name_and_no_return_type() {
+        let result = parse_snippet(
+            "namespace N {\n\
+               class Builder {\n\
+                 public Builder(Config c) { }\n\
+               }\n\
+             }\n",
+        );
+        assert_eq!(result.functions.len(), 1);
+        assert_eq!(result.functions[0].name, "Builder");
+        assert_eq!(result.functions[0].return_type, None);
+    }
+
+    /// `get_name` also serves class/interface/enum/property/field extraction —
+    /// a property typed with a bare user type hit the same mis-read.
+    #[test]
+    fn class_interface_property_and_field_names_are_extracted() {
+        let result = parse_snippet(
+            "namespace N {\n\
+               interface IThing { }\n\
+               class Thing {\n\
+                 private User owner;\n\
+                 public User Item { get; set; }\n\
+                 public string Label { get; set; }\n\
+               }\n\
+               enum Color { Red, Green }\n\
+             }\n",
+        );
+        let classes: Vec<&str> = result.classes.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(classes, vec!["Thing"]);
+        let interfaces: Vec<&str> = result.interfaces.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(interfaces, vec!["IThing"]);
+        let enums: Vec<(&str, Vec<&str>)> = result
+            .enums
+            .iter()
+            .map(|e| {
+                (
+                    e.name.as_str(),
+                    e.variants.iter().map(|v| v.as_str()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(enums, vec![("Color", vec!["Red", "Green"])]);
+        let attrs: Vec<(&str, Option<&str>)> = result
+            .attributes
+            .iter()
+            .map(|a| (a.name.as_str(), a.type_annotation.as_deref()))
+            .collect();
+        assert_eq!(
+            attrs,
+            vec![
+                ("owner", Some("User")),
+                ("Item", Some("User")),
+                ("Label", Some("string")),
+            ]
+        );
     }
 }
