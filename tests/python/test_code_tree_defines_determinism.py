@@ -1,17 +1,18 @@
-"""DEFINES edge determinism on duplicate-id entities.
+"""DEFINES edge determinism on minified same-line repeats.
 
-Regression net for the 2026-07-15 codingest bug report: total edge counts
-flapped across processes on repos where minified CSS/HTML repeats a
-selector/element name on one line (entity ids embed file + line, so
-same-line repeats produce duplicate ids and duplicate (file, entity)
-DEFINES rows). Root cause was the composition of per-process-random
-HashMap frame iteration with `add_connections`' initial-load fast path,
-which skips edge-existence checks and leaves within-batch consolidation
-to the caller.
+History: the 2026-07-15 bug report — total edge counts flapped across
+processes on repos where minified CSS/HTML repeats a selector/element
+name on one line, because ids embedded file + line only, so same-line
+repeats COLLIDED and duplicate (file, entity) DEFINES rows raced
+`add_connections`' initial-load fast path.
 
-The durable cross-process oracle lives in codingest's parity corpus; this
-test asserts the in-tree consolidation invariant: no parallel duplicate
-DEFINES edges, duplicate-id nodes preserved, repeated builds exact-equal.
+Since the id-column fix, CSS/HTML ids embed the start column
+({file}:{line}:{col}:{slug}), so same-line repeats get DISTINCT ids and
+the duplicate-id shape is unreachable from these emitters by design.
+This module now pins that fix from the wheel side: every minified repeat
+becomes its own node (nothing is silently dropped behind duplicate-id
+warnings), zero duplicate ids exist, DEFINES stays consolidated, and
+repeated builds agree exactly.
 
 
 (Revived from tests/python-legacy/ and retargeted `kglite.code_tree` ->
@@ -51,16 +52,20 @@ def _edge_counts(graph):
     return {row["t"]: row["n"] for row in rows}
 
 
-def test_fixture_exercises_duplicate_id_path(dup_repo):
+def test_minified_repeats_get_distinct_ids(dup_repo):
+    # The pre-fix shape: same-line repeats collided on {file}:{line}:{slug}.
+    # Post-fix ids carry the start column, so the SAME fixture must now
+    # produce zero duplicate-id groups — this is the wheel-side pin of the
+    # id-column fix, inverted from the old duplicate-id guard.
     graph = build(str(dup_repo))
     dup_groups = graph.cypher(
         "MATCH (n) WITH labels(n)[0] AS t, n.id AS id, count(*) AS c "
         "WHERE c > 1 RETURN t, count(*) AS groups ORDER BY t"
     ).to_dicts()
-    assert dup_groups == [
-        {"t": "Element", "groups": 1},
-        {"t": "Selector", "groups": 2},
-    ], "fixture must produce duplicate-id nodes or this test guards nothing"
+    assert dup_groups == [], (
+        "minified same-line repeats must get column-distinct ids; a collision "
+        "here means the id shape regressed to {file}:{line}:{slug}"
+    )
 
 
 def test_no_parallel_duplicate_defines_edges(dup_repo):
@@ -74,9 +79,10 @@ def test_no_parallel_duplicate_defines_edges(dup_repo):
     )
 
 
-def test_duplicate_id_nodes_preserved(dup_repo):
-    # Consolidation must not collapse the duplicate-id *nodes* — only the
-    # parallel edges onto them.
+def test_every_minified_repeat_becomes_its_own_node(dup_repo):
+    # Pre-fix, colliding repeats were silently dropped behind duplicate-id
+    # warnings (2 of 4 selectors survived). Post-fix all four selectors and
+    # both spans are distinct nodes.
     graph = build(str(dup_repo))
     counts = {
         row["t"]: row["n"]
