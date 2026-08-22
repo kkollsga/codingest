@@ -1,0 +1,178 @@
+{
+ "schema": 1,
+ "version": "0.2.6",
+ "captured_at_commit": "d1cd32e974e8f4fb528bbd5324cae681bb3c55e1",
+ "captured_at": "2026-08-22",
+ "target": "tests/corpus",
+ "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
+ "control_query": "top20_by_branch_count (ORDER BY + LIMIT)",
+ "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
+ "build_gating": "recorded, not enforced: at 27 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here.",
+ "stability_across_3_runs": "worst per-query spread 0.0010 ms docs-on / 0.0010 ms docs-off across three runs per mode, TWO warmups discarded (a residual first-measured-run step and one jittery middle round were re-measured on a settled machine rather than folded into the floor; floors held at 0.005). Corpus REGREW at 0.2.6 (ad8b3084 -> c449542e: nine new corpora, 567/880 nodes/edges docs-on) \u2014 first baseline of the new epoch; compare vs pre-0.2.6 baselines REFUSEs by design. CONTROL CHANGED defs_per_file -> top20_by_branch_count with the recorded reason the lineage demands: on the regrown corpus defs_per_file became the SLOWEST cell (0.026-0.028 ms), and a slowest-cell control turns FAIL into VOID (the exact varlen demotion rationale at 0.2.3). top20_by_branch_count qualifies on all three tests: measured FLAT (+0.0% both modes) as the shadow control across the kglite 0.16.5->0.16.6 engine move, 3.0x/3.2x the floor, and not the slowest cell. varlen_callers_1_3 (-3.7%) and calls_edge_scan (-16.7%) moved on that same move and are disqualified on sight.",
+ "corpora": [
+  {
+   "target": "tests/corpus",
+   "mode": "docs-on",
+   "include_docs": true,
+   "floors": {
+    "query_abs_ms": 0.005,
+    "build_secs": 0.05
+   },
+   "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
+   "nodes": 567,
+   "edges": 880,
+   "build_secs": 0.012,
+   "queries": [
+    {
+     "name": "count_functions (full-label scan + count)",
+     "rows": 1,
+     "median_ms": 0.0,
+     "min_ms": 0.0
+    },
+    {
+     "name": "eq_filter_pub (equality property filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.002
+    },
+    {
+     "name": "contains_new (CONTAINS string filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+     "rows": 20,
+     "median_ms": 0.015,
+     "min_ms": 0.015,
+     "control": true
+    },
+    {
+     "name": "defs_per_file (grouped aggregation)",
+     "rows": 20,
+     "median_ms": 0.027,
+     "min_ms": 0.026
+    },
+    {
+     "name": "calls_edge_scan (1-hop edge scan + count)",
+     "rows": 1,
+     "median_ms": 0.012,
+     "min_ms": 0.011
+    },
+    {
+     "name": "anchored_callers (anchored 1-hop, in-hub)",
+     "rows": 7,
+     "median_ms": 0.004,
+     "min_ms": 0.004
+    },
+    {
+     "name": "two_hop_into_hot (2-hop traversal + count)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    },
+    {
+     "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+     "rows": 1,
+     "median_ms": 0.025,
+     "min_ms": 0.024
+    },
+    {
+     "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+     "rows": 6,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    }
+   ]
+  },
+  {
+   "target": "tests/corpus",
+   "mode": "docs-off",
+   "include_docs": false,
+   "floors": {
+    "query_abs_ms": 0.005,
+    "build_secs": 0.05
+   },
+   "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
+   "nodes": 560,
+   "edges": 859,
+   "build_secs": 0.01,
+   "queries": [
+    {
+     "name": "count_functions (full-label scan + count)",
+     "rows": 1,
+     "median_ms": 0.0,
+     "min_ms": 0.0
+    },
+    {
+     "name": "eq_filter_pub (equality property filter)",
+     "rows": 1,
+     "median_ms": 0.002,
+     "min_ms": 0.002
+    },
+    {
+     "name": "contains_new (CONTAINS string filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+     "rows": 20,
+     "median_ms": 0.016,
+     "min_ms": 0.015,
+     "control": true
+    },
+    {
+     "name": "defs_per_file (grouped aggregation)",
+     "rows": 20,
+     "median_ms": 0.027,
+     "min_ms": 0.025
+    },
+    {
+     "name": "calls_edge_scan (1-hop edge scan + count)",
+     "rows": 1,
+     "median_ms": 0.012,
+     "min_ms": 0.012
+    },
+    {
+     "name": "anchored_callers (anchored 1-hop, in-hub)",
+     "rows": 7,
+     "median_ms": 0.004,
+     "min_ms": 0.004
+    },
+    {
+     "name": "two_hop_into_hot (2-hop traversal + count)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    },
+    {
+     "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+     "rows": 1,
+     "median_ms": 0.026,
+     "min_ms": 0.025
+    },
+    {
+     "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+     "rows": 6,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    }
+   ]
+  }
+ ]
+}
