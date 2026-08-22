@@ -10,6 +10,14 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- **Traversal-semantics gate** (`tests/traversal_semantics.rs`): pins the
+  hand-derived answer *sets* of `<-[:CALLS*1..3]-` over a real call cycle, so
+  an engine-side change to query semantics is caught even when the built graph
+  is identical (the parity goldens and the bench harness both compare builds on
+  one engine and cannot see it). Red on kglite 0.16.5, green on 0.16.6 —
+  verified in both directions.
+
 ### Changed
 - **Engine floor moves to kglite 0.16.6.** This release changes what queries
   *answer*, not what codingest builds: the builder's graph is unchanged and the
