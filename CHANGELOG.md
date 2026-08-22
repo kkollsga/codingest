@@ -10,6 +10,18 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Fixed
+- **EXTENDS edges connect the child's real node type to the parent's.** A
+  `struct Circle <: Shape` hierarchy (julia; C++ mixed hierarchies identical)
+  used one picked label for BOTH endpoints, minting a phantom `_provisional`
+  Class stub beside the real Struct and attaching the edge to it. EXTENDS now
+  resolves each endpoint's type per edge, like IMPLEMENTS always did.
+- **Dart `part of` files now share their library's module.** The resolver
+  collapsed the URI to `{pkg}.{stem}`, so every URI-form part file landed in a
+  phantom module no other file inhabited (its symbols invisible under the
+  library's module). The URI is now resolved against the part file's own
+  directory through the same path-to-module conversion the parent gets.
+
 ### Added
 - **Traversal-semantics gate** (`tests/traversal_semantics.rs`): pins the
   hand-derived answer *sets* of `<-[:CALLS*1..3]-` over a real call cycle, so

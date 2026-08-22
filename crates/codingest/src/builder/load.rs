@@ -944,10 +944,16 @@ impl<'a> LoadPipeline<'a> {
             defaults.iter().find(|(_, exists)| *exists).map(|(n, _)| *n)
         };
 
-        if !type_out.implements.is_empty() {
-            // Route IMPLEMENTS per-row based on the resolved source/target types.
-            // Python's _add_typed_connections does the equivalent via name_to_qname.
-            let mut qname_to_type: HashMap<String, &'static str> = HashMap::new();
+        // `qualified_name` (and bare name) → the node type that symbol was
+        // actually inserted as. IMPLEMENTS and EXTENDS both route per-row
+        // through this map: `add_connections` is given ONE label per endpoint,
+        // so handing it a label the endpoint was not stored under makes it
+        // mint a `_provisional` stub of that wrong type beside the real node
+        // and hang the edge off the phantom. Julia's `struct Circle <: Shape`
+        // is the shape that proves it — a Struct child under a Class parent.
+        // Python's _add_typed_connections does the equivalent via name_to_qname.
+        let mut qname_to_type: HashMap<String, &'static str> = HashMap::new();
+        if !type_out.implements.is_empty() || !type_out.extends.is_empty() {
             for c in &result.classes {
                 let nt = super::class_node_type(&c.kind);
                 qname_to_type.insert(c.qualified_name.clone(), nt);
@@ -967,35 +973,27 @@ impl<'a> LoadPipeline<'a> {
                 qname_to_type.insert(i.name.clone(), nt);
             }
             // External stubs we just inserted: traits → Trait, classes → Class/Struct.
-            let ext_trait_type = if graph.has_node_type("Trait") {
-                Some("Trait")
-            } else if graph.has_node_type("Protocol") {
-                Some("Protocol")
-            } else if graph.has_node_type("Interface") {
-                Some("Interface")
-            } else {
-                None
-            };
+            let ext_trait_type = pick(&[
+                ("Trait", has_trait),
+                ("Protocol", has_protocol),
+                ("Interface", has_interface),
+            ]);
             if let Some(nt) = ext_trait_type {
                 for ext in &type_out.external_traits {
                     qname_to_type.insert(ext.qualified_name.clone(), nt);
                     qname_to_type.insert(ext.name.clone(), nt);
                 }
             }
-            let ext_class_type = if graph.has_node_type("Class") {
-                Some("Class")
-            } else if graph.has_node_type("Struct") {
-                Some("Struct")
-            } else {
-                None
-            };
+            let ext_class_type = pick(&[("Class", has_class), ("Struct", has_struct)]);
             if let Some(nt) = ext_class_type {
                 for ext in &type_out.external_classes {
                     qname_to_type.insert(ext.qualified_name.clone(), nt);
                     qname_to_type.insert(ext.name.clone(), nt);
                 }
             }
+        }
 
+        if !type_out.implements.is_empty() {
             let default_src =
                 pick(&[("Class", has_class), ("Struct", has_struct)]).unwrap_or("Class");
             let default_tgt = pick(&[
@@ -1048,15 +1046,49 @@ impl<'a> LoadPipeline<'a> {
             }
         }
         if !type_out.extends.is_empty() {
-            let src = pick(&[("Class", has_class), ("Struct", has_struct)]);
-            if let Some(src) = src {
+            // Route EXTENDS per-row exactly like IMPLEMENTS above. The two
+            // endpoints of an inheritance edge need not share a node type:
+            // julia's `struct Circle <: Shape` is Struct → Class, and passing
+            // one picked label for BOTH ends matched `child_name` against the
+            // wrong type and attached the edge to a `_provisional` Class stub
+            // standing beside the real Struct node.
+            let default_type =
+                pick(&[("Class", has_class), ("Struct", has_struct)]).unwrap_or("Class");
+
+            let mut by_pair: BTreeMap<
+                (&'static str, &'static str),
+                Vec<&super::type_edges::ExtendsEdge>,
+            > = BTreeMap::new();
+            for edge in &type_out.extends {
+                let src = qname_to_type
+                    .get(&edge.child_name)
+                    .copied()
+                    .unwrap_or(default_type);
+                let tgt = qname_to_type
+                    .get(&edge.parent_name)
+                    .copied()
+                    .unwrap_or(default_type);
+                by_pair.entry((src, tgt)).or_default().push(edge);
+            }
+
+            for ((src, tgt), edges) in by_pair {
+                if !graph.has_node_type(src) || !graph.has_node_type(tgt) {
+                    continue;
+                }
+                let owned: Vec<super::type_edges::ExtendsEdge> = edges
+                    .iter()
+                    .map(|e| super::type_edges::ExtendsEdge {
+                        child_name: e.child_name.clone(),
+                        parent_name: e.parent_name.clone(),
+                    })
+                    .collect();
                 maintain::add_connections(
                     graph,
-                    extends_edges_df(&type_out.extends),
+                    extends_edges_df(&owned),
                     "EXTENDS".into(),
                     src.into(),
                     "child_name".into(),
-                    src.into(),
+                    tgt.into(),
                     "parent_name".into(),
                     None,
                     None,
