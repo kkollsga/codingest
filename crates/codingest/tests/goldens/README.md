@@ -240,6 +240,66 @@ afterwards `git status` reported only `rust_inline_mod.sha256` as new — and a
 canonical dump of all corpora before and after the fix differed in
 `rust_inline_mod` alone.
 
+The additive `py_src_layout` digest was captured on 2026-08-22 with the corpus
+itself. All four pre-existing Python corpora put their packages where the
+importing file's own ancestor chain can already reach them, so the ONE layout
+`pyproject.toml` made standard had no golden at all: with `pkg` under `src/`
+and the test under `tests/`, the candidate roots for `from pkg.util import
+helper` are `<prefix>` and `<prefix>.tests`, and neither can ever spell
+`<prefix>.src.pkg.util` — the import resolved to nothing, and could have gone
+on resolving to nothing forever with every digest green. The corpus pins the
+evidence-gated `src` root from both ends: the two edges it adds
+(`tests/test_util.py` → `src/pkg/util.py` and → the `…src.pkg.util` Module),
+and the gate itself — the root is offered only because the FILE SET contains a
+`src/` directory, never because the specifier looked like it wanted one.
+`py_import`, which has no `src/`, is the control that must not move. Verified
+additive the strict way: `capture_goldens` rewrote every file, and afterwards
+`git status` reported only the three new corpora's digests as new, with
+`docs_mdx.sha256` the sole modification.
+
+The additive `cpp_extern_c` digest was captured on 2026-08-22 with the corpus
+itself. Every `#include` in `cpp_include` sits at a file's top level, so the
+single most common real-world header prologue — `#ifdef __cplusplus` /
+`extern "C" {` / `#endif` — had no coverage at all, and every include inside
+it was silently dropped. Measured on DaveGamble/cJSON @ `fb16e5cf3587`: 96
+quoted includes expected, 91 found, 0 false positives, and the misses included
+`cJSON_Utils.h` → `cJSON.h`, the library's own core edge. The corpus pins both
+ways tree-sitter renders that prologue, because they are different defects
+wearing one symptom: `utils.h` CLOSES the block, so tree-sitter-c builds a
+`linkage_specification` that `parse_c_top_level` had no arm for; `decls_begin.h`
+leaves it OPEN (a `*_begin.h` closed by its caller), so the rest of the file
+collapses into one top-level `ERROR` recovery subtree. It also pins what must
+NOT be extracted, which is the harder half: the `<vector.h>` angle include
+inside the same region names a REAL project file and is excluded by its
+delimiters alone, and `phantom.h` is named by an include-SHAPED line with no
+`#` — reachable only by a text scan of the ERROR region, which is exactly the
+false-positive route the fix refuses to take. `cpp_include` is the control and
+does not move.
+
+The additive `web_served_root` digest was captured on 2026-08-22 with the
+corpus itself. No pre-existing corpus contains a leading-`/` web reference at
+all, so the served-root question was invisible: a built site under `dist/` is
+served with `dist/` as `/`, and `/_astro/app.css` was resolved against the
+PROJECT root only — never reaching `dist/_astro/app.css`, which is in the graph
+the whole time. The corpus pins the new candidate and its precedence together:
+`/shared/reset.css` resolves at the project root today and must keep resolving
+there, so the project root is still tried first and the linking file's own
+directory only after it. `dup_minified_assets` and `html_js_lang_group`, the
+other web corpora, are the controls and do not move.
+
+**`docs_mdx` was deliberately regenerated on 2026-08-22** for the markdown
+link-classification fix. `discover_docs` has always matched doc extensions
+case-insensitively — `README.MD` is why the corpus exists — but the link
+scanner stripped `.md`/`.mdx` case-SENSITIVELY, so an upper-cased destination
+was classified as a source File. The thing it names is a `:Doc` node and never
+a `:File` node, so the existence check dropped it and the link produced no edge
+at all: silent, and invisible to every digest. `docs/overview.md` now links
+`../README.MD`, and the diff is exactly one edge — `DOCUMENTS docs/overview →
+README` — plus that doc's own body-derived properties. Extending this corpus
+rather than adding one was the right home: its stated purpose already is the
+case-insensitive doc-extension arm, and the uppercase `README.MD` it needed as
+a target was already there.
+
 **`dup_minified_assets` and `html_js_lang_group` were deliberately regenerated
 on 2026-08-22** for the CSS/HTML id-collision fix. A `Selector` id was
 `{rel_path}:{line}:{slug}` and an `Element` id `{rel_path}:{tag}:{line}:{slug}`

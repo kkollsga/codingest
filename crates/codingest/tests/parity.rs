@@ -204,6 +204,45 @@ const CORPORA: &[&str] = &[
     // not move. Its golden is captured additively (see
     // `tests/goldens/README.md`).
     "rust_inline_mod",
+    // Added 2026-08-22. The four committed Python corpora all put their
+    // packages where the importing file can already see them, so the ONE
+    // layout `pyproject.toml` made standard — the package under `src/`,
+    // imported by its absolute installed name from a sibling `tests/` tree —
+    // had no golden at all: `from pkg.util import helper` in `tests/`
+    // resolved to nothing, and it could have kept resolving to nothing
+    // forever with every digest green. It pins the evidence-gated src root
+    // from both ends: the import DOES resolve (File→File and File→Module,
+    // onto `src/pkg/util.py`), and the root is offered only because the file
+    // set contains a `src/` directory — `py_import`, which has none, is the
+    // control that must not move. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "py_src_layout",
+    // Added 2026-08-22. `cpp_include`'s every `#include` sits at a file's top
+    // level, so the single most common real-world header prologue —
+    // `#ifdef __cplusplus` / `extern "C" {` / `#endif` — had no coverage, and
+    // the includes inside it were silently dropped (measured on
+    // DaveGamble/cJSON: 5 of 96 quoted includes missed, `cJSON_Utils.h` →
+    // `cJSON.h` among them — the library's own core edge). It pins both ways
+    // tree-sitter renders that prologue: `utils.h` closes the block, so the
+    // body becomes a `linkage_specification` the C router had no arm for;
+    // `decls_begin.h` leaves it open, so the rest of the file collapses into
+    // one `ERROR` recovery subtree. It also pins what must NOT be extracted —
+    // the `<vector.h>` angle include inside the same region (a REAL project
+    // file, excluded by its delimiters) and `phantom.h`, named by an
+    // include-SHAPED line with no `#`, which only a text scan of the ERROR
+    // region could ever reach. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "cpp_extern_c",
+    // Added 2026-08-22. No other corpus contains a leading-`/` web reference
+    // at all, so the whole served-root question was invisible: a built site
+    // under `dist/` is served with `dist/` as `/`, and `/_astro/app.css`
+    // resolved against the project root only — never reaching
+    // `dist/_astro/app.css`, which is right there in the graph. It pins the
+    // new candidate AND its precedence: `/shared/reset.css`, which resolves
+    // at the project root today, must keep resolving there, so the project
+    // root is still tried first. Its golden is captured additively (see
+    // `tests/goldens/README.md`).
+    "web_served_root",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

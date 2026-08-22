@@ -165,15 +165,46 @@ fn path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
 
     let mut candidates = Vec::new();
     let root_path = without_suffix.trim_start_matches('/');
-    if !without_suffix.starts_with('/') {
-        let parent = file.path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let root_absolute = without_suffix.starts_with('/');
+    let parent = file.path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    if !root_absolute {
         if let Some(candidate) = normalize_import_path(parent, root_path) {
             candidates.push(candidate);
         }
     }
-    if let Some(candidate) = normalize_import_path("", root_path) {
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
+    // The project-root fallback, for every language EXCEPT C/C++.
+    //
+    // A quoted `#include "x.h"` is resolved by the compiler against the
+    // including file's directory and then along the `-I` search path — never
+    // against the project root. The graph records no `-I` flags, so an include
+    // the file-relative try misses is a MISS BY DESIGN; that is the contract
+    // the cJSON reconciliation measured and the one the angle/quoted split
+    // exists to hold (0 false positives, misses only). The unconditional root
+    // fallback broke it in one shape: a same-named file anchored at the
+    // project root (`net/socket.c` including `"config.h"` while an unrelated
+    // `config.h` sits at the root) manufactured an edge no compiler would ever
+    // produce. Direction of failure stays "missed edge, never wrong edge".
+    if !matches!(file.language.as_str(), "c" | "cpp") {
+        if let Some(candidate) = normalize_import_path("", root_path) {
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    // A leading `/` in an HTML/CSS reference is SERVED-root-absolute, and the
+    // served root is not always the project root: a built site under `dist/`
+    // is served with `dist/` as `/`, so `/_astro/app.css` names
+    // `dist/_astro/app.css` — a file that IS in the graph, which the
+    // project-root-only try could never reach. The project root stays first,
+    // so every reference that resolves today keeps its answer; the linking
+    // file's own directory is tried after it. The existence check downstream
+    // still gates, so this can only ever resolve a target already in the
+    // graph.
+    if root_absolute && matches!(file.language.as_str(), "html" | "css") {
+        if let Some(candidate) = normalize_import_path(parent, root_path) {
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
         }
     }
 
@@ -319,6 +350,40 @@ fn module_path_root_prefix(file: &FileInfo, sep: &str) -> Option<(String, Vec<St
         .strip_suffix(&format!("{sep}{tail}"))
         .filter(|prefix| !prefix.is_empty())
         .map(|prefix| (prefix.to_string(), dirs))
+}
+
+/// Directories that hold a `src/` subdirectory containing at least one Python
+/// file, rendered repo-relative with `/` separators (`""` is the project
+/// root). Derived from the file set the builder already has — nothing here
+/// touches the filesystem.
+///
+/// This is the evidence half of [`module_path_prefix_candidates`]'s
+/// src-layout root. A `src/` layout puts the package somewhere no ancestor of
+/// the importing file can reach: `tests/test_util.py` writing `from
+/// pkg.util import helper` against `src/pkg/util.py` has ancestor roots
+/// `<prefix>` and `<prefix>.tests`, and neither can ever spell
+/// `<prefix>.src.pkg.util`. Offering `src` unconditionally would be the
+/// resolver inventing a `sys.path` entry; offering it only where the file set
+/// proves the directory exists keeps the cannot-invent-a-target property —
+/// and the `known_modules` / `module_to_file` existence check downstream
+/// still gates every candidate.
+fn src_layout_dirs(files: &[FileInfo]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for file in files {
+        if file.language != "python" {
+            continue;
+        }
+        let segments: Vec<&str> = file.path.split('/').collect();
+        // The final segment is the file name — a file *called* `src` is not a
+        // source root.
+        let dir_count = segments.len().saturating_sub(1);
+        for (i, segment) in segments.iter().take(dir_count).enumerate() {
+            if *segment == "src" {
+                out.insert(segments[..i].join("/"));
+            }
+        }
+    }
+    out
 }
 
 /// Extra candidates for an absolute import whose specifier is root-relative
@@ -525,7 +590,12 @@ fn python_relative_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> 
     out
 }
 
-fn module_path_prefix_candidates(file: &FileInfo, raw: &str, sep: &str) -> Vec<String> {
+fn module_path_prefix_candidates(
+    file: &FileInfo,
+    raw: &str,
+    sep: &str,
+    src_dirs: &HashSet<String>,
+) -> Vec<String> {
     if file.language != "python" {
         return Vec::new();
     }
@@ -539,7 +609,7 @@ fn module_path_prefix_candidates(file: &FileInfo, raw: &str, sep: &str) -> Vec<S
     let Some((prefix, dirs)) = module_path_root_prefix(file, sep) else {
         return Vec::new();
     };
-    let roots: Vec<String> = (0..=dirs.len())
+    let mut roots: Vec<String> = (0..=dirs.len())
         .map(|depth| {
             if depth == 0 {
                 prefix.clone()
@@ -548,6 +618,16 @@ fn module_path_prefix_candidates(file: &FileInfo, raw: &str, sep: &str) -> Vec<S
             }
         })
         .collect();
+    // src-layout: the package sits under `src/`, which is on `sys.path` at
+    // install time but is NOT an ancestor of a test file. Offered only where
+    // `src_layout_dirs` found the directory in the file set, and APPENDED
+    // after every ancestor root, so a layout the existing roots already
+    // resolve keeps its answer byte-for-byte.
+    let src_roots: Vec<String> = (0..=dirs.len())
+        .filter(|depth| src_dirs.contains(&dirs[..*depth].join("/")))
+        .map(|depth| format!("{}{sep}src", roots[depth]))
+        .collect();
+    roots.extend(src_roots);
     let parts: Vec<&str> = trimmed.split(sep).collect();
     let mut out = Vec::new();
     for end in (1..=parts.len()).rev() {
@@ -582,6 +662,7 @@ pub fn build_import_edges(
     workspace: &JsWorkspace,
 ) -> Vec<ImportEdge> {
     let mut out = Vec::new();
+    let src_dirs = src_layout_dirs(files);
     let file_to_module: HashMap<&str, &str> = if files
         .iter()
         .any(|file| registry::uses_path_imports(&file.language))
@@ -679,6 +760,15 @@ pub fn build_import_edges(
             let mut resolved = false;
             for end in (min_end..=parts.len()).rev() {
                 let candidate = parts[..end].join(sep);
+                // A leading-dot relative specifier this pass still sees —
+                // julia's `using .Geometry`, whose dots the Python-only
+                // relative route does not claim — splits to an EMPTY first
+                // segment. The same guard the sibling
+                // `python_relative_import_candidates` already applies: an
+                // empty candidate names no module and must never be looked up.
+                if candidate.is_empty() {
+                    continue;
+                }
                 if known_modules.contains(&candidate) {
                     out.push(ImportEdge {
                         file_path: f.path.clone(),
@@ -695,7 +785,7 @@ pub fn build_import_edges(
             // project's module paths carry a parser-added root prefix. Tried
             // only here, so a layout the raw walk already resolves keeps its
             // existing answer byte-for-byte.
-            if let Some(module) = module_path_prefix_candidates(f, use_path, sep)
+            if let Some(module) = module_path_prefix_candidates(f, use_path, sep, &src_dirs)
                 .into_iter()
                 .find(|candidate| known_modules.contains(candidate))
             {
@@ -726,6 +816,7 @@ pub fn build_file_import_edges(
     // part of the persisted graph topology. Keep aggregation key-sorted to
     // make independently-built `.kgl` files byte-identical.
     let mut counts: BTreeMap<(String, String), i64> = BTreeMap::new();
+    let src_dirs = src_layout_dirs(files);
     let file_to_module: HashMap<&str, &str> = if files
         .iter()
         .any(|file| registry::uses_path_imports(&file.language))
@@ -818,6 +909,11 @@ pub fn build_file_import_edges(
             if file_anchored {
                 for end in (file_min_end..=parts.len()).rev() {
                     let candidate = parts[..end].join(sep);
+                    // Mirror of the Module pass: an empty candidate from a
+                    // leading-dot specifier names nothing.
+                    if candidate.is_empty() {
+                        continue;
+                    }
                     if let Some(target_file) = module_to_file.get(&candidate) {
                         if target_file != &f.path {
                             *counts
@@ -840,7 +936,7 @@ pub fn build_file_import_edges(
             if !file_anchored {
                 continue;
             }
-            if let Some(target_file) = module_path_prefix_candidates(f, use_path, sep)
+            if let Some(target_file) = module_path_prefix_candidates(f, use_path, sep, &src_dirs)
                 .into_iter()
                 .find_map(|candidate| module_to_file.get(&candidate))
             {
@@ -1627,6 +1723,152 @@ mod determinism_tests {
         );
     }
 
+    /// NEW-5. A leading-dot specifier the Python-only relative route does not
+    /// claim — julia's `using .Geometry` — reaches the raw prefix walk, where
+    /// `".Geometry".split('.')` yields an EMPTY first segment. An empty
+    /// candidate names no module; looking it up is how a specifier resolves to
+    /// something arbitrary. The sibling `python_relative_import_candidates`
+    /// has always dropped empties; both raw walks now do too.
+    ///
+    /// The module sets below deliberately CONTAIN the empty name — the state
+    /// that turns the missing guard from a wasted lookup into a wrong edge.
+    #[test]
+    fn a_leading_dot_specifier_never_resolves_to_the_empty_module() {
+        let jl = vec![
+            source_file("src/Main.jl", "pkg.src.Main", "julia", &[".Geometry"]),
+            source_file("src/geometry.jl", "pkg.src.geometry", "julia", &[]),
+        ];
+        let mut known_modules: HashSet<String> =
+            jl.iter().map(|file| file.module_path.clone()).collect();
+        known_modules.insert(String::new());
+        assert!(build_import_edges(&jl, &known_modules, &JsWorkspace::default()).is_empty());
+
+        // The File pass mirrors the guard. Its raw walk runs only for the
+        // file-anchored languages, so the same shape is asserted through one
+        // of those.
+        let dart = vec![
+            source_file("lib/a.dart", "pkg.lib.a", "dart", &[".Geometry"]),
+            source_file("lib/b.dart", "pkg.lib.b", "dart", &[]),
+        ];
+        let mut module_to_file: HashMap<String, String> = dart
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        module_to_file.insert(String::new(), "lib/b.dart".to_string());
+        assert!(
+            build_file_import_edges(&dart, &module_to_file, &JsWorkspace::default()).is_empty()
+        );
+    }
+
+    /// NEW-4. A quoted `#include` is resolved by the compiler against the
+    /// including file's directory and then along `-I`; the project root is
+    /// never one of those places. The graph records no `-I` flags, so a miss
+    /// stays a miss — the contract the cJSON reconciliation measured (0 false
+    /// positives). The unconditional root fallback broke it: a same-named file
+    /// anchored at the root manufactured an edge no compiler would produce.
+    #[test]
+    fn cpp_quoted_includes_never_fall_back_to_the_project_root() {
+        let files = vec![
+            // `net/socket.c` wants ITS OWN `config.h`, which does not exist.
+            // The unrelated root-level `config.h` is not a substitute.
+            source_file("net/socket.c", "net/socket", "c", &["config.h"]),
+            source_file("config.h", "config", "c", &[]),
+            source_file("gui/window.cpp", "gui/window", "cpp", &["theme.hpp"]),
+            source_file("theme.hpp", "theme", "cpp", &[]),
+        ];
+        // The file-relative candidate is still produced — it simply does not
+        // exist. What is gone is the root-anchored `config.h` / `theme.hpp`.
+        assert_eq!(
+            path_import_candidates(&files[0], "config.h"),
+            vec!["net/config.h".to_string()]
+        );
+        assert_eq!(
+            path_import_candidates(&files[2], "theme.hpp"),
+            vec!["gui/theme.hpp".to_string()]
+        );
+
+        let known_modules: HashSet<_> = files.iter().map(|file| file.module_path.clone()).collect();
+        assert!(build_import_edges(&files, &known_modules, &JsWorkspace::default()).is_empty());
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        assert!(
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default()).is_empty()
+        );
+
+        // The fallback is dropped for C/C++ ONLY — every other path-import
+        // language keeps it. A root-relative `source()` in R still resolves.
+        let r_run = source_file("analysis/run.R", "analysis/run", "r", &["lib/helpers.R"]);
+        assert_eq!(
+            path_import_candidates(&r_run, "lib/helpers.R"),
+            vec![
+                "analysis/lib/helpers.R".to_string(),
+                "lib/helpers.R".to_string()
+            ]
+        );
+    }
+
+    /// B6. A leading `/` in an HTML/CSS reference is SERVED-root-absolute, and
+    /// a built site under `dist/` is served with `dist/` as `/`. The project
+    /// root is still tried FIRST — so `/shared/reset.css`, which resolves
+    /// there today, keeps its answer — and the linking file's own directory
+    /// follows it.
+    #[test]
+    fn root_absolute_web_refs_also_try_the_linking_files_own_directory() {
+        let html = source_file(
+            "dist/index.html",
+            "site.dist.index",
+            "html",
+            &["/_astro/app.css", "/shared/reset.css"],
+        );
+        assert_eq!(
+            path_import_candidates(&html, "/_astro/app.css"),
+            vec![
+                "_astro/app.css".to_string(),
+                "dist/_astro/app.css".to_string()
+            ],
+            "project root first, served root second"
+        );
+
+        let files = vec![
+            html,
+            source_file("dist/_astro/app.css", "site.dist._astro.app", "css", &[]),
+            source_file("shared/reset.css", "site.shared.reset", "css", &[]),
+        ];
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|file| (file.module_path.clone(), file.path.clone()))
+            .collect();
+        let pairs: Vec<_> =
+            build_file_import_edges(&files, &module_to_file, &JsWorkspace::default())
+                .into_iter()
+                .map(|edge| (edge.source, edge.target))
+                .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                (
+                    "dist/index.html".to_string(),
+                    "dist/_astro/app.css".to_string()
+                ),
+                (
+                    "dist/index.html".to_string(),
+                    "shared/reset.css".to_string()
+                ),
+            ]
+        );
+
+        // Web-only, and leading-'/'-only. A C include is unaffected in both
+        // directions, and a RELATIVE web ref keeps exactly its old candidates.
+        let c = source_file("net/socket.c", "net/socket", "c", &["/etc/config.h"]);
+        assert!(path_import_candidates(&c, "/etc/config.h").is_empty());
+        assert_eq!(
+            path_import_candidates(&files[0], "css/app.css"),
+            vec!["dist/css/app.css".to_string(), "css/app.css".to_string()]
+        );
+    }
+
     /// Julia's split import model, asserted as exact edge sets. Mirrors the
     /// `julia_basic` corpus in miniature: `include("…")` strings are FILE
     /// PATHS and must resolve through the path route (dir-relative, exact,
@@ -2204,7 +2446,10 @@ mod determinism_tests {
             source_file("xarray/core/__init__.py", "xarray.core", "python", &[]),
         ];
         assert!(module_path_root_prefix(&files[0], ".").is_none());
-        assert!(module_path_prefix_candidates(&files[0], "xarray.core", ".").is_empty());
+        assert!(
+            module_path_prefix_candidates(&files[0], "xarray.core", ".", &HashSet::new())
+                .is_empty()
+        );
 
         let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
         let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
@@ -2225,6 +2470,128 @@ mod determinism_tests {
         );
     }
 
+    /// `src_layout_dirs` reads the FILE SET — no filesystem probing. It
+    /// records the directory that *holds* a `src/`, `""` for a project-root
+    /// `src/`, and only for Python files; a file merely NAMED `src` is not a
+    /// source root, and a non-Python tree under `src/` is not evidence for a
+    /// Python import root.
+    #[test]
+    fn src_layout_dirs_are_derived_from_the_file_set() {
+        let files = vec![
+            source_file("src/pkg/util.py", "root.src.pkg.util", "python", &[]),
+            source_file(
+                "apps/api/src/svc/db.py",
+                "root.apps.api.src.svc.db",
+                "python",
+                &[],
+            ),
+            source_file("tests/test_util.py", "root.tests.test_util", "python", &[]),
+            // A FILE called `src` — not a directory, so not a root.
+            source_file("tools/src", "root.tools.src", "python", &[]),
+            // A non-Python `src/` tree proves nothing about Python roots.
+            source_file("web/src/app.ts", "web/src/app", "typescript", &[]),
+        ];
+        let dirs = src_layout_dirs(&files);
+        assert_eq!(
+            dirs,
+            HashSet::from(["".to_string(), "apps/api".to_string()]),
+            "only directories holding a Python-bearing `src/`"
+        );
+    }
+
+    /// A src-layout project: `pkg` lives under `src/`, and `tests/` imports it
+    /// by its absolute installed name. None of the importer's own ancestor
+    /// roots (`root`, `root.tests`) can spell `root.src.pkg.util`, so before
+    /// the src root the import resolved to nothing at all.
+    #[test]
+    fn python_src_layout_absolute_import_resolves_through_the_src_root() {
+        let files = vec![
+            source_file("src/pkg/__init__.py", "root.src.pkg", "python", &[]),
+            source_file("src/pkg/util.py", "root.src.pkg.util", "python", &[]),
+            source_file(
+                "tests/test_util.py",
+                "root.tests.test_util",
+                "python",
+                &["pkg.util"],
+            ),
+        ];
+        let importer = &files[2];
+        let src_dirs = src_layout_dirs(&files);
+
+        // Without the evidence the candidate set is the old ancestor-only one.
+        assert_eq!(
+            module_path_prefix_candidates(importer, "pkg.util", ".", &HashSet::new()),
+            vec![
+                "root.pkg.util".to_string(),
+                "root.tests.pkg.util".to_string(),
+                "root.pkg".to_string(),
+                "root.tests.pkg".to_string(),
+            ]
+        );
+        // With it, `root.src` joins as a root — APPENDED after every ancestor
+        // root, so each pre-existing candidate is still tried first.
+        assert_eq!(
+            module_path_prefix_candidates(importer, "pkg.util", ".", &src_dirs),
+            vec![
+                "root.pkg.util".to_string(),
+                "root.tests.pkg.util".to_string(),
+                "root.src.pkg.util".to_string(),
+                "root.pkg".to_string(),
+                "root.tests.pkg".to_string(),
+                "root.src.pkg".to_string(),
+            ]
+        );
+
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        let module_edges = build_import_edges(&files, &known_modules, &JsWorkspace::default());
+        assert_eq!(
+            module_edges
+                .iter()
+                .map(|e| (e.file_path.as_str(), e.module.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("tests/test_util.py", "root.src.pkg.util")]
+        );
+
+        let module_to_file: HashMap<String, String> = files
+            .iter()
+            .map(|f| (f.module_path.clone(), f.path.clone()))
+            .collect();
+        let file_edges = build_file_import_edges(&files, &module_to_file, &JsWorkspace::default());
+        assert_eq!(
+            file_edges
+                .iter()
+                .map(|e| (e.source.as_str(), e.target.as_str(), e.import_count))
+                .collect::<Vec<_>>(),
+            vec![("tests/test_util.py", "src/pkg/util.py", 1)]
+        );
+    }
+
+    /// The gate is the evidence, not the spelling: the same import in a
+    /// project with no `src/` directory anywhere in the file set gains no
+    /// candidate and forms no edge. The resolver still cannot invent a target.
+    #[test]
+    fn no_src_directory_in_the_file_set_means_no_src_root() {
+        let files = vec![
+            source_file(
+                "tests/test_util.py",
+                "root.tests.test_util",
+                "python",
+                &["pkg.util"],
+            ),
+            source_file("other/pkg/util.py", "root.other.pkg.util", "python", &[]),
+        ];
+        let src_dirs = src_layout_dirs(&files);
+        assert!(src_dirs.is_empty());
+        assert!(
+            !module_path_prefix_candidates(&files[0], "pkg.util", ".", &src_dirs)
+                .iter()
+                .any(|c| c.contains(".src.")),
+            "no `src/` in the file set, no `src` root"
+        );
+        let known_modules: HashSet<_> = files.iter().map(|f| f.module_path.clone()).collect();
+        assert!(build_import_edges(&files, &known_modules, &JsWorkspace::default()).is_empty());
+    }
+
     /// The branch is language-gated: a relative specifier in a language that
     /// does not use module-path imports must not pick up the new behaviour.
     #[test]
@@ -2240,13 +2607,13 @@ mod determinism_tests {
         // parse time.
         let py = source_file("a/b.py", "root.a.b", "python", &["./c"]);
         assert!(module_path_import_candidates(&py, "./c", &JsWorkspace::default()).is_empty());
-        assert!(module_path_prefix_candidates(&py, "./c", ".").is_empty());
+        assert!(module_path_prefix_candidates(&py, "./c", ".", &HashSet::new()).is_empty());
         // What Python DOES get is the separate root-prefix pass, on absolute
         // specifiers only: the full specifier under every candidate import root
         // (shallowest first) before any shortening, and never shortened below
         // one segment — the bare `root` is not a candidate.
         assert_eq!(
-            module_path_prefix_candidates(&py, "c.d", "."),
+            module_path_prefix_candidates(&py, "c.d", ".", &HashSet::new()),
             vec![
                 "root.c.d".to_string(),
                 "root.a.c.d".to_string(),
@@ -2255,7 +2622,7 @@ mod determinism_tests {
             ]
         );
         // TS/JS get nothing from that pass, at any separator.
-        assert!(module_path_prefix_candidates(&ts, "a/c", "/").is_empty());
+        assert!(module_path_prefix_candidates(&ts, "a/c", "/", &HashSet::new()).is_empty());
 
         let js = source_file("a/b.js", "a/b", "javascript", &["../d/index.js"]);
         assert_eq!(

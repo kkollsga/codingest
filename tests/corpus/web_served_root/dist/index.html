@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <!-- Dist-served site: the browser resolves this against the SERVED root
+         (`dist/`), not the repository root. `dist/_astro/app.css` is in the
+         graph, so the edge exists to be found. -->
+    <link rel="stylesheet" href="/_astro/app.css">
+    <!-- Control: a leading-'/' ref that resolves at the PROJECT root and must
+         keep resolving there, ahead of the served-root candidate. -->
+    <link rel="stylesheet" href="/shared/reset.css">
+  </head>
+  <body>
+    <div class="hero">served</div>
+  </body>
+</html>

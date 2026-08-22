@@ -48,6 +48,23 @@ ship time — it's the only place the version bumps.
   wrong on real docs — prose words like `Default` linked to unrelated types).
   A bare single-segment token now links only through a module-level
   definition; qualified tokens are unaffected.
+- **Markdown links to uppercase-extension docs (`[g](Guide.MDX)`) now reach the
+  Doc node** — link classification was case-sensitive while doc discovery was
+  already case-insensitive.
+- **Python src-layout absolute imports resolve**: `from pkg.util import x` in
+  `tests/` finds a package under `src/` — the `src` root is offered only when
+  the file set actually contains it (evidence-gated, no filesystem probing).
+- **C/C++ `#include` directives inside `extern "C" {` blocks are extracted.**
+  A closed block parses as a `linkage_specification` the C router had no arm
+  for; an unclosed one lands in an error-recovery subtree. Both are now walked
+  structurally — only grammar-labelled include nodes are routed, so
+  include-shaped text cannot become an edge.
+- **Quoted C/C++ includes no longer fall back to the project root**, which
+  could manufacture a compiler-impossible edge when a root-anchored file
+  shares a name with an `-I`-resolved header (the documented contract is
+  miss-only). Root-absolute web refs (`/_astro/x.css`) now also try the
+  linking file's own directory, so dist-served sites resolve; and a relative
+  `using .Geometry` (julia) can no longer produce an empty-module candidate.
 - **Dart `part of` files now share their library's module.** The resolver
   collapsed the URI to `{pkg}.{stem}`, so every URI-form part file landed in a
   phantom module no other file inhabited (its symbols invisible under the
