@@ -7,6 +7,26 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.7 — 2026-08-23: 30 corpora, all green across the kglite 0.16.7 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, `kgl_bytes_are_stable_across_builds` and
+`reloaded_graph_renders_identically` alongside). The engine floor moved kglite
+0.16.6 → 0.16.7 as a **lockstep refresh** — the 0.16.5 pattern — and **no
+builder source changed this release**: `git diff v0.2.6..HEAD --
+crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move.** 0.16.7's changes are
+Python-facing error-typing (`as_dict` removal, collision-raising `degrees()` /
+`embeddings()` / `to_networkx()`, `compare()` errors as `kglite.ArgumentError`)
+plus an opt-in strict mode and an HNSW engagement fix for whole-graph
+`vector_search`; grep confirms codingest calls none of the changed APIs, no
+file-format change is reported upstream, and the frozen goldens plus the `.kgl`
+byte-stability test turn that from a changelog claim into a verified one. The
+Python acceptance suite ran against the kglite 0.16.7 wheel reading
+Rust-0.16.7-written bytes (the lockstep the floor exists for).
+
 ## Release 0.2.6 — 2026-08-22: 30 corpora (21 → 30), all green on kglite 0.16.6; four intended golden moves, each with a recorded reason
 
 Released state: **30 corpora**, all green in the release-mode gate

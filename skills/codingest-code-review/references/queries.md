@@ -74,7 +74,8 @@ take literal Cypher: there, replace the angle-bracket placeholders only with
 trusted git or source identifiers and escape Cypher string quotes, or use the
 JSONL session API's parameter support for untrusted values.
 
-Two more kglite 0.16.6 behaviours worth knowing while reading results:
+Two more behaviours, in place since kglite 0.16.6, worth knowing while reading
+results:
 
 - `=~` matches the **whole** value, not a substring. `n.name =~ 'admin'` no
   longer selects `'superadmin'`; write `CONTAINS`, or `=~ '.*admin.*'`.

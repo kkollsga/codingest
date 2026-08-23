@@ -10,6 +10,30 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-08-23
+
+### Changed
+- **Engine floor moves to kglite 0.16.7 — a lockstep refresh, not a fix we
+  needed.** 0.16.7 converts a family of Python-facing silent-wrong-answer
+  behaviours into typed errors (`as_dict` removed from the four centralities;
+  `degrees()` / one-arg `embeddings()` / `to_networkx()` now raise on title/id
+  collisions; `compare()` traversal errors became `kglite.ArgumentError`) —
+  grep confirms codingest calls none of them, and the evidence is the gate:
+  build, clippy, the full test battery including `golden_parity`, the
+  release-gate suite, and the Python acceptance run are green across the bump
+  with **zero source changes**; the frozen parity goldens hold. **If you
+  install the wheel, upgrade the Python engine too** — the requirement moves to
+  `kglite>=0.16.7,<0.17` so the Rust `.kgl` writer and your separately
+  installed `kglite` reader stay on one release.
+
+### Fixed
+- **Three documentation sentences stated the previous engine version as if
+  current** (`docs/mcp.md`, both copies of the code-review skill's
+  `queries.md`). Rephrased to historical "since kglite 0.16.6" form, so they
+  record when the behaviour appeared instead of rotting on every engine bump.
+  Flagged by KGLite's ecosystem version-consistency checker, which now reports
+  zero warnings for codingest.
+
 ## [0.2.6] - 2026-08-22
 
 ### Fixed

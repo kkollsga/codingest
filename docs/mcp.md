@@ -232,7 +232,8 @@ truncated, opencode's message points at the spill file — and, if the agent has
 the task tool, tells the model to delegate reading it to a sub-agent rather than
 pull it back into context.
 
-Two kglite 0.16.6 changes alter what a runaway or capped query does. A deep
+Two changes in effect since kglite 0.16.6 alter what a runaway or capped
+query does. A deep
 unbounded traversal is charged against the 10,000,000-row internal ceiling *as
 it expands*, so it now stops with a quantified error naming the expansion that
 overflowed instead of exhausting the host's memory (`max_rows` still governs on

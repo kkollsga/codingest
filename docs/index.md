@@ -11,14 +11,15 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.6
+## Requires kglite ≥ 0.16.7
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.6 to keep the Rust writer and the
-Python reader on one engine release — 0.16.6 additionally fixes the advisory
+in-tree builder. The floor sits at 0.16.7 to keep the Rust writer and the
+Python reader on one engine release; 0.16.7 itself is a lockstep refresh that
+changes nothing codingest calls. Beneath it, 0.16.6 fixes the advisory
 traversal caps and variable-length trail semantics, neither of which changes the
-graph codingest produces. Beneath it, the 0.16.2 floor makes bulk-loaded edge
+graph codingest produces. Beneath that, the 0.16.2 floor makes bulk-loaded edge
 properties record
 their observed types — every edge property codingest writes through
 `add_connections` (`CALLS.call_count`, `IMPORTS.import_count`, …) reported
