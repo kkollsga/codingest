@@ -1,0 +1,178 @@
+{
+ "schema": 1,
+ "version": "0.2.8",
+ "captured_at_commit": "742cf76aa6f6dfd3ef5e0c6044de5fe5ae3cb017",
+ "captured_at": "2026-08-24",
+ "target": "tests/corpus",
+ "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
+ "control_query": "top20_by_branch_count (ORDER BY + LIMIT)",
+ "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
+ "build_gating": "recorded, not enforced: at 27 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here.",
+ "stability_across_3_runs": "worst per-query spread 0.0020 ms docs-on / 0.0010 ms docs-off across three runs per mode (two independent builds each); the post-cold-build first captures served as warmup (the build cache behind the target symlink was deleted 2026-08-23 and the tree cold-rebuilt), and one jittery docs-on middle round (defs_per_file 0.032 vs 0.027 flat elsewhere) was re-measured rather than folded into the floor. Floors held at 0.005 (>=2.5x worst spread; control clears 2x at 0.015). Third baseline of the 0.2.6 corpus epoch (c449542e, 30 corpora); control top20_by_branch_count steady across the kglite 0.16.7->0.16.9 engine move.",
+ "corpora": [
+  {
+   "target": "tests/corpus",
+   "mode": "docs-on",
+   "include_docs": true,
+   "floors": {
+    "query_abs_ms": 0.005,
+    "build_secs": 0.05
+   },
+   "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
+   "nodes": 567,
+   "edges": 880,
+   "build_secs": 0.017,
+   "queries": [
+    {
+     "name": "count_functions (full-label scan + count)",
+     "rows": 1,
+     "median_ms": 0.0,
+     "min_ms": 0.0
+    },
+    {
+     "name": "eq_filter_pub (equality property filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.002
+    },
+    {
+     "name": "contains_new (CONTAINS string filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+     "rows": 20,
+     "median_ms": 0.016,
+     "min_ms": 0.016,
+     "control": true
+    },
+    {
+     "name": "defs_per_file (grouped aggregation)",
+     "rows": 20,
+     "median_ms": 0.028,
+     "min_ms": 0.027
+    },
+    {
+     "name": "calls_edge_scan (1-hop edge scan + count)",
+     "rows": 1,
+     "median_ms": 0.012,
+     "min_ms": 0.012
+    },
+    {
+     "name": "anchored_callers (anchored 1-hop, in-hub)",
+     "rows": 7,
+     "median_ms": 0.004,
+     "min_ms": 0.004
+    },
+    {
+     "name": "two_hop_into_hot (2-hop traversal + count)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    },
+    {
+     "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+     "rows": 1,
+     "median_ms": 0.025,
+     "min_ms": 0.025
+    },
+    {
+     "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+     "rows": 6,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    }
+   ]
+  },
+  {
+   "target": "tests/corpus",
+   "mode": "docs-off",
+   "include_docs": false,
+   "floors": {
+    "query_abs_ms": 0.005,
+    "build_secs": 0.05
+   },
+   "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
+   "nodes": 560,
+   "edges": 859,
+   "build_secs": 0.01,
+   "queries": [
+    {
+     "name": "count_functions (full-label scan + count)",
+     "rows": 1,
+     "median_ms": 0.0,
+     "min_ms": 0.0
+    },
+    {
+     "name": "eq_filter_pub (equality property filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.002
+    },
+    {
+     "name": "contains_new (CONTAINS string filter)",
+     "rows": 1,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+     "rows": 20,
+     "median_ms": 0.015,
+     "min_ms": 0.015,
+     "control": true
+    },
+    {
+     "name": "defs_per_file (grouped aggregation)",
+     "rows": 20,
+     "median_ms": 0.029,
+     "min_ms": 0.027
+    },
+    {
+     "name": "calls_edge_scan (1-hop edge scan + count)",
+     "rows": 1,
+     "median_ms": 0.012,
+     "min_ms": 0.012
+    },
+    {
+     "name": "anchored_callers (anchored 1-hop, in-hub)",
+     "rows": 7,
+     "median_ms": 0.004,
+     "min_ms": 0.004
+    },
+    {
+     "name": "two_hop_into_hot (2-hop traversal + count)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    },
+    {
+     "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+     "rows": 1,
+     "median_ms": 0.025,
+     "min_ms": 0.025
+    },
+    {
+     "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+     "rows": 6,
+     "median_ms": 0.003,
+     "min_ms": 0.003
+    },
+    {
+     "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+     "rows": 1,
+     "median_ms": 0.001,
+     "min_ms": 0.001
+    }
+   ]
+  }
+ ]
+}
