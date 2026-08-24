@@ -7,6 +7,26 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.8 — 2026-08-24: 30 corpora, all green across the kglite 0.16.9 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, `kgl_bytes_are_stable_across_builds` and
+`reloaded_graph_renders_identically` alongside). The engine floor moved kglite
+0.16.7 → 0.16.9 as a **lockstep refresh** and **no builder source changed this
+release**: `git diff v0.2.7..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move** — and 0.16.9 makes
+that claim in both directions itself: its CRC change (`crc32fast` replacing the
+software table in `.kgl` section verification) computes the same CRC-32/IEEE
+values, so a file written on either side verifies on the other; upstream pins
+this with `crc32_matches_known_vector` plus cross-wheel flip tests. 0.16.8's
+correctness fixes are query-semantics and index/storage repairs that reach no
+query codingest ships (its one `count(DISTINCT …)` counts a node variable, not
+a relationship). The Python acceptance suite ran against the kglite 0.16.9
+wheel reading Rust-0.16.9-written bytes — and inherits upstream's ~1.6x load
+speedup for digest-carrying files without a byte of the written format moving.
+
 ## Release 0.2.7 — 2026-08-23: 30 corpora, all green across the kglite 0.16.7 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the

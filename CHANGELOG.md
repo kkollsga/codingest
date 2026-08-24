@@ -10,6 +10,26 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-24
+
+### Changed
+- **Engine floor moves to kglite 0.16.9 — a lockstep refresh, not a fix we
+  needed.** 0.16.9 replaces the software CRC32 in `.kgl` section verification
+  with `crc32fast`, so **loading a digest-carrying `.kgl` gets ~1.6x faster**
+  upstream — with the digest *values* unchanged: the written bytes are
+  identical in both directions and the frozen parity goldens hold. 0.16.8 is
+  engine correctness fixes (`count(DISTINCT <relationship var>)` counting
+  distinct relationships, aggregating `WITH … LIMIT` pushdown, composite-index
+  key order, mapped-storage property staleness, `UNWIND` JSON-list splitting,
+  total `Value` equality) — none of which reaches a query codingest ships (its
+  one `count(DISTINCT …)` counts a node variable), and the Python surface it
+  removed (`add_connections_internal`) was never called here. Verified across
+  the bump with **zero source changes**: build, clippy, the full release-mode
+  test battery including `golden_parity`, and the Python acceptance suite
+  reading Rust-0.16.9-written bytes through the kglite 0.16.9 wheel. **If you
+  install the wheel, upgrade the Python engine too** — the requirement moves
+  to `kglite>=0.16.9,<0.17` so the writer and reader stay on one release.
+
 ## [0.2.7] - 2026-08-23
 
 ### Changed
