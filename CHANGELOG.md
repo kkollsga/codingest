@@ -10,6 +10,49 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-08-26
+
+### Changed
+- **Engine floor moves to kglite 0.16.12 — a lockstep refresh over three
+  upstream releases, none of which we opt into.** 0.16.12 lands entirely
+  *inside* the 0.16.11 ontology layer — `required_properties` /
+  `property_types` were parsed and persisted but never checked (now audited),
+  `inverse_name` stopped auto-enrolling the physical-inverse check (opt in with
+  `inverse_enforced: true`), and `enforcement` gained a per-check
+  `{check: severity}` map — all of which reach a graph only through a
+  declaration codingest never installs. 0.16.11 is the ontology declaration
+  layer (`define_ontology` / `materialize_ontology` / `SHOW ONTOLOGY` /
+  `ontology_audit`), structured table properties, and `MATCH (n:A|B)` label
+  alternation — all *declared* features, so a graph that declares none (every
+  graph codingest builds) is byte-identical and answers identically. Its one
+  broad fix — `vacuum()` corrupting secondary labels — cannot reach a builder
+  that adds no secondary label and never vacuums. 0.16.10 is the BM25 text
+  index (`build_text_index` / `text_bm25` / `score_fuse`), vector-index
+  catch-up, and the MCP `--parallel` / `extensions.parallel` opt-in codingest
+  asked upstream for on 2026-08-22 — **codingest-mcp inherits that for free**
+  as a thin frontend over `kglite-mcp-server`, off unless an operator turns it
+  on. Its new `.kgl` text-index section is a rebuildable cache: a graph with no
+  text index writes byte-identical files and older files load unchanged.
+  0.16.10's Rust removals (`api::io::save_subset`'s `spec` parameter,
+  `EmbeddingStore::index` as a public field, `build_vector_index`'s new
+  trailing `auto_refresh_limit`) name no symbol codingest imports. Verified
+  across the bump with **zero source changes**: `make gate` green end to end
+  (fmt, clippy, build, the full test battery including `golden_parity`, the
+  release-gate suite, the bench parity smoke, the wheel, and the Python
+  acceptance suite reading Rust-0.16.12-written bytes through the kglite
+  0.16.12 wheel); every frozen golden digest is byte-identical. **If you
+  install the wheel, upgrade the Python engine too** — the requirement moves to
+  `kglite>=0.16.12,<0.17` so the writer and reader stay on one release.
+
+### Fixed
+- **`codingest.build()`'s import-failure message told you to install a kglite
+  six patches below the one the wheel requires.** When the `kglite` wheel is
+  missing, `crates/codingest-py/src/lib.rs` advised `pip install
+  kglite>=0.16.6` — a floor frozen since 0.16.6 and never moved with the
+  engine, so following the message installed an engine below the declared
+  runtime requirement. It now names the real bounded range,
+  `pip install 'kglite>=0.16.12,<0.17'`.
+
 ## [0.2.8] - 2026-08-24
 
 ### Changed

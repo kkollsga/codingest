@@ -7,6 +7,31 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.9 — 2026-08-26: 30 corpora, all green across the kglite 0.16.12 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, `kgl_bytes_are_stable_across_builds` and
+`reloaded_graph_renders_identically` alongside). The engine floor moved kglite
+0.16.9 → 0.16.12 as a **lockstep refresh** and **no builder source changed this
+release**: `git diff v0.2.8..HEAD -- crates/codingest/src` is empty (the one
+source edit is codingest-py's import-failure message, which named a floor six
+patches stale).
+
+**Every golden digest is byte-identical across the move**, and the perf anchor
+corroborates it independently: `nodes` and `edges` compare at +0.00 % against
+the 0.2.6 baseline in both docs modes, so the engine move changed nothing about
+the graph the builder produces. The three upstream releases are opt-in surface
+codingest declares nothing into — 0.16.12 and 0.16.11 are the ontology
+declaration layer (nothing here calls `define_ontology`, so there is no
+declaration to audit and no `<ontology>` section to render), and 0.16.10 adds
+the BM25 text index whose `.kgl` section is a rebuildable cache that a graph
+declaring no text index never writes. 0.16.11's one broad fix — `vacuum()`
+corrupting secondary labels — cannot reach a builder that adds no secondary
+label and never vacuums (grep: zero hits for `add_label` / `secondary_label` /
+`vacuum` / `set_parent_type` in `crates/`). The Python acceptance suite ran
+against the kglite 0.16.12 wheel reading Rust-0.16.12-written bytes.
+
 ## Release 0.2.8 — 2026-08-24: 30 corpora, all green across the kglite 0.16.9 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the
