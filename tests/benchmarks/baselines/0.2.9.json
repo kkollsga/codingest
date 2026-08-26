@@ -1,14 +1,14 @@
 {
  "schema": 1,
- "version": "0.2.5",
- "captured_at_commit": "ab1c0e346c21a3ce0d3122ef091521ea040a8f64",
- "captured_at": "2026-08-20",
+ "version": "0.2.9",
+ "captured_at_commit": "399855ee029f5a2f4f3212d1964ebb928ef43c00",
+ "captured_at": "2026-08-26",
  "target": "tests/corpus",
  "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
- "control_query": "defs_per_file (grouped aggregation)",
+ "control_query": "top20_by_branch_count (ORDER BY + LIMIT)",
  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
- "build_gating": "recorded, not enforced: at 27 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here.",
- "stability_across_3_runs": "worst per-query spread 0.0020 ms docs-on / 0.0010 ms docs-off across three runs per mode, warmup discarded; corpus UNCHANGED from 0.2.3 and 0.2.4 (ad8b3084\u2026). Floor held at 0.005 (~2.5x the worst spread). Control defs_per_file measures 0.023-0.024 ms against that floor, a 4.6-4.8x margin, and was measured FLAT (+0.0%) across the kglite 0.16.2 -> 0.16.5 engine move by three interleaved A/B pairs per mode \u2014 the immunity requirement a control must meet, checked against the exact dependency move this release ships. varlen_callers_1_3 moved -9.7% on that same move and is correctly NOT the control.",
+ "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
+ "stability_across_3_runs": "worst per-query spread 0.0020 ms docs-on / 0.0020 ms docs-off across three runs per mode after a discarded warmup run per mode; every other cell held at 0.0000-0.0010 ms and node/edge counts were identical across all three runs in both modes. Floors held at 0.005 (2.5x worst spread; the control clears 2x at 0.015-0.016). Fourth baseline of the 0.2.6 corpus epoch (c449542e, 30 corpora). Control top20_by_branch_count re-qualified across the kglite 0.16.9->0.16.12 engine move measured ONE step (vs the 0.2.8 baseline, not the 0.2.6 anchor): -6.25% docs-on / +6.67% docs-off \u2014 opposite signs, so jitter rather than a deterministic shift, which is the reading that would have voided its premise.",
  "corpora": [
   {
    "target": "tests/corpus",
@@ -18,10 +18,10 @@
     "query_abs_ms": 0.005,
     "build_secs": 0.05
    },
-   "corpus_sha256": "ad8b308429bdf7451372cecbd0c220d223050b45da8bcbd2837ce6d260106e1f",
-   "nodes": 405,
-   "edges": 616,
-   "build_secs": 0.009,
+   "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
+   "nodes": 567,
+   "edges": 880,
+   "build_secs": 0.012,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -32,7 +32,7 @@
     {
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
-     "median_ms": 0.002,
+     "median_ms": 0.003,
      "min_ms": 0.002
     },
     {
@@ -44,21 +44,21 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.014,
-     "min_ms": 0.014
+     "median_ms": 0.015,
+     "min_ms": 0.015,
+     "control": true
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.023,
-     "min_ms": 0.022,
-     "control": true
+     "median_ms": 0.029,
+     "min_ms": 0.025
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
      "rows": 1,
-     "median_ms": 0.014,
-     "min_ms": 0.014
+     "median_ms": 0.012,
+     "min_ms": 0.012
     },
     {
      "name": "anchored_callers (anchored 1-hop, in-hub)",
@@ -75,12 +75,12 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.028,
-     "min_ms": 0.027
+     "median_ms": 0.025,
+     "min_ms": 0.025
     },
     {
      "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
-     "rows": 4,
+     "rows": 6,
      "median_ms": 0.003,
      "min_ms": 0.003
     },
@@ -100,10 +100,10 @@
     "query_abs_ms": 0.005,
     "build_secs": 0.05
    },
-   "corpus_sha256": "ad8b308429bdf7451372cecbd0c220d223050b45da8bcbd2837ce6d260106e1f",
-   "nodes": 398,
-   "edges": 596,
-   "build_secs": 0.0077,
+   "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
+   "nodes": 560,
+   "edges": 859,
+   "build_secs": 0.010167,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -114,7 +114,7 @@
     {
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
-     "median_ms": 0.002,
+     "median_ms": 0.003,
      "min_ms": 0.002
     },
     {
@@ -126,21 +126,21 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.015,
-     "min_ms": 0.014
+     "median_ms": 0.016,
+     "min_ms": 0.016,
+     "control": true
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.023,
-     "min_ms": 0.022,
-     "control": true
+     "median_ms": 0.028,
+     "min_ms": 0.026
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
      "rows": 1,
      "median_ms": 0.012,
-     "min_ms": 0.011
+     "min_ms": 0.012
     },
     {
      "name": "anchored_callers (anchored 1-hop, in-hub)",
@@ -157,12 +157,12 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.028,
-     "min_ms": 0.027
+     "median_ms": 0.025,
+     "min_ms": 0.025
     },
     {
      "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
-     "rows": 4,
+     "rows": 6,
      "median_ms": 0.003,
      "min_ms": 0.003
     },
