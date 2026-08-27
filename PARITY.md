@@ -7,6 +7,43 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.10 — 2026-08-27: 30 corpora, all green across the kglite 0.16.13 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, `kgl_bytes_are_stable_across_builds` and
+`reloaded_graph_renders_identically` alongside). The engine floor moved kglite
+0.16.12 → 0.16.13 as a **lockstep refresh** and **no builder source changed
+this release**: `git diff v0.2.9..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move**, corroborated
+independently by the perf anchor: `nodes` and `edges` compare at +0.00 % in
+both docs modes.
+
+**The unreachability argument is different this time, and the difference
+matters.** 0.16.10–0.16.12 could not reach us because they add *opt-in
+declared* surface (the ontology layer, the BM25 text index) that codingest
+declares nothing into. 0.16.13's ontology follow-ups are unreachable the same
+way — but its engine fixes are not that shape. Each corrects an **index**
+answering wrongly: an index on `name` shadowing the title fallback and silently
+dropping rows from `{name: …}` lookups; indexed equality for an absent value
+scanning the type; a `WHERE`-equality index pre-filter pruning rows of the
+wrong type; a fluent `where()` over a mixed-type node set taking the first
+indexed type's hits as the whole answer. All are unreachable here for exactly
+one reason: **codingest creates no index at all** — zero hits across `crates/`,
+`tests/` and the docs recipes for `create_index` / `create_range_index` /
+`create_composite_index` / `build_text_index` / `build_vector_index` /
+`CREATE INDEX`.
+
+That is *unreachable*, **not** *unused*, and the distinction is recorded here
+because it expires. The untyped `WHERE n.is_external = false` shape those fixes
+repair is one codingest documents and ships; the day anyone adds an index, this
+paragraph stops being true and the fixes become load-bearing. The release's
+Rust API note does not reach us either — `kglite::api::RelationshipDecl` gained
+public `exempt` / `ancestry` fields, and codingest constructs no
+`RelationshipDecl` (zero struct literals). The Python acceptance suite ran
+against the kglite 0.16.13 wheel reading Rust-0.16.13-written bytes.
+
 ## Release 0.2.9 — 2026-08-26: 30 corpora, all green across the kglite 0.16.12 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the

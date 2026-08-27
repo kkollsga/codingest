@@ -251,13 +251,13 @@ jobs:
           workspaces: ". -> target"
 
       - name: Create venv and install build + runtime deps
-        # `kglite>=0.16.12,<0.17` is the runtime engine (the `.kgl`-bytes handoff loads
+        # `kglite>=0.16.13,<0.17` is the runtime engine (the `.kgl`-bytes handoff loads
         # the built graph through the installed kglite wheel). maturin builds
         # the codingest extension into the venv.
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install maturin==1.14.1 pytest==9.1.1 pytest-timeout==2.4.0 kglite==0.16.12
+          .venv/bin/python -m pip install maturin==1.14.1 pytest==9.1.1 pytest-timeout==2.4.0 kglite==0.16.13
 
       - name: Build the codingest extension into the venv (maturin develop)
         # DECISION (2026-08-10): this job keeps `--release`, deliberately — it

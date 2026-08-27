@@ -10,6 +10,46 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-27
+
+### Changed
+- **Engine floor moves to kglite 0.16.13 — a lockstep refresh, but on a
+  different argument than the last three.** 0.16.10–0.16.12 were unreachable
+  because they add *opt-in declared* surface (the ontology layer, the BM25 text
+  index) that codingest declares nothing into. 0.16.13's ontology follow-ups
+  are unreachable the same way, but its engine fixes are not that shape: they
+  each correct an **index** answering wrongly — an index on `name` shadowing
+  the title fallback and silently dropping rows from `{name: …}` lookups, an
+  indexed equality for an absent value re-deriving its empty answer by scanning
+  the type, a `WHERE`-equality index pre-filter pruning rows of the wrong type,
+  a fluent `where()` over a mixed-type node set taking the first indexed type's
+  hits as the whole answer, and the materialized-supertype closure probe. All
+  are unreachable here for one reason: **codingest creates no index at all**
+  (zero hits across `crates/`, `tests/` and the docs recipes for
+  `create_index` / `create_range_index` / `create_composite_index` /
+  `build_text_index` / `build_vector_index` / `CREATE INDEX`). That is
+  "unreachable", not "unused" — the untyped `WHERE n.is_external = false` shape
+  those fixes repair is one codingest documents and ships, so the argument
+  expires the day anyone adds an index, and the fix becomes load-bearing. The
+  release's Rust API note does not reach us either: `kglite::api::RelationshipDecl`
+  gained public `exempt` / `ancestry` fields, and codingest constructs no
+  `RelationshipDecl`. Verified with **zero source changes to the builder**.
+  **If you install the wheel, upgrade the Python engine too** — the requirement
+  moves to `kglite>=0.16.13,<0.17`.
+
+### Added
+- **A gate on the one floor declaration no tool reads.** `codingest.build()`
+  loads through the installed `kglite` wheel, and its import-failure message
+  tells the user what to install — a declaration of the runtime requirement
+  living in a Rust string literal, which no lockfile, resolver or CI job
+  reconciles. It went stale by six patch releases (fixed in 0.2.9), then went
+  stale **again one release later** at this bump, which is what earned it a
+  gate rather than another manual grep.
+  `test_user_facing_pip_install_advice_matches_the_python_floor` asserts the
+  message states `pyproject.toml`'s bounded range verbatim, ceiling included.
+  Verified failing on both drift shapes — a stale floor and a dropped ceiling —
+  before being committed green.
+
 ## [0.2.9] - 2026-08-26
 
 ### Changed

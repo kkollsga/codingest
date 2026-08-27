@@ -979,6 +979,47 @@ def test_kglite_cargo_and_python_floors_are_in_lockstep():
     )
 
 
+def test_user_facing_pip_install_advice_matches_the_python_floor():
+    """A FOURTH statement of the floor, in a string no packaging tool reads.
+
+    `codingest.build()` loads its result through the separately-installed
+    `kglite` wheel; when that import fails, `crates/codingest-py/src/lib.rs`
+    tells the user what to install. That message is a *declaration* of the
+    runtime requirement (doctrine R16), but it lives in a Rust string literal,
+    so no lockfile, resolver or CI job reconciles it — and the three-source
+    lockstep test above cannot see it either.
+
+    It drifted exactly that way: the message said `kglite>=0.16.6` while the
+    wheel required `>=0.16.9,<0.17`, six patch releases stale, so a user who
+    followed it installed an engine below the declared floor. Fixed at 0.2.9 —
+    and then went stale AGAIN one release later at the 0.16.13 bump, which is
+    what earned it a gate instead of a manual grep. The message must state the
+    pyproject range verbatim, bounds included: an unbounded `>=` would invite
+    the reader across the `.kgl` format break the ceiling exists to exclude.
+    """
+    pyproject = (REPO / "pyproject.toml").read_text()
+    match = re.search(r'"(kglite>=[^,]+,<[0-9.]+)"', pyproject)
+    assert match, "did not find the bounded Python KGLite runtime requirement"
+    required = match.group(1)
+
+    src = (REPO / "crates" / "codingest-py" / "src" / "lib.rs").read_text()
+    # The literal is line-continued across a `\` + indentation, which is how it
+    # drifted unnoticed twice — normalize that away before matching.
+    flattened = re.sub(r"\\\s*\n\s*", "", src)
+
+    advised = re.findall(r"pip install '?(kglite[^'`\s]*)'?", flattened)
+    assert advised, (
+        "no `pip install kglite...` advice found in codingest-py/src/lib.rs — "
+        "if the import-failure message was reworded, update this gate with it"
+    )
+    assert set(advised) == {required}, (
+        f"the import-failure message advises `pip install {sorted(set(advised))}` "
+        f"but pyproject.toml requires `{required}` — a user who follows that "
+        "message installs an engine the wheel does not support. Both must state "
+        "the same bounded range."
+    )
+
+
 def test_published_crates_ship_no_local_working_state():
     """`cargo package` ships untracked files that are merely UNIGNORED.
 

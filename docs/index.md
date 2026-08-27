@@ -11,17 +11,20 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.12
+## Requires kglite ≥ 0.16.13
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.12 to keep the Rust writer and the
-Python reader on one engine release. 0.16.12, 0.16.11 and 0.16.10 — like
-0.16.9, 0.16.8 and 0.16.7 before them — change nothing codingest calls
-(lockstep refreshes): the ontology declaration layer and the BM25 text index
-they add are opt-in surface codingest declares nothing into, and 0.16.9 speeds
-up loading digest-carrying `.kgl` files (~1.6x) without changing a byte of what
-is written. Beneath them, 0.16.6 fixes the advisory
+in-tree builder. The floor sits at 0.16.13 to keep the Rust writer and the
+Python reader on one engine release. 0.16.13 through 0.16.7 — every release
+since — change nothing codingest calls (lockstep refreshes), for two distinct
+reasons worth keeping apart. The ontology declaration layer (0.16.11–0.16.13)
+and the BM25 text index (0.16.10) are **opt-in surface codingest declares
+nothing into**. 0.16.13's engine fixes are a different argument: they correct
+an *index* answering wrongly, and codingest **builds no index at all**, so they
+are unreachable here rather than unused. That second argument expires the day
+anyone adds one. Separately, 0.16.9 speeds up loading digest-carrying `.kgl`
+files (~1.6x) without changing a byte of what is written. Beneath them, 0.16.6 fixes the advisory
 traversal caps and variable-length trail semantics, neither of which changes the
 graph codingest produces. Beneath that, the 0.16.2 floor makes bulk-loaded edge
 properties record

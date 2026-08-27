@@ -42,7 +42,7 @@ doctest = false
 pyo3 = { version = "0.29" }
 # The engine-free builder (parsers, call/type/route edges, rev merge, repo
 # clone, manifest reader). Docs pass gated by this crate's `docs` feature.
-codingest = { version = "0.2.9", path = "../codingest", default-features = false }
+codingest = { version = "0.2.10", path = "../codingest", default-features = false }
 # `.kgl` persistence (`kglite::api::io::save_graph`) for the serialize half of
 # the build-then-load handoff, plus the `DirGraph` type the builder returns.
 kglite = { workspace = true }
@@ -53,9 +53,9 @@ tempfile = "3.27.0"
 # through `_run_cli`, so `pip install codingest` also installs the `codingest`
 # command without a second wheel or a duplicated builder build. Mirrors
 # kglite-py's `kglite-cli` bundling.
-codingest-cli = { version = "0.2.9", path = "../codingest-cli" }
+codingest-cli = { version = "0.2.10", path = "../codingest-cli" }
 # Source-building MCP composition. The graph server and generic MCP lifecycle
 # remain owned by its existing kglite-mcp-server -> mcp-methods Rust dependency
 # chain; linking this thin library into the extension gives pip users the same
 # builder-aware server as the standalone `codingest-mcp` binary.
-codingest-mcp = { version = "0.2.9", path = "../codingest-mcp" }
+codingest-mcp = { version = "0.2.10", path = "../codingest-mcp" }
