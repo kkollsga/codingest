@@ -10,6 +10,37 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-08-30
+
+### Changed
+- **Engine floor moves to kglite 0.16.15 (over 0.16.14) — and this time two of
+  the fixes land on bytes codingest ships, not on surface it never touches.**
+  0.16.14 makes two saves of one graph write identical `.kgl` bytes again
+  (four persisted lists — the type-connectivity triples and the
+  property/composite/range index-key snapshots — were written in hash-map
+  iteration order, so a content-addressed cache or committed fixture saw a
+  codingest-written file change with nothing in the graph changing; no format
+  change, either spelling loads). It also stops a reloaded `.kgl` from
+  reporting every relationship type as having **zero edges**: the load derived
+  the authoritative type-connectivity cache from fabricated 0-count triples,
+  so `describe()` and the planner's selectivity estimates over a loaded
+  codingest graph saw zeros over a graph full of edges — and the fix distrusts
+  files already written with the zeros, so existing graphs are repaired on
+  read. 0.16.14's **breaking** `max_rows` → `max_work_units` rename does not
+  reach us (every codingest `ExecuteOptions` is built via
+  `ExecuteOptions::eager`; zero `max_rows` spellings). 0.16.15 — `LoadOptions`
+  (`storage` / `defer_index_rebuild`), `estimate_load_memory` + `max_load_mb`,
+  the `row_limit` result cap with a mandatory truncation signal,
+  `KGLITE_TMPDIR`, spill-directory race and orphan-sweep fixes, honest loader
+  error kinds, and 5–10% faster `.kgl` loads — is additive at every surface
+  codingest names (`load_file` is unchanged; it *is* the default
+  `LoadOptions`). Verified with **zero source changes to the builder**; every
+  frozen parity golden is byte-identical across the move (the goldens digest
+  the in-memory canonical rendering, never `.kgl` bytes, so the determinism
+  fix could not have moved them — and didn't get the chance).
+  **If you install the wheel, upgrade the Python engine too** — the requirement
+  moves to `kglite>=0.16.15,<0.17`.
+
 ## [0.2.10] - 2026-08-27
 
 ### Changed

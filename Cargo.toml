@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.10"
+version = "0.2.11"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,9 +17,49 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.13
-# floor is a LOCKSTEP REFRESH over four upstream releases. Two DIFFERENT
-# arguments carry that, and they are worth keeping apart because one of them
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.15
+# floor covers two upstream releases, and unlike the last four refreshes the
+# argument is not only "unreachable" — two 0.16.14 fixes land on `.kgl` bytes
+# codingest itself writes and reloads:
+#   * 0.16.14's load-bearing pair. (1) Two saves of one graph write identical
+#     `.kgl` bytes again: four persisted lists (the type-connectivity triples
+#     and the property/composite/range index-key snapshots) were written in
+#     hash-map iteration order, so OUR output files changed with nothing in
+#     the graph changing. codingest writes every `.kgl` through
+#     prepare_kgl_write/write_kgl, so this is our bytes — but NOT our
+#     goldens, which digest the in-memory canonical rendering, never file
+#     bytes, and no format changed (the same reader loads files written
+#     either way). (2) A reloaded `.kgl` no longer reports every relationship
+#     type as zero edges: the load derived the type-connectivity cache from
+#     fabricated 0-count triples, and that cache is authoritative on read —
+#     so `describe()` and planner selectivity over a LOADED codingest graph
+#     (the CLI `query` path, any consumer of a saved graph) saw zeros over a
+#     graph full of edges; the fix also distrusts already-written all-zero
+#     files. Its BREAKING rename — `ExecuteOptions::max_rows` →
+#     `max_work_units`, `with_max_rows` → `with_max_work_units`, no alias,
+#     error text changed — does not reach us: every codingest ExecuteOptions
+#     is built via `ExecuteOptions::eager(&params)`, and nothing here spells
+#     max_rows (grep: zero hits) or matches the old error text. The
+#     api-facade re-exports (DataFrame, PropMap, GraphEdgeRef, the
+#     introspection result types) are additive; our kglite::datatypes import
+#     paths stay valid.
+#   * 0.16.15 is the load-memory program, additive at every surface we name:
+#     LoadOptions (`storage` / `defer_index_rebuild` on the load itself),
+#     estimate_load_memory + the max_load_mb ceiling, the row_limit result
+#     cap with a mandatory truncation signal, KGLITE_TMPDIR, spill-dir race
+#     and orphan-sweep fixes, and honest loader error kinds (malformed-file
+#     refusals are InvalidData now; syscall errors name operation + path with
+#     ErrorKind unchanged). `load_file` is unchanged — it IS the default
+#     LoadOptions. ExecuteOptions and QueryDiagnostics each gain a public
+#     field, a struct-literal break we are not exposed to (constructor-only
+#     construction here), and defer_index_rebuild would be a no-op on our
+#     graphs anyway: codingest creates no index (see the 0.16.13 note
+#     below), so a load has nothing to defer. `.kgl` loads are 5-10% faster.
+# Evidence is the gate: build/clippy/`cargo test` incl. `golden_parity` green
+# across the bump with zero source changes.
+# It sits on the 0.16.13
+# floor, a LOCKSTEP REFRESH over four upstream releases. Two DIFFERENT
+# arguments carried that, and they are worth keeping apart because one of them
 # expires:
 #   * 0.16.13 is ontology follow-ups plus a cluster of engine fixes that all
 #     describe an INDEX answering wrongly — an index on `name` shadowing the
@@ -173,7 +213,7 @@ sha2 = "0.11"
 # which kglite 0.15.14 and earlier refuse by version number. Because
 # `codingest.build()` writes the bytes with the Rust engine compiled in here and
 # reads them back through the separately-installed Python `kglite` wheel, the
-# two sides must be on the same side of that break — hence `>=0.16.13,<0.17` in
+# two sides must be on the same side of that break — hence `>=0.16.15,<0.17` in
 # pyproject.toml, and hence a reader on 0.15.x is not "old but workable", it is
 # a hard failure with `FileFormatError`.
 # 0.16.0 also removed `DirGraph::enable_columnar` from the public API (every
@@ -238,8 +278,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.13", default-features = false }
-kglite-mcp-server = { version = "0.16.13", default-features = false }
+kglite = { version = "0.16.15", default-features = false }
+kglite-mcp-server = { version = "0.16.15", default-features = false }
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

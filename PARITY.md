@@ -7,6 +7,45 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.11 — 2026-08-30: 30 corpora, all green across the kglite 0.16.15 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, `kgl_bytes_are_stable_across_builds` and
+`reloaded_graph_renders_identically` alongside). The engine floor moved kglite
+0.16.13 → 0.16.15 (over 0.16.14) and **no builder source changed this
+release**: `git diff v0.2.10..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move**, corroborated
+independently by the perf anchor: `nodes` and `edges` compare at +0.00 %
+against the 0.2.8 baseline in both docs modes.
+
+**This move is not a pure lockstep refresh — two 0.16.14 fixes land on bytes
+codingest ships.** Two saves of one graph write identical `.kgl` bytes again
+(four persisted lists — the type-connectivity triples and the
+property/composite/range index-key snapshots — were written in hash-map
+iteration order). That is *our* output files gaining byte-determinism, and it
+could not have moved the goldens even in principle: the goldens digest the
+**in-memory canonical rendering** (`canonical_graph_string`), never `.kgl`
+bytes, and no format changed — the same reader loads files written either way.
+And a reloaded `.kgl` no longer reports every relationship type as having
+**zero edges**: the load derived the authoritative type-connectivity cache
+from fabricated 0-count triples, so `describe()` and planner selectivity over
+a *loaded* codingest graph saw zeros over a graph full of edges; the fix also
+distrusts files already written with the zeros, repairing existing graphs on
+read. This is a load-path fix — the build path never had the defect, which is
+why every digest holds.
+
+0.16.14's **breaking** `max_rows` → `max_work_units` rename (no alias) does
+not reach us: every codingest `ExecuteOptions` is built via
+`ExecuteOptions::eager(&params)`, and the tree spells `max_rows` nowhere.
+0.16.15 (LoadOptions, `estimate_load_memory` / `max_load_mb`, the `row_limit`
+cap, spill-dir and loader-error fixes) is additive at every surface codingest
+names — `load_file` is unchanged and *is* the default `LoadOptions`, and
+`defer_index_rebuild` would defer nothing on our graphs, since codingest
+creates no index. The Python acceptance suite (31 tests) ran
+against the kglite 0.16.15 wheel reading Rust-0.16.15-written bytes.
+
 ## Release 0.2.10 — 2026-08-27: 30 corpora, all green across the kglite 0.16.13 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the
