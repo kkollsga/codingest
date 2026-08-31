@@ -7,6 +7,29 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.13 — 2026-08-31: 30 corpora, all green across the kglite 0.16.18 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency` both ok). The engine floor moved kglite
+0.16.17 → 0.16.18 and **no builder source changed this release**:
+`git diff v0.2.12..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move**, corroborated
+independently by the perf anchor: `nodes` and `edges` compare at +0.00 %
+against the 0.2.10 baseline in both docs modes, control steady.
+
+**0.16.18 contains zero engine changes.** Every fix lives in
+`kglite-mcp-server` boot/extension handling (OS-assigned CSV port restored,
+failed peripherals degrade instead of killing boot, mode-dependent
+`bundled: repo_management` overrides tolerated; mcp-methods 0.4.6 → 0.4.7).
+codingest embeds that server via `codingest-mcp`, so the fixes ship here, but
+no `kglite::api`, Cypher, or `.kgl` storage surface moved — which is why every
+digest holds. The Python acceptance suite (31 tests) ran against the kglite
+0.16.18 wheel reading Rust-0.16.18-written bytes. `BENCHMARKS.md` was not
+refreshed: no perf-sensitive path changed (the builder diff is empty), and
+the release-gate anchor carries the perf evidence.
+
 ## Release 0.2.12 — 2026-08-31: 30 corpora, all green across the kglite 0.16.17 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the

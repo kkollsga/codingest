@@ -10,6 +10,27 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-08-31
+
+### Changed
+- **Engine floor moves to kglite 0.16.18 — an MCP-server robustness release
+  with zero engine changes.** Every 0.16.18 fix lives in `kglite-mcp-server`
+  boot/extension handling, all of which codingest embeds via `codingest-mcp`:
+  `extensions.csv_http_server` with no `port:` (or `port: 0`) binds an
+  OS-assigned port again instead of hard-coding 8765 (restores the documented
+  pre-Rust-rewrite behaviour, so several MCP clients can boot off one
+  manifest; explicit non-zero ports unchanged); a CSV listener that cannot
+  bind or an unresolvable `source_root:` now degrades that peripheral with a
+  warning instead of killing the whole server; and a `bundled:
+  repo_management` override is ignored with a warning in modes where the
+  framework never registers the tool (mcp-methods 0.4.6 → 0.4.7). No
+  `kglite::api`, Cypher, or `.kgl` storage change — every golden digest is
+  byte-identical across the move.
+- Floor declarations updated everywhere the requirement is stated:
+  `pyproject.toml` (`kglite>=0.16.18,<0.17`), ci.yml's pinned wheel install,
+  the `codingest-py` import-failure hint, and the README/docs install
+  snippets.
+
 ## [0.2.12] - 2026-08-31
 
 ### Changed

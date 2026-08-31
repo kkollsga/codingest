@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.12"
+version = "0.2.13"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,8 +17,19 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.17
-# floor is the downstream compile-footprint release, shipped the same day as
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.18
+# floor is an MCP-server robustness release — every change lives in
+# kglite-mcp-server boot/extension handling, none in the engine:
+#   * `extensions.csv_http_server` with no `port:` (or `port: 0`) binds an
+#     OS-assigned port again (restores pre-rewrite behaviour; explicit
+#     non-zero ports unchanged); a failed CSV bind or unresolvable
+#     `source_root:` now degrades that peripheral with a warning instead of
+#     killing the boot; a `bundled: repo_management` override is ignored with
+#     a warning in modes where the framework never registers the tool
+#     (mcp-methods pin 0.4.6 → 0.4.7). No `kglite::api`, Cypher, or storage
+#     change — graph output cannot move, and the goldens prove it.
+# It sits on the 0.16.17
+# floor, the downstream compile-footprint release, shipped the same day as
 # codingest's 2026-08-31 footprint request (a 265 MB debug rlib per kglite
 # generation; ~100 GB of accumulated target dirs filled the build-cache disk
 # to zero that morning):
@@ -325,8 +336,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.17", default-features = false }
-kglite-mcp-server = { version = "0.16.17", default-features = false }
+kglite = { version = "0.16.18", default-features = false }
+kglite-mcp-server = { version = "0.16.18", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

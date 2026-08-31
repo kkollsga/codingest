@@ -11,12 +11,16 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.17
+## Requires kglite ≥ 0.16.18
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.17 to keep the Rust writer and the
-Python reader on one engine release. 0.16.17 shrinks the dependency tree for
+in-tree builder. The floor sits at 0.16.18 to keep the Rust writer and the
+Python reader on one engine release. 0.16.18 hardens the embedded MCP server's
+boot — a CSV listener or source root that cannot start degrades that
+peripheral with a warning instead of killing the server, and an omitted
+`csv_http_server` port binds OS-assigned again — with no engine, API, or
+Cypher change. Beneath it, 0.16.17 shrinks the dependency tree for
 Rust consumers (kglite now pulls `geo` without its default features — five
 transitive packages gone; no API or Cypher behavior change, and codingest has
 no direct `geo` dependency to re-declare). Beneath it, 0.16.16 makes the deadline the CLI's
