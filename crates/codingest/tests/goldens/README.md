@@ -448,7 +448,7 @@ intended (a parser fix, a new edge kind, a property-shape change). The capture
 path is:
 
 ```bash
-cargo test -p codingest --test parity -- --ignored capture_goldens
+cargo test --workspace --test parity -- --ignored capture_goldens
 ```
 
 This rewrites every `<corpus>.sha256`. Review the diff, and land the digest

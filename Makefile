@@ -119,8 +119,8 @@ clippy:
 
 ## 3. Build every crate + binary in the workspace.
 build:
-	@echo "== [4/9] cargo build --workspace =="
-	cargo build --workspace
+	@echo "== [4/9] cargo build --workspace --all-targets =="
+	cargo build --workspace --all-targets
 
 ## 4. Test the workspace — includes tests/parity.rs: the golden oracle
 ##    (golden_parity + rev_self_consistency), which verifies each corpus's
@@ -184,7 +184,7 @@ release-gates:
 ##    hazard, so it fails the gate instead.
 bench-smoke:
 	@echo "== [7/9] codingest_bench parity smoke (crates/codingest/src) =="
-	cargo build --release -p codingest --bin codingest_bench
+	cargo build --release --workspace --bin codingest_bench
 	@set -e; \
 	out=$$(./target/release/codingest_bench crates/codingest/src); \
 	echo "$$out" | grep '^corpus :' -A1; \
@@ -263,7 +263,7 @@ determinism-soak:
 	fi
 	@if [ ! -d "$(REPO)" ]; then echo "no such directory: $(REPO)"; exit 2; fi
 	@echo "== determinism soak: edges stable over $(SOAK_RUNS) runs on $(REPO) =="
-	cargo build --release -p codingest --bin codingest_stats
+	cargo build --release --workspace --bin codingest_stats
 	@set -e; prev=""; \
 	for i in $$(seq 1 $(SOAK_RUNS)); do \
 		e=$$(./target/release/codingest_stats "$(REPO)" 2>/dev/null \

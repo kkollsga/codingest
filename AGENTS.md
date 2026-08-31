@@ -96,7 +96,7 @@ codingest is now the sole builder and there is no live upstream to cross-check
 against. Fidelity to its last-known-good output is still a hard goal, now
 enforced against a **frozen record** rather than a second builder. The
 rationale + history live in `dev-docs/designs/parity-and-upstream-sync.md`.
-- The gate is `cargo test -p codingest --test parity` — it must stay green.
+- The gate is `cargo test --workspace --test parity` — it must stay green.
   `golden_parity` rebuilds each corpus **three times** with the codingest
   builder and asserts every build's canonical digest matches every other build
   (determinism) and the frozen golden captured (2026-07-16) from the last
@@ -162,9 +162,9 @@ every error produced a plausible, low-concern reading:
   several *independent* failures before its first red run (KGLite found **four**
   that way on a branch whose fast gate was green throughout). Once per branch,
   again at completion; never per phase.
-- Build: `cargo build --workspace` (`--release` for perf).
+- Build: `cargo build --workspace --all-targets` (`--release` for perf).
 - Lint: `cargo clippy --workspace --all-targets -- -D warnings`.
-- Test: `cargo test --workspace`; parity: `cargo test -p codingest --test parity`.
+- Test: `cargo test --workspace`; parity: `cargo test --workspace --test parity`.
 - Version: **SIX places, not one.** `[workspace.package] version` in the root
   `Cargo.toml` covers each crate's *own* `package.version` via
   `version.workspace = true`, but **not** the internal dependency requirements:

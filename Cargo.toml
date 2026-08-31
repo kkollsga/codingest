@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.11"
+version = "0.2.12"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,10 +17,57 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.15
-# floor covers two upstream releases, and unlike the last four refreshes the
-# argument is not only "unreachable" — two 0.16.14 fixes land on `.kgl` bytes
-# codingest itself writes and reloads:
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.17
+# floor is the downstream compile-footprint release, shipped the same day as
+# codingest's 2026-08-31 footprint request (a 265 MB debug rlib per kglite
+# generation; ~100 GB of accumulated target dirs filled the build-cache disk
+# to zero that morning):
+#   * kglite now pulls `geo` with default-features = false — earcut/spade
+#     (triangulation/Voronoi) gated APIs no kglite code path calls; five
+#     transitive packages gone for every consumer. No kglite API or Cypher
+#     behavior change (spatial functions unaffected), and codingest declares
+#     no direct `geo` dependency, so there is nothing to re-declare here.
+#     Graph output cannot move — the release contains zero engine changes —
+#     and the goldens prove it.
+#   * The same coordination delivered four unit-graph-verified invocation
+#     fixes on OUR side (dedup of kglite rlib variants ~1.1 GB → ~190 MB per
+#     generation): the parity gate and the bench/soak bins now run with
+#     --workspace package selection instead of -p narrowing (narrowing
+#     re-runs feature unification over fewer crates and forks the
+#     -Cmetadata hash into a duplicate 265 MB kglite rlib — no feature
+#     difference), `make gate`'s build step sees the full unit graph via
+#     --all-targets, and the workspace root sets
+#     [profile.dev.package."*"] debug = "line-tables-only" (measured
+#     upstream: rlib −43%, debug tree −22%; backtraces keep file/line).
+# It sits on the 0.16.16
+# floor, the deadline-observance release, which lands on a surface we ship:
+#   * codingest-cli documents a `--timeout` flag on `query`, and before
+#     0.16.16 the deadline it sets was observed only inside the pattern
+#     matcher — the MATCH row loops downstream of it (match-to-row conversion
+#     with fused WHERE, comma-pattern join, subsequent-MATCH driving join,
+#     path-binding propagation) ran to completion however long past the
+#     deadline (upstream repro: a deadline set a quarter of the way in was
+#     detected after 94% of the query had run; a downstream OOM-kill at
+#     7.29 GB motivated the fix). Variable-length expansion also now observes
+#     cooperative cancellation (Ctrl-C: observed at 112 ms instead of 3.93 s).
+#     The timeout CONTRACT is unchanged — Err("Query timed out…"), no partial
+#     rows — so our error mapping holds; the added poll measured flat on the
+#     directly affected cells upstream, and our perf anchor verifies that
+#     independently. Its one REMOVAL, `QueryDiagnostics::timed_out`, had no
+#     writer anywhere in the engine (read `false` on every result ever
+#     returned) and does not reach us: codingest names QueryDiagnostics
+#     nowhere (grep: zero hits for QueryDiagnostics / timed_out). The rest is
+#     additive or documentation: the api-facade now exports
+#     `fluent::FilterCondition` (we use no fluent filters), GraphML gains a
+#     `label` attr key (we export no GraphML), `describe()` badges loc and
+#     geo independently, and `id(n)` is documented as reading the source
+#     data's own `id` field.
+# Evidence is the gate: build/clippy/`cargo test` incl. `golden_parity` green
+# across the bump with zero source changes.
+# It sits on the 0.16.15
+# floor, which covered two upstream releases — there too the argument was not
+# only "unreachable": two 0.16.14 fixes land on `.kgl` bytes codingest itself
+# writes and reloads:
 #   * 0.16.14's load-bearing pair. (1) Two saves of one graph write identical
 #     `.kgl` bytes again: four persisted lists (the type-connectivity triples
 #     and the property/composite/range index-key snapshots) were written in
@@ -213,7 +260,7 @@ sha2 = "0.11"
 # which kglite 0.15.14 and earlier refuse by version number. Because
 # `codingest.build()` writes the bytes with the Rust engine compiled in here and
 # reads them back through the separately-installed Python `kglite` wheel, the
-# two sides must be on the same side of that break — hence `>=0.16.15,<0.17` in
+# two sides must be on the same side of that break — hence `>=0.16.17,<0.17` in
 # pyproject.toml, and hence a reader on 0.15.x is not "old but workable", it is
 # a hard failure with `FileFormatError`.
 # 0.16.0 also removed `DirGraph::enable_columnar` from the public API (every
@@ -278,8 +325,19 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.15", default-features = false }
-kglite-mcp-server = { version = "0.16.15", default-features = false }
+kglite = { version = "0.16.17", default-features = false }
+kglite-mcp-server = { version = "0.16.17", default-features = false }
+
+# Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
+# after unbounded debug trees filled the build-cache disk to zero): a
+# full-DWARF kglite rlib is ~336 MB, two-thirds DWARF type-name strings and
+# ~5% code. Measured upstream on this exact dep tree: rlib −43%, whole debug
+# tree −22%. Backtraces keep file/line; the only loss is variable inspection
+# INSIDE dependency code. The "*" glob deliberately skips workspace members —
+# our own crates keep full debuginfo. Do not reach for `strip` or
+# `split-debuginfo` instead: both measured ZERO effect on rlib size upstream.
+[profile.dev.package."*"]
+debug = "line-tables-only"
 
 # Mirror KGLite's release codegen so the standalone builder has
 # performance parity with the in-tree component (see KGLite

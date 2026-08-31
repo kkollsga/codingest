@@ -11,13 +11,21 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.15
+## Requires kglite ≥ 0.16.17
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.15 to keep the Rust writer and the
-Python reader on one engine release. Unlike the run of pure lockstep refreshes
-before it, 0.16.14 fixes two things codingest actually ships: two saves of one
+in-tree builder. The floor sits at 0.16.17 to keep the Rust writer and the
+Python reader on one engine release. 0.16.17 shrinks the dependency tree for
+Rust consumers (kglite now pulls `geo` without its default features — five
+transitive packages gone; no API or Cypher behavior change, and codingest has
+no direct `geo` dependency to re-declare). Beneath it, 0.16.16 makes the deadline the CLI's
+documented `--timeout` flag sets actually observed inside the MATCH row loops
+and variable-length path expansion — before it, a query could run arbitrarily
+far past its deadline once the pattern matcher had finished — with the timeout
+contract itself unchanged; its one removal, the never-written
+`QueryDiagnostics::timed_out` field, is a symbol codingest names nowhere.
+Beneath it, 0.16.14 fixes two things codingest actually ships: two saves of one
 graph write identical `.kgl` bytes again (four persisted lists were written in
 hash-map iteration order), and a reloaded `.kgl` no longer reports every
 relationship type as having zero edges to `describe()` and the planner's

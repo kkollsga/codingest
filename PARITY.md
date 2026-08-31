@@ -7,6 +7,41 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.12 — 2026-08-31: 30 corpora, all green across the kglite 0.16.17 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency`, `kgl_bytes_are_stable_across_builds` and
+`reloaded_graph_renders_identically` alongside). The engine floor moved kglite
+0.16.15 → 0.16.17 (over 0.16.16) and **no builder source changed this
+release**: `git diff v0.2.11..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move**, corroborated
+independently by the perf anchor: `nodes` and `edges` compare at +0.00 %
+against the 0.2.9 baseline in both docs modes.
+
+**0.16.16 lands on a flag codingest documents.** The deadline set by
+`codingest query --timeout` was previously observed only inside the pattern
+matcher; the MATCH row loops downstream of it ran to completion however long
+past the deadline, and variable-length expansion ignored cooperative
+cancellation. Both now poll. The timeout *contract* is unchanged (a fired
+deadline errors, no partial rows), so error handling holds — and nothing in
+the release touches the build path, which is why every digest holds. Its one
+removal, `QueryDiagnostics::timed_out`, had no writer anywhere in the engine
+and is a symbol codingest names nowhere.
+
+**0.16.17 is the compile-footprint release** — kglite pulls `geo` without its
+default features (no API or Cypher change; codingest has no direct `geo`
+dependency), cut the same day as codingest's footprint request after
+unbounded target dirs filled the shared build-cache disk to zero. The same
+coordination changed this repo's gate *invocations* (parity and the
+bench/soak bins run with `--workspace` package selection; `make gate` builds
+`--all-targets`; dependency debuginfo capped at `line-tables-only`) — build
+plumbing only, verified by this release's full gate: the graph, the parity
+digests and the query results are computed identically. The Python acceptance
+suite (31 tests) ran against the kglite 0.16.17 wheel reading
+Rust-0.16.17-written bytes.
+
 ## Release 0.2.11 — 2026-08-30: 30 corpora, all green across the kglite 0.16.15 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the
@@ -574,7 +609,7 @@ builders still existed — retained as the evidence behind the frozen goldens.
 
 ## 1. Corpus parity test (permanent regression test)
 
-`crates/codingest/tests/parity.rs` — run with `cargo test -p codingest --test parity`.
+`crates/codingest/tests/parity.rs` — run with `cargo test --workspace --test parity`.
 Result: **2 passed, 0 failed**.
 
 - `corpus_parity`: for each of `tests/corpus/{py_basic, py_inheritance, rust_xfile,

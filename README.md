@@ -165,7 +165,7 @@ codingest skill install        # code-review Agent Skill
 ```
 
 The wheel bundles every grammar plus the `codingest` and `codingest-mcp`
-commands. KGLite ≥0.16.15 is installed automatically as the query/storage
+commands. KGLite ≥0.16.17 is installed automatically as the query/storage
 engine; its MCP server and the transitive `mcp-methods` framework power the
 builder-aware Codingest server. Nothing else needs to be installed.
 
@@ -178,7 +178,7 @@ Python prerequisites.
 ```toml
 [dependencies]
 codingest = "0.2"
-kglite = "0.16.15"
+kglite = "0.16.17"
 ```
 
 ```rust
@@ -219,7 +219,7 @@ Documentation: **[codingest.readthedocs.io](https://codingest.readthedocs.io)**
 cargo build --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo test -p codingest --test parity
+cargo test --workspace --test parity
 ```
 
 ### The golden-digest oracle (also the determinism gate)
@@ -238,7 +238,7 @@ nondeterminism bug). Disagreement between builds is reported as NONDETERMINISM;
 agreement between builds but not with the golden is reported as a behaviour
 change. The multi-rev fixture is guarded instead by `rev_self_consistency`.
 Regenerate goldens only for deliberate builder-behavior changes:
-`cargo test -p codingest --test parity -- --ignored capture_goldens` (details in
+`cargo test --workspace --test parity -- --ignored capture_goldens` (details in
 `crates/codingest/tests/goldens/README.md`).
 
 Everything the gate needs is committed to this repository, so it is hermetic and
@@ -250,7 +250,7 @@ diagnostic.
 ## Dependency policy
 
 `kglite` and `kglite-mcp-server` use matching crates.io requirements with a
-0.16.15 minimum and a shared lockfile. This keeps the builder, persistence
+0.16.17 minimum and a shared lockfile. This keeps the builder, persistence
 handoff, and embedded MCP server on one compatible engine patch line.
 
 ## Parity with the (now-removed) in-tree component

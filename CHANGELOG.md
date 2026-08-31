@@ -10,6 +10,46 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-08-31
+
+### Changed
+- **Engine floor moves to kglite 0.16.17 — the downstream compile-footprint
+  release, cut the same day as codingest's footprint request.** kglite now
+  pulls `geo` without its default features (earcut/spade triangulation APIs no
+  kglite code path calls — five transitive packages gone for every consumer;
+  no kglite API or Cypher behavior change, and codingest declares no direct
+  `geo` dependency). The same coordination delivered four
+  unit-graph-verified invocation fixes applied here: the parity gate and the
+  bench/soak binaries build with `--workspace` package selection instead of
+  `-p` narrowing (narrowing re-runs feature unification over fewer crates and
+  forks the `-Cmetadata` hash into a duplicate 265 MB kglite rlib with zero
+  feature difference), `make gate`'s build step uses `--all-targets` so it
+  sees the same unit graph as the test step, and the workspace root caps
+  dependency debuginfo at `line-tables-only` (measured on this dep tree:
+  kglite rlib 265 MB → 180 MB; backtraces keep file/line). Net effect
+  verified locally: one kglite rlib variant per generation instead of three.
+- **Engine floor also crosses kglite 0.16.16 — the deadline-observance release,
+  and it lands on a flag we document.** `codingest query --timeout` sets a
+  deadline the engine previously honoured only inside the pattern matcher:
+  the MATCH row loops downstream of it (match-to-row conversion with fused
+  `WHERE`, comma-pattern joins, subsequent-`MATCH` driving joins, path-binding
+  propagation) ran to completion however long past the deadline — upstream
+  reproduced a deadline set a quarter of the way into a query being detected
+  after 94% of it had run, and the motivating downstream report was an
+  OOM-kill at 7.29 GB. Variable-length path expansion now also observes
+  cooperative cancellation (Ctrl-C observed at 112 ms instead of 3.93 s on
+  the upstream fixture). The timeout **contract** is unchanged — a fired
+  deadline still errors with no partial rows — so error handling built on it
+  holds. 0.16.16's one removal, `QueryDiagnostics::timed_out`, had no writer
+  anywhere in the engine (it read `false` on every result ever returned) and
+  is a symbol codingest names nowhere; the rest is additive or documentation
+  (api-facade `FilterCondition` export, GraphML `label` attr, independent
+  `loc`/`geo` badges in `describe()`, `id(n)` semantics documented). Verified
+  with **zero source changes to the builder**; every frozen parity golden is
+  byte-identical across the move.
+  **If you install the wheel, upgrade the Python engine too** — the
+  requirement moves to `kglite>=0.16.17,<0.17`.
+
 ## [0.2.11] - 2026-08-30
 
 ### Changed

@@ -57,7 +57,7 @@ change is intended (a parser fix, a new edge kind, a property-shape change), and
 land the digest change in the same commit as the builder change:
 
 ```bash
-cargo test -p codingest --test parity -- --ignored capture_goldens
+cargo test --workspace --test parity -- --ignored capture_goldens
 ```
 
 Review the diff before committing. Details in

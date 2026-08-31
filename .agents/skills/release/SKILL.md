@@ -121,8 +121,8 @@ named blocker.
      `codingest` from the `codingest-cli` crate, plus `codingest-mcp` — no
      separate rebuild step)
    - `cargo clippy --workspace --all-targets -- -D warnings`
-   - `cargo test --workspace --release` — **and confirm `cargo test -p
-     codingest --test parity` is in the run and green.** The golden-digest
+   - `cargo test --workspace --release` — **and confirm `cargo test
+     --workspace --test parity` is in the run and green.** The golden-digest
      parity (`golden_parity` + `rev_self_consistency`, against digests frozen
      from the now-deleted in-tree `kglite::code_tree`) is the hard release
      gate; a subset that skips it can ship a graph-equivalence regression.
@@ -203,7 +203,7 @@ named blocker.
         Redirect the streams separately — `codingest_bench` writes warnings to
         stderr before the JSON, so `2>&1` yields a file that is not JSON:
         ```sh
-        cargo build --release -p codingest --bin codingest_bench
+        cargo build --release --workspace --bin codingest_bench
         ./target/release/codingest_bench tests/corpus --json           > /tmp/on.json  2>/dev/null
         ./target/release/codingest_bench tests/corpus --no-docs --json > /tmp/off.json 2>/dev/null
         ```

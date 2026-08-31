@@ -170,7 +170,7 @@ For every phase, in order:
    - `cargo build --workspace`
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - the relevant test suite: `cargo test --workspace`, and **always**
-     `cargo test -p codingest --test parity` if the change touches the builder
+     `cargo test --workspace --test parity` if the change touches the builder
      or any transformed code_tree source. A targeted subset that skips the
      parity test will miss graph-equivalence regressions.
    **Choose the per-phase gate by what this change could BREAK, not by what it
@@ -301,7 +301,7 @@ Before declaring done:
   interaction between phases. Per AGENTS.md, a **SKIPPED** step is not a pass —
   either name `VENV=` explicitly so a skip becomes a failure, or state in the
   report-out which steps did not run.
-- **Parity — always, unconditionally:** `cargo test -p codingest --test parity`
+- **Parity — always, unconditionally:** `cargo test --workspace --test parity`
   green (`golden_parity` + `rev_self_consistency`). An intended digest change
   gets its goldens regenerated in the same commit with a recorded reason.
 - **Perf — only if the plan touched perf-sensitive paths** (parser hot loops,
