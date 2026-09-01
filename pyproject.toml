@@ -42,9 +42,9 @@ dynamic = ["version"]
 # minor releases (e.g. the v3->v4 break, which refuses old files outright), so
 # pip must never be free to pair our writer with a reader from a different
 # minor. This range therefore mirrors the Cargo semver range for the pin above
-# (`version = "0.16.18"` == `>=0.16.18,<0.17.0`) exactly — bump both together.
+# (`version = "0.16.19"` == `>=0.16.19,<0.17.0`) exactly — bump both together.
 dependencies = [
-    "kglite>=0.16.18,<0.17",
+    "kglite>=0.16.19,<0.17",
 ]
 
 [project.urls]

@@ -210,7 +210,13 @@ fn construct_graph(args: &BuildArgs, plan: &BuildPlan) -> Result<Arc<DirGraph>> 
             "Code graph built from the current working tree at {}. Refresh the artifact after source changes and verify review findings against exact source lines.",
             plan.source.display()
         );
-        Arc::make_mut(&mut graph).set_instructions(&instructions, None);
+        // A configuration write, not a semantic mutation: kglite 0.16.19's
+        // lineage-preserving accessor is the published route for exactly this
+        // (it neither bumps the graph version nor forfeits disk writer
+        // authority on a shared snapshot). On the uniquely owned graph a fresh
+        // build hands us it is byte-for-byte the `Arc::make_mut` it replaces.
+        kglite::api::make_dir_graph_mut_preserving_lineage(&mut graph)
+            .set_instructions(&instructions, None);
     }
     Ok(graph)
 }

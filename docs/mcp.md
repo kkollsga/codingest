@@ -318,6 +318,14 @@ more cheaply:
 | build once in CI, no server | `codingest build` |
 | one-shot query in CI, no server | `codingest query` (see [cli.md](cli.md)) |
 
+A `--graph` server re-reads the served `.kgl` automatically (kglite ≥ 0.16.19):
+every tool call stats the file, and when its identity has changed on disk — a
+`codingest build` that replaced the artifact, say — the server re-reads it
+before answering, with no `reload_graph` round-trip. Write-enabled servers take
+the file's writer lease only at their first unsaved change, so several clients
+can boot off one manifest; `--lease-label` (or `KGLITE_LEASE_LABEL`) names this
+server in the refusal a peer sees while it holds the lease.
+
 One precedence surprise: a manifest declaring `workspace: {kind: local}` wins
 over the mode flags — supply one and the server runs in local-workspace mode
 with that manifest's `root`, whatever `--watch` or `--graph` said.

@@ -10,6 +10,37 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-09-01
+
+### Changed
+- **Engine floor moves to kglite 0.16.19 — the lazy-writer-lease and
+  automatic-refresh release for the embedded MCP server.** A write-enabled
+  `codingest-mcp` (`--writable`, or `builtins.save_graph: true`) now takes the
+  served `.kgl`'s writer lease at its first unsaved change instead of at boot,
+  so several MCP clients can boot off one manifest and arbitrate per write
+  instead of per process; a `--graph` server stats the served file on every
+  tool call and re-reads it when its identity has changed on disk, so a
+  `codingest build` that replaces the artifact reaches the server on the next
+  call with no `reload_graph`; `save_graph` refuses to overwrite a file another
+  writer changed since this server loaded it (`save_graph_as` / `reload_graph
+  (discard_unsaved=true)` are the two exits); `--lease-label` /
+  `KGLITE_LEASE_LABEL` name the holder in a refused write; and
+  `extensions.graph_watch` is retired — the refresh it opted into is now
+  unconditional (codingest ships no manifest naming it). codingest's
+  workspace-graph hooks (`--watch` / `set_root_dir` builds) are untouched. No
+  `kglite::api` persistence entry we call moved — every golden digest is
+  byte-identical across the move.
+- `codingest build` installs its working-tree instructions through kglite
+  0.16.19's new `kglite::api::make_dir_graph_mut_preserving_lineage` — the
+  published route for a configuration write — instead of a raw `Arc::make_mut`
+  on the graph handle. On the uniquely owned graph a fresh build produces the
+  two are the same bytes; the CLI exit-code and parity suites prove it.
+- Floor declarations updated everywhere the requirement is stated:
+  `pyproject.toml` (`kglite>=0.16.19,<0.17`), ci.yml's pinned wheel install,
+  the `codingest-py` import-failure hint, and the README/docs install
+  snippets; `docs/mcp.md` documents the `--graph` auto-refresh and
+  `--lease-label`.
+
 ## [0.2.13] - 2026-08-31
 
 ### Changed

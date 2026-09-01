@@ -11,12 +11,20 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.18
+## Requires kglite ≥ 0.16.19
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.18 to keep the Rust writer and the
-Python reader on one engine release. 0.16.18 hardens the embedded MCP server's
+in-tree builder. The floor sits at 0.16.19 to keep the Rust writer and the
+Python reader on one engine release. 0.16.19 is the lazy-writer-lease and
+automatic-refresh release for the embedded MCP server: a write-enabled server
+takes the served `.kgl`'s writer lease at its first unsaved change rather
+than at boot (several clients can boot off one manifest), a `--graph` server
+re-reads the file automatically once its identity changes on disk — so a
+`codingest build` that replaces the artifact reaches the server on the next
+tool call — `save_graph` refuses to overwrite a file another writer changed,
+and `extensions.graph_watch` is retired because the refresh is now
+unconditional. No engine, `.kgl`, or Cypher change. Beneath it, 0.16.18 hardens the embedded MCP server's
 boot — a CSV listener or source root that cannot start degrades that
 peripheral with a warning instead of killing the server, and an omitted
 `csv_http_server` port binds OS-assigned again — with no engine, API, or

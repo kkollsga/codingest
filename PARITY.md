@@ -7,6 +7,38 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.14 — 2026-09-01: 30 corpora, all green across the kglite 0.16.19 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency` both ok). The engine floor moved kglite
+0.16.18 → 0.16.19 and **no builder source changed this release**:
+`git diff v0.2.13..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move**, corroborated
+independently by the perf anchor: `nodes` and `edges` compare at
++0.00 % / +0.00 % (docs-on) and +0.00 % / +0.00 %
+(docs-off) against the 0.2.11 baseline, control steady.
+
+**0.16.19 is the lazy-writer-lease + automatic-refresh release.** A
+write-enabled `kglite-mcp-server` takes the served `.kgl`'s writer lease at
+its first unsaved change rather than at boot, a `--graph` server re-reads
+the file when its on-disk identity changes, `save_graph` refuses a lost
+update, and `extensions.graph_watch` is retired. codingest embeds that server
+unchanged via `codingest-mcp`, so the behaviour ships here, but none of the
+persistence entries the builder calls (`prepare_kgl_write`, `write_kgl`,
+`save_graph`) moved — which is why every digest holds. The one codingest
+source change is in `codingest-cli`, not the builder: the working-tree
+`set_instructions` write now goes through 0.16.19's
+`kglite::api::make_dir_graph_mut_preserving_lineage` (a configuration write,
+the accessor's published purpose); on a uniquely owned freshly built graph it
+is the same bytes as the `Arc::make_mut` it replaced, and the CLI exit-code
+suite proves the artifact unchanged. The Python acceptance suite (31 tests)
+ran against the kglite 0.16.19 wheel reading Rust-0.16.19-written bytes.
+`BENCHMARKS.md` was not refreshed: no perf-sensitive path changed (the
+builder diff is empty), and the release-gate anchor carries the perf
+evidence.
+
 ## Release 0.2.13 — 2026-08-31: 30 corpora, all green across the kglite 0.16.18 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the

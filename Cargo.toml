@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.13"
+version = "0.2.14"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,8 +17,36 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.18
-# floor is an MCP-server robustness release — every change lives in
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.19
+# floor is the lazy-writer-lease + automatic-refresh release. Where it lands
+# for us:
+#   * kglite-mcp-server (embedded unchanged via codingest-mcp's
+#     run_with_extensions): a write-enabled server now takes the served
+#     `.kgl`'s writer lease at its first unsaved change instead of at boot,
+#     so several clients can boot off one manifest; a `--graph` server
+#     stats the file per call and re-reads it when its identity moved, so a
+#     `codingest build` that replaces the artifact reaches the server on
+#     the next tool call with no `reload_graph`; `extensions.graph_watch` is
+#     retired (a boolean only logs a warning — codingest ships no manifest
+#     naming it); `save_graph` refuses to overwrite a file changed on disk;
+#     `reload_graph` gains `discard_unsaved`; `--lease-label` /
+#     `KGLITE_LEASE_LABEL` name the holder. Our workspace-graph hooks
+#     (`build` / `is_relevant`) are untouched — the `--watch` path compiles
+#     and behaves as before.
+#   * kglite core: additive only. `kglite::api::io::WriteOwnership` (+
+#     `BeginWrite`, `Discarded`, `WriteRefusal`), `GraphWriterLease::
+#     acquire_labeled`, and `kglite::api::make_dir_graph_mut_preserving_
+#     lineage` are new; `LeaseHolder` gains a `label` field (a struct-literal
+#     break codingest cannot hit — it never constructs one, never names
+#     `GraphWriterLease`). `save_graph` / `write_kgl` / `prepare_kgl_write`
+#     — every persistence entry we call — are byte-identical, and the goldens
+#     prove it. The one code change on our side ADOPTS the new accessor:
+#     codingest-cli's working-tree `set_instructions` is a configuration
+#     write, exactly the case the accessor was published for, and on a
+#     uniquely owned freshly built graph it is the same bytes as the
+#     `Arc::make_mut` it replaces.
+# It sits on the 0.16.18
+# floor, an MCP-server robustness release — every change lives in
 # kglite-mcp-server boot/extension handling, none in the engine:
 #   * `extensions.csv_http_server` with no `port:` (or `port: 0`) binds an
 #     OS-assigned port again (restores pre-rewrite behaviour; explicit
@@ -336,8 +364,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.18", default-features = false }
-kglite-mcp-server = { version = "0.16.18", default-features = false }
+kglite = { version = "0.16.19", default-features = false }
+kglite-mcp-server = { version = "0.16.19", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
