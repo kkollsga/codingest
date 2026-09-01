@@ -1,14 +1,14 @@
 {
  "schema": 1,
- "version": "0.2.10",
- "captured_at_commit": "ae2b284ecc5b849fb0a856c621c8ccf9e4620ec3",
- "captured_at": "2026-08-27",
  "target": "tests/corpus",
  "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
  "control_query": "top20_by_branch_count (ORDER BY + LIMIT)",
  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
  "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
- "stability_across_3_runs": "worst per-query spread 0.0010 ms in BOTH modes across three runs per mode after a discarded warmup run per mode; node and edge counts identical across all three runs in both modes. FLOOR DELIBERATELY HELD AT 0.005, NOT TIGHTENED TO 2.5x THIS CAPTURE'S 0.0010 SPREAD. Three runs inside one warm window under-sample the jitter this corpus actually shows across sessions: the control alone was re-measured four times earlier in this same release at 0.017/0.018/0.017/0.019 ms, a 0.002 ms spread, and the 0.2.9 capture saw 0.0020 in both modes. 0.005 is 2.5x THAT evidence; a 0.0025 floor derived from one lucky window would make ordinary future captures noisy-red, which is the cry-wolf failure tests/benchmarks/README.md warns about. Fifth baseline of the 0.2.6 corpus epoch (c449542e, 30 corpora). Control top20_by_branch_count re-qualified across the kglite 0.16.12->0.16.13 engine move by the four-run re-measure above: it WANDERS rather than moving deterministically, so the VOID 're-measure on a settled machine' reading holds and its premise stands (doctrine R11 corollary). It sits at 0.017-0.018 ms against the 0.005 floor, ~3.4x, still clear of the 2x margin though narrower than at 0.2.9 (3.0x) \u2014 worth watching, not yet acting on.",
+ "version": "0.2.14",
+ "captured_at_commit": "9cb158ad064cb51ee501a8e9d8572f1c5a57d457",
+ "captured_at": "2026-09-01",
+ "stability_across_3_runs": "worst per-query spread 0.003 ms docs-on / 0.001 ms docs-off across three runs per mode after a discarded warmup run per mode; node and edge counts identical across all runs in both modes and the cross-build parity flag held on every cell. FLOOR HELD AT 0.005 on the standing rationale (0.2.10-0.2.13): 0.005 is 2.5x the cross-session evidence (0.002 spreads recurring since 0.2.9). Captured on an idle machine (no local compile in flight; CI remote). Ninth baseline of the 0.2.6 corpus epoch (c449542e, 30 corpora). Control top20_by_branch_count re-qualified across the kglite 0.16.18->0.16.19 engine move (no Cypher/engine change upstream \u2014 the release is MCP-server lease/refresh plus additive io API): release-gate anchor compare vs 0.2.11 read it +20.00% docs-on (only +0.003 ms raw, sub-floor) / +13.33% docs-off, instrument steady, and it clears 2x the 0.005 floor in both modes.",
  "corpora": [
   {
    "target": "tests/corpus",
@@ -21,7 +21,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 567,
    "edges": 880,
-   "build_secs": 0.012,
+   "build_secs": 0.0123,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -33,7 +33,7 @@
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
      "median_ms": 0.003,
-     "min_ms": 0.002
+     "min_ms": 0.003
     },
     {
      "name": "contains_new (CONTAINS string filter)",
@@ -45,14 +45,14 @@
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
      "median_ms": 0.016,
-     "min_ms": 0.015,
+     "min_ms": 0.016,
      "control": true
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.028,
-     "min_ms": 0.027
+     "median_ms": 0.027,
+     "min_ms": 0.026
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
@@ -103,7 +103,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 560,
    "edges": 859,
-   "build_secs": 0.010167,
+   "build_secs": 0.0102,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -115,7 +115,7 @@
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
      "median_ms": 0.003,
-     "min_ms": 0.002
+     "min_ms": 0.003
     },
     {
      "name": "contains_new (CONTAINS string filter)",
@@ -126,20 +126,20 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.016,
-     "min_ms": 0.016,
+     "median_ms": 0.015,
+     "min_ms": 0.015,
      "control": true
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.028,
+     "median_ms": 0.029,
      "min_ms": 0.026
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
      "rows": 1,
-     "median_ms": 0.012,
+     "median_ms": 0.013,
      "min_ms": 0.012
     },
     {
@@ -157,8 +157,8 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.025,
-     "min_ms": 0.025
+     "median_ms": 0.028,
+     "min_ms": 0.026
     },
     {
      "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
