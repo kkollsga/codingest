@@ -324,7 +324,29 @@ every tool call stats the file, and when its identity has changed on disk — a
 before answering, with no `reload_graph` round-trip. Write-enabled servers take
 the file's writer lease only at their first unsaved change, so several clients
 can boot off one manifest; `--lease-label` (or `KGLITE_LEASE_LABEL`) names this
-server in the refusal a peer sees while it holds the lease.
+server in the refusal a peer sees while it holds the lease. A write-enabled
+server's `save_graph` with nothing unsaved is a no-op from kglite 0.16.20 — it
+answers `Nothing to save: <path>` and leaves the artifact's bytes, mtime and
+inode alone, so peer servers bound to the same file do not pay a re-read for a
+save that changed nothing; pass `force: true` to rewrite it anyway.
+
+Every answer carries an identity footer — `— active graph: <root> · built …
+· file saved <T> · load N · <state>`, matched by the `<active_graph …
+file_saved="<T>" load="N" state="…">` header.
+From kglite 0.16.20 that counter is spelled `load`, not `generation`: it counts
+the graphs *this server process* has installed since boot, so two servers on one
+artifact legitimately report different numbers for the same bytes. The identity
+two servers *can* compare is `file saved`, the served path's publish time off
+the filesystem; a workspace graph (`--watch`, `set_root_dir`) has no publish
+moment and omits it. Anything parsing `· generation ` or `generation="` must
+switch — there is no compatibility spelling. codingest itself parses none of it.
+
+Two ways to enable writes: `--writable` on the command line, or
+`extensions.writable: true` in the manifest (kglite ≥ 0.16.20) — either alone
+opens `cypher_query` to mutations and registers the lifecycle tools.
+`builtins.save_graph: true` is **not** a third way: it registers `save_graph`
+only, so the server can persist what it loaded while `cypher_query` stays
+read-only.
 
 One precedence surprise: a manifest declaring `workspace: {kind: local}` wins
 over the mode flags — supply one and the server runs in local-workspace mode

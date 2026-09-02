@@ -11,12 +11,24 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.19
+## Requires kglite ≥ 0.16.20
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.19 to keep the Rust writer and the
-Python reader on one engine release. 0.16.19 is the lazy-writer-lease and
+in-tree builder. The floor sits at 0.16.20 to keep the Rust writer and the
+Python reader on one engine release. 0.16.20 changes what the embedded MCP
+server *says*, not what it computes: the `<active_graph>` header and the
+`— active graph:` footer now report `load="N"` / `· load N ·` where they said
+`generation`, and gain a `file_saved` field carrying the served artifact's
+publish time (omitted for a workspace graph, which is what `--watch` and
+`set_root_dir` serve). `reload_graph` answers "Load N on this server." A
+write-enabled server's `save_graph` with nothing unsaved is now a no-op
+(`Nothing to save: …`) instead of republishing identical bytes, `force: true`
+still rewrites on purpose, and `extensions.writable: true` in a manifest says
+what `--writable` says on the command line — whereas `builtins.save_graph:
+true` alone registers only `save_graph` and leaves `cypher_query` read-only
+(always the behaviour; the operator docs said otherwise). No engine, `.kgl`, or
+Cypher change. Beneath it, 0.16.19 is the lazy-writer-lease and
 automatic-refresh release for the embedded MCP server: a write-enabled server
 takes the served `.kgl`'s writer lease at its first unsaved change rather
 than at boot (several clients can boot off one manifest), a `--graph` server
@@ -24,7 +36,7 @@ re-reads the file automatically once its identity changes on disk — so a
 `codingest build` that replaces the artifact reaches the server on the next
 tool call — `save_graph` refuses to overwrite a file another writer changed,
 and `extensions.graph_watch` is retired because the refresh is now
-unconditional. No engine, `.kgl`, or Cypher change. Beneath it, 0.16.18 hardens the embedded MCP server's
+unconditional. Beneath it, 0.16.18 hardens the embedded MCP server's
 boot — a CSV listener or source root that cannot start degrades that
 peripheral with a warning instead of killing the server, and an omitted
 `csv_http_server` port binds OS-assigned again — with no engine, API, or

@@ -10,6 +10,53 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.16.20 — the MCP server renames its identity
+  counter and stops rewriting a clean file.** The `<active_graph>` header and
+  the `— active graph:` footer that every `codingest-mcp` answer carries now
+  report `load="N"` / `· load N ·` where they said `generation`, and gain a
+  `file_saved` field (header `file_saved="<T>"`, footer `· file saved <T>`)
+  holding the served artifact's publish time; `reload_graph` answers "Load N on
+  this server." The counter's meaning is unchanged — graphs installed by *this
+  server process* since boot — but it is now stated as server-local, and
+  `file saved` is the identity two servers watching one artifact can actually
+  compare. A workspace graph (`--watch`, `set_root_dir` — codingest's usual
+  modes) has no publish moment and omits `file saved`. **There is no
+  compatibility spelling: anything parsing `· generation ` or `generation="`
+  out of MCP output must switch.** codingest parses none of it
+  (`git grep -n 'generation="\|· generation'` returns nothing in this repo), so
+  nothing here changed — the break lands on downstream tooling that scrapes the
+  server's text.
+- A write-enabled server's `save_graph` with nothing unsaved is now a no-op
+  (`Nothing to save: <path> …`) instead of republishing byte-identical content
+  and forcing every peer server bound to that file into a full re-read; the new
+  `force: true` argument rewrites on purpose, and a boot-time manifest ontology
+  that has never been persisted still gets its first save through. Reads on a
+  `--writable` server now carry the identity footer they were missing.
+- `extensions.writable: true` in a manifest is now equivalent to `--writable`;
+  `builtins.save_graph: true` alone registers **only** `save_graph` and leaves
+  `cypher_query` read-only. That was always the behaviour — the 0.2.14 entry
+  below repeated the upstream operator docs' error and called
+  `builtins.save_graph: true` write-enabling. It is not, and this entry is the
+  correction. Unknown `extensions.*` manifest keys are now reported at boot
+  instead of silently leaving the server read-only.
+- Core changes are additive and unused here:
+  `kglite::api::io::GraphFileIdentity::modified()` is new, and a released
+  `GraphWriterLease` appends `released=<rfc3339>` to `<path>.lock-owner` (a
+  record with no such line is a live holder or a crash). codingest names
+  neither type and reads no `.lock-owner`. The optional `fastembed` backend
+  moved 5 → 6; codingest takes kglite with `default-features = false` and never
+  enables it, so it is absent from `Cargo.lock`. Every `.kgl` persistence entry
+  codingest calls is byte-identical — the golden digests prove it.
+- Floor declarations updated everywhere the requirement is stated:
+  `pyproject.toml` (`kglite>=0.16.20,<0.17`) and its lockstep comment, the
+  workspace `kglite` / `kglite-mcp-server` pins, ci.yml's pinned wheel install,
+  the `codingest-py` import-failure hint, and the README/docs install snippets;
+  `docs/mcp.md` documents the new identity fields, the clean-save no-op, and
+  the two real ways to enable writes. Historical version citations (`PARITY.md`
+  release records, the baseline captures, the `kglite 0.16.19` attributions on
+  APIs that appeared then) are deliberately unchanged.
+
 ## [0.2.14] - 2026-09-01
 
 ### Changed

@@ -17,8 +17,37 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.19
-# floor is the lazy-writer-lease + automatic-refresh release. Where it lands
+# kglite engine + MCP server — imported as crates.io libraries. The 0.16.20
+# floor renames the MCP identity counter and makes a clean save a no-op.
+# Where it lands for us:
+#   * kglite-mcp-server (embedded unchanged via codingest-mcp's
+#     run_with_extensions): the `<active_graph>` header and the
+#     `— active graph:` footer now say `load="N"` / `· load N ·` instead of
+#     `generation`, and gain a preceding `file_saved="<T>"` / `· file saved
+#     <T>` field — the served path's publish time, omitted for a workspace
+#     graph, which is every `--watch` / `set_root_dir` server. `reload_graph`
+#     says "Load N on this server." codingest parses none of that text
+#     (`git grep -n 'generation=\"\|· generation'` is empty here), so the
+#     rename reaches our users only as changed server output. A write-enabled
+#     server's `save_graph` is now a no-op ("Nothing to save: …") unless a
+#     boot-time manifest ontology is unpersisted or `force: true` is passed —
+#     codingest ships no manifest and declares no ontology, so the affected
+#     path is one an operator reaches by hand. `extensions.writable: true` is
+#     now equivalent to `--writable`; `builtins.save_graph: true` alone
+#     registers only `save_graph` and leaves `cypher_query` read-only (that
+#     was always true — 0.2.14's CHANGELOG entry here repeated the upstream
+#     docs' error and said it enabled writes). Unknown `extensions.*` keys
+#     warn at boot; every read on a `--writable` server now carries the
+#     identity footer it was missing.
+#   * kglite core: additive only. `kglite::api::io::GraphFileIdentity` gains
+#     `modified()`; a released `GraphWriterLease` appends `released=<time>`
+#     to `<path>.lock-owner`. codingest names neither type and reads no
+#     `.lock-owner`. `save_graph` / `write_kgl` / `prepare_kgl_write` — every
+#     persistence entry we call — are byte-identical, and the goldens prove
+#     it. The optional `fastembed` backend moved 5 -> 6; codingest enables no
+#     kglite features (`default-features = false`), so it is not in our tree.
+# It sits on the 0.16.19
+# floor, the lazy-writer-lease + automatic-refresh release. Where that landed
 # for us:
 #   * kglite-mcp-server (embedded unchanged via codingest-mcp's
 #     run_with_extensions): a write-enabled server now takes the served
@@ -364,8 +393,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.19", default-features = false }
-kglite-mcp-server = { version = "0.16.19", default-features = false }
+kglite = { version = "0.16.20", default-features = false }
+kglite-mcp-server = { version = "0.16.20", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
