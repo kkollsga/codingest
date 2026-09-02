@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-09-02
+
 ### Changed
 - **Engine floor moves to kglite 0.16.20 — the MCP server renames its identity
   counter and stops rewriting a clean file.** The `<active_graph>` header and

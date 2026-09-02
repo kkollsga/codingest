@@ -7,6 +7,39 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.15 — 2026-09-02: 30 corpora, all green across the kglite 0.16.20 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency` both ok). The engine floor moved kglite
+0.16.19 → 0.16.20 and **no builder source changed this release**:
+`git diff v0.2.14..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move**, corroborated
+independently by the perf anchor: `nodes` and `edges` compare at
++0.00 % / +0.00 % (docs-on) and +0.00 % / +0.00 %
+(docs-off) against the 0.2.12 baseline, control steady.
+
+**0.16.20 changes what the embedded MCP server says, not what it computes.**
+The `<active_graph>` header and the `— active graph:` footer now report
+`load="N"` / `· load N ·` where they said `generation`, and gain a preceding
+`file_saved` field carrying the served artifact's publish time; `reload_graph`
+answers "Load N on this server". A write-enabled server's `save_graph` with
+nothing unsaved is a no-op instead of republishing identical bytes (`force:
+true` rewrites on purpose), `extensions.writable: true` matches `--writable`,
+and `builtins.save_graph: true` alone registers only `save_graph`. codingest
+embeds that server unchanged via `codingest-mcp` and parses none of its output
+(`git grep -n 'generation="'` and `git grep -n '· generation'` are both empty
+here), so no codingest source changed this release. On the core side the move
+is additive and unused: `GraphFileIdentity::modified()` is new, a released
+`GraphWriterLease` appends `released=<rfc3339>` to `<path>.lock-owner`, and
+codingest names neither type. None of the persistence entries the builder calls
+(`prepare_kgl_write`, `write_kgl`, `save_graph`) moved — which is why every
+digest holds. The Python acceptance suite (31 tests) ran against the kglite
+0.16.20 wheel reading Rust-0.16.20-written bytes. `BENCHMARKS.md` was not
+refreshed: no perf-sensitive path changed (the builder diff is empty), and the
+release-gate anchor carries the perf evidence.
+
 ## Release 0.2.14 — 2026-09-01: 30 corpora, all green across the kglite 0.16.19 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the
