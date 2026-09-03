@@ -10,6 +10,69 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.16.22, spanning two upstream releases.**
+  codingest never took 0.16.21, so 0.16.21 and 0.16.22 land together. Both are
+  additive for the builder — every `.kgl` persistence entry codingest calls is
+  byte-identical and the golden digests prove it — and neither breaks anything
+  this repo compiles: the blueprint spec structs (`Blueprint`, `Settings`,
+  `NodeSpec`, `FkEdge`, `JunctionEdge`) gained fields and
+  `JunctionEdge::target` became `Vec<String>`, but codingest constructs no
+  blueprint and calls neither `from_blueprint` nor `from_records`, so the
+  struct-literal break and the now-honoured `on_missing_endpoint` spec key are
+  both unreachable here. `ServerExtensions` gained `read_only()`; codingest
+  composes its extensions through
+  `ServerExtensions::default().with_workspace_graph(...)`, a builder chain, so
+  the added field is not a literal break either — and codingest does not pin
+  its servers read-only, because an operator running `codingest-mcp --writable`
+  is asking for exactly that.
+- **`codingest-mcp` now refuses to boot on a `skills:` pack a manifest declares
+  but that does not exist.** One bad path used to fail the whole skill-registry
+  build and boot the server anyway with *every* skill gone — the bundled
+  methodology included — while the graph tools answered normally and
+  `--selftest` printed PASSED. The boot error names what was written and where
+  it resolved to, and `--selftest` now prints the number of skills the session
+  serves, so an opted-in deployment that resolved nothing is visible. codingest
+  ships no manifest and declares no skills pack, so no server started from this
+  repo's own commands can hit it; an operator manifest pointing at
+  `codingest-mcp` can.
+- **`save_graph(force: true)` now requires the write opt-in.** It is offered
+  only where mutations are (`--writable` / `extensions.writable: true`) and
+  refused on a server that registers `save_graph` alone via
+  `builtins.save_graph: true`, because a forced re-encode moves the file's
+  identity and makes every peer serving it pay a full re-read. A plain
+  `save_graph` from such a server still publishes unsaved changes. Also: a save
+  that persisted only boot configuration says so instead of reporting a node
+  count nothing moved, and a refused save on a clean server says "Nothing was
+  changed here" rather than claiming unsaved changes are still queryable.
+  `docs/mcp.md` states the `force` restriction.
+- **A fired query deadline now raises `CypherTimeoutError`, not
+  `CypherExecutionError`.** `codingest query --timeout` and any MCP
+  `cypher_query` deadline surface kglite's error, so a caller catching
+  `kglite.CypherExecutionError` specifically for a timeout must add
+  `CypherTimeoutError`; `kglite.CypherError` catches both, unchanged. Nothing
+  in codingest names a `KgError` variant, so no source here moved.
+- Also in the floor and unreachable from this repo: relationship alternation
+  `[:A|B]` now works inside `EXISTS { }` / `count { }` / `size(...)` (the
+  shipped code-review queries use no alternation, so nothing was working around
+  it); ranked retrieval (`text_bm25`, `vector_score`) on a property with no
+  index raises instead of answering zero rows; `ontology_audit()` gained a
+  `property` column, `edge_property_violation()` a `properties` column, and a
+  blueprint gained `"list"` columns, node-spec `labels`, FK-edge properties and
+  union-target junction edges — codingest declares no ontology, builds no
+  blueprint, and pins no yielded column set.
+- Floor declarations moved together: `pyproject.toml`
+  (`kglite>=0.16.22,<0.17`) and its lockstep comment, the workspace `kglite` /
+  `kglite-mcp-server` pins, ci.yml's pinned wheel install, the `codingest-py`
+  import-failure hint, `crates/codingest/Cargo.toml`, and the README/docs
+  install snippets. The per-feature `kglite ≥ 0.16.19` / `0.16.20` qualifiers
+  in `docs/mcp.md` are **dropped** rather than renumbered — the floor already
+  guarantees them, so they were maintenance with no reader. Historical
+  citations are deliberately unchanged: `PARITY.md`'s per-release records, the
+  benchmark baseline captures, `docs/index.md`'s "Beneath it, 0.16.x" chain,
+  and the `kglite 0.16.19` attribution on the accessor `code_tree_cli.rs`
+  adopted then.
+
 ## [0.2.15] - 2026-09-02
 
 ### Changed

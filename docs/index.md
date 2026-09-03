@@ -11,12 +11,26 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.20
+## Requires kglite ≥ 0.16.22
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.20 to keep the Rust writer and the
-Python reader on one engine release. 0.16.20 changes what the embedded MCP
+in-tree builder. The floor sits at 0.16.22 to keep the Rust writer and the
+Python reader on one engine release. It moves two upstream releases at once
+— codingest never took 0.16.21 — and both are additive here. In the embedded
+MCP server, a `skills:` pack a manifest declares but that does not exist on
+disk now fails the boot instead of booting a server with *every* skill
+silently gone (`--selftest` printed PASSED on that server; it now also prints
+the skill count it serves), `save_graph(force: true)` is offered only where
+mutations are (`--writable` / `extensions.writable: true`) and refused on a
+`builtins.save_graph`-only server, and a save that persisted only boot
+configuration says so. In the engine, a fired query deadline raises
+`CypherTimeoutError` rather than `CypherExecutionError` — relevant to
+`codingest query --timeout`, whose refusal comes from kglite — relationship
+alternation `[:A|B]` now works inside `EXISTS { }` / `count { }` / `size(...)`,
+and ranked retrieval on a property with no index raises instead of answering
+zero rows. `.kgl` persistence is byte-identical and the golden digests prove
+it. Beneath it, 0.16.20 changes what the embedded MCP
 server *says*, not what it computes: the `<active_graph>` header and the
 `— active graph:` footer now report `load="N"` / `· load N ·` where they said
 `generation`, and gain a `file_saved` field carrying the served artifact's

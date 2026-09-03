@@ -318,22 +318,25 @@ more cheaply:
 | build once in CI, no server | `codingest build` |
 | one-shot query in CI, no server | `codingest query` (see [cli.md](cli.md)) |
 
-A `--graph` server re-reads the served `.kgl` automatically (kglite ≥ 0.16.19):
+A `--graph` server re-reads the served `.kgl` automatically:
 every tool call stats the file, and when its identity has changed on disk — a
 `codingest build` that replaced the artifact, say — the server re-reads it
 before answering, with no `reload_graph` round-trip. Write-enabled servers take
 the file's writer lease only at their first unsaved change, so several clients
 can boot off one manifest; `--lease-label` (or `KGLITE_LEASE_LABEL`) names this
 server in the refusal a peer sees while it holds the lease. A write-enabled
-server's `save_graph` with nothing unsaved is a no-op from kglite 0.16.20 — it
+server's `save_graph` with nothing unsaved is a no-op — it
 answers `Nothing to save: <path>` and leaves the artifact's bytes, mtime and
 inode alone, so peer servers bound to the same file do not pay a re-read for a
-save that changed nothing; pass `force: true` to rewrite it anyway.
+save that changed nothing; pass `force: true` to rewrite it anyway. `force` is
+part of the write opt-in: a server that registers `save_graph` alone (via
+`builtins.save_graph: true`) refuses it, because a forced re-encode moves the
+file's identity and makes every peer serving it pay a full re-read.
 
 Every answer carries an identity footer — `— active graph: <root> · built …
 · file saved <T> · load N · <state>`, matched by the `<active_graph …
 file_saved="<T>" load="N" state="…">` header.
-From kglite 0.16.20 that counter is spelled `load`, not `generation`: it counts
+That counter is spelled `load`, not `generation`: it counts
 the graphs *this server process* has installed since boot, so two servers on one
 artifact legitimately report different numbers for the same bytes. The identity
 two servers *can* compare is `file saved`, the served path's publish time off
@@ -342,7 +345,7 @@ moment and omits it. Anything parsing `· generation ` or `generation="` must
 switch — there is no compatibility spelling. codingest itself parses none of it.
 
 Two ways to enable writes: `--writable` on the command line, or
-`extensions.writable: true` in the manifest (kglite ≥ 0.16.20) — either alone
+`extensions.writable: true` in the manifest — either alone
 opens `cypher_query` to mutations and registers the lifecycle tools.
 `builtins.save_graph: true` is **not** a third way: it registers `save_graph`
 only, so the server can persist what it loaded while `cypher_query` stays
