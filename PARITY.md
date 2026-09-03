@@ -7,6 +7,60 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.16 — 2026-09-03: 30 corpora, all green across the kglite 0.16.22 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency` both ok), and green again in the full
+`make gate VENV=.venv` (ALL 9 STEPS PASSED) at the pre-bump commit. The engine
+floor moved kglite 0.16.20 → 0.16.22 — two upstream releases at once, since
+codingest never took 0.16.21 — and **no builder source changed this release**:
+`git diff v0.2.15..HEAD -- crates/codingest/src` is empty.
+
+**Every golden digest is byte-identical across the move.** None of the
+persistence entries the builder calls (`prepare_kgl_write`, `write_kgl`,
+`save_graph`) moved upstream, which is why every digest holds.
+
+**Neither release reaches the builder.** The two struct-literal breaks upstream
+declared are unreachable here: the blueprint spec structs (`Blueprint`,
+`Settings`, `NodeSpec`, `FkEdge`, `JunctionEdge`) gained fields and
+`JunctionEdge::target` became `Vec<String>`, but codingest constructs no
+blueprint and calls neither `from_blueprint` nor `from_records`, so the
+now-honoured `on_missing_endpoint` spec key is unreachable too; `ServerExtensions`
+gained a field and `read_only()`, and codingest-mcp composes through
+`ServerExtensions::default().with_workspace_graph(hooks)`, a builder chain.
+What does reach users is the embedded MCP server refusing to boot on a
+declared-but-missing `skills:` pack (it used to boot with *every* skill gone
+while `--selftest` printed PASSED), `save_graph(force: true)` requiring the
+write opt-in, and a fired query deadline raising `CypherTimeoutError` instead of
+`CypherExecutionError` — which `codingest query --timeout` surfaces through
+kglite's own error class. The Python acceptance suite (31 tests) ran against the
+kglite 0.16.22 wheel reading Rust-0.16.22-written bytes.
+
+**The perf anchor is VOID this release, and the instrument is proven to be the
+mover.** `BENCHMARKS.md` was not refreshed (no perf-sensitive path changed — the
+builder diff is empty), and the release-gate anchor against the 0.2.12 baseline
+returned VOID in **both** modes: the control `top20_by_branch_count` read
++122 % to +141 % per row (0.0009 → 0.0020 ms/row). It was re-measured, and then
+measured a second independent way, per the control doctrine:
+
+- The control is **bimodal** on this machine — every capture lands at either
+  ~0.018 ms or ~0.041 ms, never between — and the 0.2.12 baseline captured the
+  low mode. Twelve consecutive captures landed in the high mode.
+- **The previous engine VOIDs too.** A `codingest_bench` built against kglite
+  **0.16.20** — the exact engine that produced the green 0.2.15 capture — VOIDed
+  2 of 3 times against the same baseline, on the same corpus, minutes apart.
+- **Interleaved A/B, 12 samples each, alternating under identical load:**
+  0.16.20 median 0.041 ms (low mode 1/12, min 0.018), 0.16.22 median 0.040 ms
+  (low mode 2/12, min 0.017). The two engines are indistinguishable; both reach
+  both modes.
+
+The machine could not be settled — eight unrelated processes held ~98 % CPU each
+throughout (load average 11–24), and they were not this release's to stop. The
+verdict is therefore recorded as VOID-by-instrument rather than re-read as a
+regression, exactly as the tool instructs, and the 0.2.16 baseline capture is
+deferred to a settled machine. No row was read past the control, on purpose.
+
 ## Release 0.2.15 — 2026-09-02: 30 corpora, all green across the kglite 0.16.20 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the

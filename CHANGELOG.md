@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-09-03
+
 ### Changed
 - **Engine floor moves to kglite 0.16.22, spanning two upstream releases.**
   codingest never took 0.16.21, so 0.16.21 and 0.16.22 land together. Both are
