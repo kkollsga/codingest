@@ -7,6 +7,60 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.17 — 2026-09-08: 30 corpora, all green across the kglite 0.17.1 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity` +
+`rev_self_consistency` both ok), and green again in the full
+`make gate VENV=.venv` (ALL 9 STEPS PASSED) at the pre-bump commit. The engine
+floor moved kglite 0.16.22 → 0.17.1 — four upstream releases at once, since
+codingest took none of 0.16.23, 0.16.24 or 0.17.0 — and **no builder source
+changed this release**: `git diff v0.2.16..HEAD -- crates/codingest/src` is
+empty.
+
+**Every golden digest is byte-identical across the move.** None of the
+persistence entries the builder calls (`prepare_kgl_write`, `write_kgl`,
+`save_graph`) moved upstream, which is why every digest holds. The move needed
+**zero source changes** — the workspace builds, clippys and tests clean against
+0.17.1 as written.
+
+**None of the four releases reaches the builder.** 0.17.0's declared Rust breaks
+are unreachable here: `RawOp` gained a `Declaration` variant and `ClassDecl` /
+`QueryDiagnostics` gained fields (codingest matches no `RawOp` and constructs
+neither), `compute_description` takes a `DescribeRequest` instead of eight
+positional arguments, `wrap_for_durability` became fallible, and `load_rdf` now
+demands a fresh empty in-memory graph — all uncalled, since codingest uses no
+`durable=` level, loads no RDF and renders no description itself. 0.16.23 is
+blueprint input formats (`files:`, `frames=`, delimited and xlsx readers) plus an
+HNSW parallel-build recall fix; codingest builds no blueprint and declares no
+vector index. What does reach users is the embedded MCP server's new **180 s
+query deadline** on every engine route (it had none, so a runaway query held the
+graph's read lock and took the session with it), `cypher_query`'s inline preview
+rendering natural JSON instead of serde's tagged `Value` encoding,
+`codingest query --format csv` keeping numeric and timestamp precision, and two
+Cypher ordering fixes (`ORDER BY` on a `WITH`-produced key; `RETURN *` with
+`ORDER BY … LIMIT`) — the shipped code-review queries sort on RETURN-defined
+aliases only, so their output does not move. The Python acceptance suite (31
+tests) ran against the kglite 0.17.1 wheel reading Rust-0.17.1-written bytes.
+
+**The perf anchor PASSES in both modes, with a steady control** — the first
+non-VOID anchor since 0.2.14. Against the 0.2.12 baseline (`select-baseline
+--window 3`), the control `top20_by_branch_count` read -5.56 % docs-on and
++0.00 % docs-off, and **no row was past +30 %** in either mode. Node and edge
+counts are `+0.00 %` in both modes — the deterministic build-side signal this
+baseline's `build_gating` note names as the one that carries. `BENCHMARKS.md`
+was not refreshed: no perf-sensitive path changed (the builder diff is empty).
+
+The one row worth naming is `build_secs`, **+20.30 % docs-on / -10.71 % docs-off**
+— a disagreement in *sign* across the two modes of one capture, which is what
+once-per-build noise looks like, not a regression. The baseline's own
+`build_gating` field records this row as "recorded, not enforced": at 46 KB the
+build is dominated by one-time grammar init, and the declared `build_secs` floor
+(0.05 s) sits **above** the baseline value itself (0.0133 s), so the whole row is
+sub-floor. Two confirming docs-on retakes read 0.014 s (+5.3 %) against the first
+capture's 0.016 s. Captured on a machine running a concurrent sibling-repo
+migration build; the control is what carries validity, and it was steady.
+
 ## Release 0.2.16 — 2026-09-03: 30 corpora, all green across the kglite 0.16.22 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the
