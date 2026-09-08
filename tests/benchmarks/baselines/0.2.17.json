@@ -1,14 +1,14 @@
 {
  "schema": 1,
- "version": "0.2.11",
- "captured_at_commit": "2cb6675fc974451fa719c69edb447981a1b1dfb8",
- "captured_at": "2026-08-30",
  "target": "tests/corpus",
  "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
  "control_query": "top20_by_branch_count (ORDER BY + LIMIT)",
  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
  "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
- "stability_across_3_runs": "worst per-query spread 0.0010 ms in BOTH modes across three runs per mode after a discarded warmup run per mode; node and edge counts identical across all three runs in both modes, and the cross-build query-result parity flag held on every cell of every run. FLOOR HELD AT 0.005 for the same reason 0.2.10 held it: three runs inside one warm window under-sample the cross-session jitter this corpus shows (0.2.9 saw 0.0020, and the 0.2.10 control re-measure saw a 0.002 ms spread), and 0.005 is 2.5x that evidence. Sixth baseline of the 0.2.6 corpus epoch (c449542e, 30 corpora). Control top20_by_branch_count re-qualified across the kglite 0.16.13->0.16.15 engine move: the release-gate anchor compare read it at +6.25% docs-on and +20% docs-off (+0.003 ms raw, under the floor) against the 0.2.8 baseline \u2014 sub-floor jitter, not a deterministic move \u2014 and this capture stores it at 0.015 ms in both modes, 3.0x the 0.005 floor, clear of the 2x margin (doctrine R11 corollary).",
+ "version": "0.2.17",
+ "captured_at_commit": "fd452b14452ab9eac8b1fc036d5a0520ad99d79e",
+ "captured_at": "2026-09-08",
+ "stability_across_3_runs": "worst per-query spread 0.0030 ms across three runs per mode after a discarded warmup run per mode (top20_by_branch_count and defs_per_file, docs-on; 0.0020 worst docs-off); node and edge counts identical across all runs in both modes and the cross-build parity flag held on every cell. FLOOR HELD AT 0.005 rather than raised to 2.5x this capture's spread (0.0075). Two reasons. (1) The trip condition is composite -- a row fires only if it is BOTH >30% AND past the absolute floor -- and this capture's 0.0030 jitter is at most 18.8% of any cell it touched (0.0030 on the 0.016 control, 0.0030 on the 0.028 defs_per_file), so it cannot reach the percentage half of the condition at any floor. (2) This capture was taken under a CONCURRENT SIBLING-REPO MIGRATION BUILD, not an idle machine, so its spread is the loaded case; re-deriving a floor from the worst available evidence would loosen the gate permanently on a one-off condition. Raising it would also cut the control's margin from 3.20x to 2.13x, one tick above the 2x minimum. Ninth baseline of the 0.2.6 corpus epoch (c449542e, 30 corpora) and the first since 0.2.14 -- 0.2.15 and 0.2.16 captured none, their anchors having VOIDed on a bimodal control under heavy unrelated load. Control top20_by_branch_count re-qualified across the kglite 0.16.22->0.17.1 engine move: the release-gate anchor compare vs 0.2.12 read it -5.56% docs-on and +0.00% docs-off, steady in both modes, and it lands at 0.016 ms here in BOTH modes -- the low mode, matching the 0.2.12 baseline, not the 0.041 ms high mode the 0.2.15/0.2.16 sessions were stuck in. Node and edge counts are unchanged from 0.2.14 (567/880 docs-on, 560/859 docs-off): the engine move is not a builder change.",
  "corpora": [
   {
    "target": "tests/corpus",
@@ -21,7 +21,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 567,
    "edges": 880,
-   "build_secs": 0.0117,
+   "build_secs": 0.0115,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -33,7 +33,7 @@
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
      "median_ms": 0.003,
-     "min_ms": 0.002
+     "min_ms": 0.003
     },
     {
      "name": "contains_new (CONTAINS string filter)",
@@ -44,20 +44,20 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.015,
+     "median_ms": 0.016,
      "min_ms": 0.015,
      "control": true
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.029,
+     "median_ms": 0.028,
      "min_ms": 0.026
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
      "rows": 1,
-     "median_ms": 0.012,
+     "median_ms": 0.013,
      "min_ms": 0.012
     },
     {
@@ -75,13 +75,13 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.025,
+     "median_ms": 0.028,
      "min_ms": 0.025
     },
     {
      "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
      "rows": 6,
-     "median_ms": 0.004,
+     "median_ms": 0.003,
      "min_ms": 0.003
     },
     {
@@ -103,7 +103,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 560,
    "edges": 859,
-   "build_secs": 0.0102,
+   "build_secs": 0.01,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -115,7 +115,7 @@
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
      "median_ms": 0.003,
-     "min_ms": 0.002
+     "min_ms": 0.003
     },
     {
      "name": "contains_new (CONTAINS string filter)",
@@ -126,8 +126,8 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.015,
-     "min_ms": 0.015,
+     "median_ms": 0.016,
+     "min_ms": 0.016,
      "control": true
     },
     {
@@ -157,13 +157,13 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.027,
-     "min_ms": 0.025
+     "median_ms": 0.029,
+     "min_ms": 0.026
     },
     {
      "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
      "rows": 6,
-     "median_ms": 0.003,
+     "median_ms": 0.004,
      "min_ms": 0.003
     },
     {
