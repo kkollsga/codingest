@@ -17,9 +17,65 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.16.22
-# floor spans two upstream releases: codingest never took 0.16.21, so 0.16.21
-# and 0.16.22 land here together. Where they land for us:
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.1
+# floor spans four upstream releases: codingest took none of 0.16.23, 0.16.24
+# or 0.17.0, so all four land here together. Nothing in our source moved for
+# it — the workspace builds, clippys and tests clean against 0.17.1 with zero
+# edits, and every corpus golden is byte-identical across the move. Where they
+# land for us:
+#   * kglite-mcp-server (embedded unchanged via codingest-mcp's
+#     run_with_extensions): every route that reaches the engine — the built-in
+#     `cypher_query`, manifest `tools[].cypher` templates, recipe queries —
+#     now runs under a 180 s query deadline. It had NONE before, so a runaway
+#     query held the active graph's read lock, which stalls the single-flight
+#     rebuild gate every later tool call enters, and one bad query took the
+#     whole server with it. codingest-mcp inherits the deadline: a query past
+#     three minutes is refused instead of wedging the session. Its
+#     `cypher_query` inline preview also renders list, map, node, relationship
+#     and path cells as natural JSON (`{"start":1,"end":2,"type":"CALLS",…}`)
+#     instead of serde's externally-tagged `Value` encoding
+#     (`{"Relationship":{"rel_type":…}}`), and a nested null is `null` rather
+#     than the string `"Null"` — an agent parsing that preview text sees
+#     different field names than before; `FORMAT CSV` is unchanged. An unknown
+#     nested `applies_when` key in a skill file now skips that skill with a
+#     diagnostic instead of activating it; codingest ships no manifest and
+#     declares no skills pack, so only an operator manifest pointed at
+#     codingest-mcp can reach it.
+#   * kglite core, on paths we call. `CypherResult::to_csv()` — the renderer
+#     behind `codingest query --format csv` — preserves numeric and timestamp
+#     text precision instead of compacting it recursively, and follows RFC
+#     quoting. `ORDER BY` on a sort key an earlier `WITH` produced is honoured
+#     instead of silently returning input order, and `RETURN *` with
+#     `ORDER BY … LIMIT` returns rows instead of a `*` column of `1`s. Both are
+#     fixes, and the shipped code-review queries sort only on RETURN-defined
+#     aliases — already the correct path — so their output does not move.
+#     Loading a `.kgl` costs more: 0.17.0 normalizes legacy stored endpoint
+#     references on every complete-snapshot load and the format carries no
+#     marker proving a blob is reference-free, so an ordinary portable load
+#     measured 12–15% slower upstream. That is the Python `build()` handoff's
+#     read side, paid once per build, not query time.
+#   * kglite core, breaking for callers we are not. `RawOp` gained a
+#     `Declaration` variant, and `ClassDecl` / `QueryDiagnostics` gained fields
+#     — exhaustive-match and struct-literal breaks codingest cannot hit: it
+#     matches no `RawOp` and constructs neither. `compute_description` takes a
+#     `DescribeRequest` instead of eight positional arguments, and
+#     `wrap_for_durability` became fallible, and `load_rdf` now demands a fresh
+#     empty in-memory graph — all three uncalled here (codingest uses no
+#     `durable=` level and loads no RDF). Write-on-a-read-handle and
+#     unknown-node-type errors retype to `ArgumentError` / `InvalidArgument`,
+#     cross-type ordering comparisons return null, re-declaring an identity or
+#     title field on a populated type is refused instead of warned, Python
+#     query parameters reject integers outside signed 64-bit, close/save
+#     lifecycle tightens and query handles capture a 180 s default timeout:
+#     each reaches our users through the separately-installed kglite wheel, on
+#     the graph object `build()` hands back, never through a codingest call.
+#     0.16.23's blueprint input formats (`files:`, `frames=`, the delimited and
+#     xlsx readers) are surface codingest declares nothing into.
+#     `save_graph` / `write_kgl` / `prepare_kgl_write` — every persistence entry
+#     we call — are byte-identical, and the goldens prove it.
+# It sits on the 0.16.22
+# floor, which spanned two upstream releases: codingest never took 0.16.21, so
+# 0.16.21 and 0.16.22 landed here together. Where they landed for us:
 #   * kglite-mcp-server (embedded unchanged via codingest-mcp's
 #     run_with_extensions): a `skills:` pack declared in a manifest but missing
 #     on disk now FAILS the boot. It used to fail the whole registry build and
@@ -369,9 +425,10 @@ sha2 = "0.11"
 # which kglite 0.15.14 and earlier refuse by version number. Because
 # `codingest.build()` writes the bytes with the Rust engine compiled in here and
 # reads them back through the separately-installed Python `kglite` wheel, the
-# two sides must be on the same side of that break — hence `>=0.16.17,<0.17` in
-# pyproject.toml, and hence a reader on 0.15.x is not "old but workable", it is
-# a hard failure with `FileFormatError`.
+# two sides must be on the same side of that break — hence pyproject.toml
+# carries a BOUNDED range rather than a bare `>=`, and hence a reader on 0.15.x
+# is not "old but workable", it is a hard failure with `FileFormatError`. (The
+# range itself moves every floor bump; it is stated once, in pyproject.toml.)
 # 0.16.0 also removed `DirGraph::enable_columnar` from the public API (every
 # graph is columnar from its first node now); the two sites that open-coded
 # `prepare_save` + `enable_columnar` before a `.kgl` write moved to the
@@ -434,8 +491,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.16.22", default-features = false }
-kglite-mcp-server = { version = "0.16.22", default-features = false }
+kglite = { version = "0.17.1", default-features = false }
+kglite-mcp-server = { version = "0.17.1", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

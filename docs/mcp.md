@@ -242,6 +242,15 @@ truncates silently: the executor's candidate seed caps are advisory, and a pass
 that hits one and comes back short of the `LIMIT` is re-run without them — a
 short result is the graph's answer, not the cap's.
 
+Since kglite 0.17.1 the server also applies a **180-second query deadline** to
+every route that reaches the engine — the built-in `cypher_query`, manifest
+`tools[].cypher` templates, and recipe queries. There was no server-side
+deadline of any kind before: a runaway query held the active graph's read lock,
+which stalls the single-flight rebuild gate every later tool call enters, so one
+bad query took the whole session down with no way to cancel it. A query past
+three minutes is now refused and the server keeps answering. The CLI is
+unaffected — `codingest query` stays unlimited unless you pass `--timeout`.
+
 ### Timeouts
 
 The real default is **30 seconds**, applied to both the initial connection and

@@ -11,26 +11,39 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.16.22
+## Requires kglite ≥ 0.17.1
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.16.22 to keep the Rust writer and the
-Python reader on one engine release. It moves two upstream releases at once
-— codingest never took 0.16.21 — and both are additive here. In the embedded
-MCP server, a `skills:` pack a manifest declares but that does not exist on
-disk now fails the boot instead of booting a server with *every* skill
-silently gone (`--selftest` printed PASSED on that server; it now also prints
-the skill count it serves), `save_graph(force: true)` is offered only where
-mutations are (`--writable` / `extensions.writable: true`) and refused on a
-`builtins.save_graph`-only server, and a save that persisted only boot
-configuration says so. In the engine, a fired query deadline raises
-`CypherTimeoutError` rather than `CypherExecutionError` — relevant to
+in-tree builder. The floor sits at 0.17.1 to keep the Rust writer and the
+Python reader on one engine release. It moves four upstream releases at once —
+codingest took none of 0.16.23, 0.16.24 or 0.17.0 — and none of them needed a
+source change here. In the embedded MCP server, every route that reaches the
+engine (`cypher_query`, manifest `tools[].cypher` templates, recipe queries)
+now runs under a 180-second query deadline; it had none before, so a runaway
+query held the graph's read lock and took the whole server with it. The
+`cypher_query` inline preview renders list, map, node, relationship and path
+cells as natural JSON (`{"start":1,"end":2,"type":"CALLS"}`) rather than
+serde's tagged `Value` encoding, and a nested null is `null` instead of the
+string `"Null"` — an agent parsing that text sees different field names.
+In the engine, `codingest query --format csv` keeps numeric and timestamp
+precision instead of compacting it, `ORDER BY` on a key an earlier `WITH`
+produced is honoured instead of silently returning input order, and `RETURN *`
+with `ORDER BY … LIMIT` returns rows instead of a `*` column of `1`s. Loading a
+`.kgl` is slower — 0.17.0 normalizes legacy stored endpoint references on every
+complete-snapshot load (12-15% on an ordinary portable file upstream), paid
+once by `build()`'s handoff, not per query. `.kgl` persistence is byte-identical
+and the golden digests prove
+it. Beneath it, 0.16.22 spans two upstream releases: a `skills:` pack a
+manifest declares but that does not exist on disk fails the boot instead of
+booting a server with *every* skill silently gone, `save_graph(force: true)` is
+offered only where mutations are (`--writable` / `extensions.writable: true`)
+and refused on a `builtins.save_graph`-only server, a fired query deadline
+raises `CypherTimeoutError` rather than `CypherExecutionError` — relevant to
 `codingest query --timeout`, whose refusal comes from kglite — relationship
-alternation `[:A|B]` now works inside `EXISTS { }` / `count { }` / `size(...)`,
-and ranked retrieval on a property with no index raises instead of answering
-zero rows. `.kgl` persistence is byte-identical and the golden digests prove
-it. Beneath it, 0.16.20 changes what the embedded MCP
+alternation `[:A|B]` works inside `EXISTS { }` / `count { }` / `size(...)`, and
+ranked retrieval on a property with no index raises instead of answering zero
+rows. Beneath it, 0.16.20 changes what the embedded MCP
 server *says*, not what it computes: the `<active_graph>` header and the
 `— active graph:` footer now report `load="N"` / `· load N ·` where they said
 `generation`, and gain a `file_saved` field carrying the served artifact's

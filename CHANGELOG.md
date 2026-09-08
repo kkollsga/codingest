@@ -10,6 +10,82 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.17.1, spanning four upstream releases.**
+  codingest took none of 0.16.23, 0.16.24 or 0.17.0, so all four land together.
+  Nothing in this repo's source moved for them: the workspace builds, clippys
+  and tests clean against 0.17.1 with zero edits, and every corpus golden is
+  byte-identical across the move — `save_graph` / `write_kgl` /
+  `prepare_kgl_write`, every persistence entry codingest calls, produce the
+  same bytes.
+- **`codingest-mcp` now applies a 180-second query deadline.** Every route that
+  reaches the engine — the built-in `cypher_query`, manifest `tools[].cypher`
+  templates, recipe queries — is bounded. There was no server-side deadline of
+  any kind before, so a runaway query held the active graph's read lock, which
+  stalls the single-flight rebuild gate every later tool call enters, and one
+  bad query took the whole session down with no cancel channel to undo it. A
+  query past three minutes is now refused and the server keeps answering.
+  `codingest query` is unaffected: the CLI stays unlimited unless `--timeout`
+  is passed. `docs/mcp.md` states the deadline.
+- **`cypher_query`'s inline preview renders natural JSON.** List, map, node,
+  relationship and path cells now read
+  `{"start":1,"end":2,"id":0,"type":"CALLS","properties":{...}}` instead of
+  serde's externally-tagged encoding of kglite's internal `Value`
+  (`{"Relationship":{"rel_type":"CALLS","properties":{"line":{"Int64":42}}}}`),
+  and a nested null is `null` rather than the string `"Null"`. An agent parsing
+  that preview text sees different field names than before
+  (`start`/`end`/`type`, unwrapped scalars); `FORMAT CSV` output is unchanged,
+  and so is `codingest query --format json`, which already rendered through the
+  same converter.
+- **`codingest query --format csv` preserves numeric and timestamp precision.**
+  The renderer behind it (`CypherResult::to_csv()`) no longer compacts values
+  recursively and follows RFC quoting, so a quoted multiline field is never
+  split. Empty string and NULL remain the same empty CSV field — use
+  `--format json` when the difference matters.
+- **Two Cypher result-ordering fixes reach any query codingest serves.**
+  `ORDER BY` on a sort key an earlier `WITH` produced is honoured instead of
+  silently returning input order, and `RETURN *` with `ORDER BY … LIMIT`
+  returns rows instead of a `*` column of `1`s. The shipped code-review queries
+  sort only on `RETURN`-defined aliases — already the correct path — so their
+  output does not move.
+- **Loading a `.kgl` is slower.** 0.17.0 normalizes legacy stored endpoint
+  references on every complete-snapshot load, and the format carries no marker
+  proving a blob is reference-free, so every nonempty edge-property blob is
+  visited; upstream measured an ordinary portable load 12–15% slower. That is
+  the read side of `build()`'s `.kgl`-bytes handoff, paid once per build, not
+  query time.
+- Also in the floor and unreachable from this repo: `RawOp` gained a
+  `Declaration` variant and `ClassDecl` / `QueryDiagnostics` gained fields
+  (codingest matches no `RawOp` and constructs neither);
+  `compute_description` takes a `DescribeRequest` instead of eight positional
+  arguments, `wrap_for_durability` became fallible, and `load_rdf` now demands
+  a fresh empty in-memory graph (all three uncalled — codingest uses no
+  `durable=` level and loads no RDF); 0.16.23's blueprint input formats
+  (`files:`, `frames=`, the delimited and xlsx readers) are surface codingest
+  declares nothing into; and an unknown nested `applies_when` key in an MCP
+  skill file now skips that skill with a diagnostic instead of activating it,
+  which only an operator manifest pointed at `codingest-mcp` can reach.
+- The 0.17.0 contract tightenings that land on the graph object `build()` hands
+  back — write-on-a-read-handle and unknown-node-type errors retyping to
+  `ArgumentError` / `InvalidArgument`, cross-type ordering comparisons
+  returning null, a refused re-declaration of an identity or title field on a
+  populated type, Python query parameters rejecting integers outside signed
+  64-bit, aware datetimes normalizing to UTC, nullable-integer DataFrame
+  columns using pandas `Int64`, and the close/save lifecycle rules — reach
+  users through the separately-installed kglite wheel, never through a
+  codingest call. See KGLite's `docs/python/migrations/0.16-to-0.17.md`.
+- Floor declarations moved together: `pyproject.toml`
+  (`kglite>=0.17.1,<0.18`) and its lockstep comment, the workspace `kglite` /
+  `kglite-mcp-server` pins, `ci.yml`'s pinned wheel install and its comment,
+  the `codingest-py` import-failure hint, `crates/codingest/Cargo.toml`, and
+  the README/`docs/index.md`/`docs/python-api.md`/
+  `docs/migrating-from-kglite-code-tree.md` install snippets. A stale
+  `>=0.16.17,<0.17` citation in `Cargo.toml`'s 0.16.1 history block — which
+  named a pyproject range pyproject had not carried for six releases — is
+  reworded to stop restating a number that moves. Historical citations
+  (`PARITY.md`, `BENCHMARKS.md`, the `docs/index.md` "Beneath it, 0.16.x"
+  chain, `docs/mcp.md`'s "since kglite 0.16.6") are deliberately unchanged.
+
 ## [0.2.16] - 2026-09-03
 
 ### Changed
