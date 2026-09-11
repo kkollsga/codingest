@@ -8,8 +8,10 @@ workspace map and `PARITY.md` / `BENCHMARKS.md` for the regression record.
 
 **Authority:** `CLAUDE.md` is the authority this repo's conventions are
 regenerated from, with `AGENTS.md` as its generated adapter; for the skills the
-authority is **tracked `.agents/skills/`**, and `.claude/skills/` is a generated
-adapter of it. Edit the authority and regenerate in the same action — never edit
+authority is the local **`.agents/skills/`** tree, and `.claude/skills/` is a
+generated adapter of it. Both skill trees are gitignored working state and can
+be re-derived from doctrine plus this repository's conventions. Edit the
+authority and regenerate in the same action — never edit
 an adapter. (This line is exempt from the `CLAUDE.md`↔`AGENTS.md` substitution —
 it names the authority literally in every copy, per doctrine `R7`/`R14`.)
 
@@ -57,6 +59,19 @@ it names the authority literally in every copy, per doctrine `R7`/`R14`.)
   once before a branch's first push and once over the union at the program's
   end, never per phase. Per-phase heavy runs buy nothing a completion-time run
   does not, and their cost is what makes agents quietly stop running them.
+
+## Comment health (doctrine `R17` / `R18`)
+- **A comment is a claim.** A change that falsifies a nearby comment corrects
+  it in the same change. When editing commented code, delete narration the code
+  already supplies and retain invariants, why-not-what, parser bail reasons,
+  persisted-format lifecycle and regression rationale. Verify moved public doc
+  blocks on the rendered item; adjacency decides what they document.
+- **Some comments are executable contracts.** Before deleting one, check what
+  reads it. In this repo, Rust `///` docs publish on docs.rs, clap-derived docs
+  become `--help`, `scripts/bench_anchor.py` feeds its module docstring to
+  argparse, and `@procedure:` lines in analyzed source synthesize Procedure
+  nodes. The `clean-comments` skill maintains the full reader list and required
+  gates.
 
 ## Code analysis — graph-first via the code-review MCP
 For any structural question (where is X defined, what calls what, which
@@ -192,6 +207,8 @@ is upstream **KGLite**. Layout map: `inbox/README.md`.
 - **Incoming mail →** **`read-inbox`**; **outgoing coordination →** **`notify`**.
 - **Tidying the working folder →** **`dev-docs-cleanup`** (before a new
   phased-plan or at end of release).
+- **Focused comment residue →** **`clean-comments`** (measured scope, reader
+  contracts preserved; not an automatic whole-tree rewrite).
 - **Shipping →** **`release`** (the only place the version bumps).
 
 ## dev-docs working folder
@@ -212,12 +229,13 @@ Agent git worktrees live in **`<repo>-worktrees/<name>`** — a sibling director
 *of the repo* (`Rust/codingest-worktrees/track-a`), never loose in the `Rust/`
 parent, where they are indistinguishable at `ls` from the real project repos
 (seven such strays, ~46 GB, sat in the estate root on 2026-08-10). The directory
-exists only while worktrees are in progress; the `release` skill empties and
-deletes it. Per worktree, in order: migrate outstanding actions into
-`dev-docs/todos.md` (branch, state, what remains, how to resume) → if dirty, save
-its `git diff` under `dev-docs/` **first** → `git worktree remove` +
-`git worktree prune`. Removing a worktree never deletes its branch, so unmerged
-work always survives. Two traps: a branch whose commits landed by **rebase**
+exists only while worktrees are in progress; the `release` skill reclaims only
+inactive, recoverable trees. Preserve exact HEAD/branch state, staged and
+unstaged binary-capable patches, untracked content, valuable ignored files,
+symlinks and submodules in a unique recovery record, then verify that record in
+a temporary checkout before removal. Detached or unmerged commits need a
+durable ref or bundle; dirty, active or ambiguous trees stay. Removing a
+worktree never deletes its branch. Two traps: a branch whose commits landed by **rebase**
 reads as unmerged to `git merge-base --is-ancestor` (`git cherry -v main
 <branch>` sees through it — `-` means already upstream), and a fresh worktree
 does **not** inherit the repo's build-cache symlink.

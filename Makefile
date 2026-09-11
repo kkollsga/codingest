@@ -34,6 +34,20 @@
 
 SHELL := /bin/bash
 
+# Free space on the volume behind Cargo's target directory. `target` is a
+# symlink in the standing local setup, so resolve it before asking `df`.
+# `FREE_GB` is the test seam for both branches of the guard.
+FREE_GB :=
+FREE_FAIL_GB := 15
+FREE_WARN_GB := 40
+PRUNE_TARGET_GB := 40
+MEASURE_FREE_GB = link_target=$$(readlink target 2>/dev/null || true); \
+	dir=$${CARGO_TARGET_DIR:-$${link_target:-target}}; \
+	probe="$$dir"; \
+	while [ ! -e "$$probe" ] && [ "$$probe" != / ] && [ "$$probe" != . ]; do probe=$$(dirname "$$probe"); done; \
+	free_gb=$$(df -Pk "$$probe" 2>/dev/null | awk 'NR==2 {print int($$4/1048576)}'); \
+	if [ -n "$(FREE_GB)" ]; then free_gb=$(FREE_GB); fi
+
 # Optional target for `make determinism-soak` (a diagnostic, not a gate).
 SOAK_RUNS ?= 3
 
@@ -78,10 +92,27 @@ record-skip = mkdir -p "$(dir $(GATE_SKIPS))" && printf '%s\n' "$(1)" >> "$(GATE
 .NOTPARALLEL:
 
 .PHONY: gate gate-reset fmt fmt-check clippy build test release-gates \
-	bench-smoke wheel pytest-py determinism-soak clean check-dev-docs
+	bench-smoke wheel pytest-py determinism-soak clean check-dev-docs \
+	check-free-space prune-target
+
+## Refuse a build before it can fill and corrupt the cargo cache. A healthy
+## volume is silent; a low-volume warning points at the bounded prune target.
+check-free-space:
+	@$(MEASURE_FREE_GB); \
+	if [ -z "$$free_gb" ]; then \
+		echo "free space: unable to measure the build volume — refusing to build."; \
+		exit 1; \
+	elif [ "$$free_gb" -lt $(FREE_FAIL_GB) ]; then \
+		echo "free space: $${free_gb} GB on the build volume (< $(FREE_FAIL_GB) GB) — refusing to build."; \
+		echo "  Run 'make prune-target', or free space by hand."; \
+		exit 1; \
+	elif [ "$$free_gb" -lt $(FREE_WARN_GB) ]; then \
+		echo "free space: WARNING — $${free_gb} GB on the build volume (< $(FREE_WARN_GB) GB). Run 'make prune-target' soon."; \
+	fi
 
 ## Full CI-equivalent gate — the single entry point. Runs every step below
 ## in order and stops at the first failure.
+gate: | check-free-space
 gate: gate-reset check-dev-docs fmt-check clippy build test release-gates bench-smoke wheel pytest-py
 	@echo ""
 	@echo "=================================================="
@@ -256,7 +287,7 @@ pytest-py: wheel
 ## somebody else's working tree and goes stale the moment they commit. If the
 ## soak target's own tree changes between runs, the edge count moves for that
 ## reason and the result is void — soak a quiescent checkout.
-determinism-soak:
+determinism-soak: | check-free-space
 	@if [ -z "$(REPO)" ]; then \
 		echo "usage: make determinism-soak REPO=/path/to/checkout [SOAK_RUNS=N]"; \
 		exit 2; \
@@ -277,9 +308,39 @@ determinism-soak:
 	done; \
 	echo "  edges=$$prev (stable across $(SOAK_RUNS) runs)"
 
+# Direct entry points must carry the guard too; a prerequisite on `gate` alone
+# can run after one of its normal prerequisites and cannot protect that build.
+clippy build test bench-smoke wheel determinism-soak: | check-free-space
+
 ## Remove build artifacts.
 clean:
 	cargo clean
+
+## Size-gated cargo cleanup. Cargo never garbage-collects its cache; this is a
+## no-op while the build volume and target directory are within their bounds.
+prune-target:
+	@$(MEASURE_FREE_GB); \
+	size_gb=$$(du -sg "$$dir" 2>/dev/null | cut -f1); \
+	files=$$(find "$$dir" -type f 2>/dev/null | wc -l | tr -d " "); \
+	echo "target/ ($$dir): du $${size_gb:-0} GB, $${files:-0} files; volume free $${free_gb:-unknown} GB"; \
+	if { [ -n "$$free_gb" ] && [ "$$free_gb" -lt $(FREE_WARN_GB) ]; } || [ "$${size_gb:-0}" -ge $(PRUNE_TARGET_GB) ]; then \
+		echo "below $(FREE_WARN_GB) GB free, or $(PRUNE_TARGET_GB)+ GB metered — running cargo clean"; \
+		mkdir -p "$$dir"; \
+		printf '%s\n' \
+			'Signature: 8a477f597d28d172789f06886806bc55' \
+			'# This file is a cache directory tag created by cargo.' \
+			'# For information about cache directory tags see https://bford.info/cachedir/' \
+			> "$$dir/CACHEDIR.TAG"; \
+		cargo clean --target-dir "$$dir" || exit $$?; \
+		mkdir -p "$$dir"; \
+		printf '%s\n' \
+			'Signature: 8a477f597d28d172789f06886806bc55' \
+			'# This file is a cache directory tag created by cargo.' \
+			'# For information about cache directory tags see https://bford.info/cachedir/' \
+			> "$$dir/CACHEDIR.TAG"; \
+	else \
+		echo "volume has $${free_gb:-unknown} GB free and the dir meters under $(PRUNE_TARGET_GB) GB — no prune"; \
+	fi
 
 ## Mechanical bound on the gitignored dev-docs/ working folder — the one
 ## accumulation with no reviewer, no CI and no remote watching it grow. The

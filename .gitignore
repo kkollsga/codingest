@@ -36,9 +36,11 @@ coverage.xml
 docs/_build/
 docs/autoapi/
 
-# Claude Code local settings (skills / working config; local state, never
-# committed — mirrors kglite's .gitignore).
+# Agent skills and local settings are working state, not published source.
+# `.agents/skills/` is the local authority and `.claude/skills/` its adapter;
+# both can be re-derived from doctrine plus this repository's conventions.
 /.claude/
+/.agents/skills/
 
 # Local dev working state — never committed (see dev-docs/README.md, inbox/README.md)
 # — with ONE exception: `bench/scripts/` IS tracked. Harnesses there are
