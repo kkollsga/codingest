@@ -7,6 +7,36 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.18 — 2026-09-11: 30 corpora, all green across the kglite 0.17.3 engine move
+
+Released state: unchanged corpus set (**30 corpora**), all green in the
+release-mode gate (`cargo test --workspace --release`; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically`, and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite also
+passed all 31 tests against the installed kglite 0.17.3 wheel. No builder source
+changed since v0.2.17: `git diff v0.2.17..HEAD -- crates/codingest/src` is
+empty.
+
+**Every golden digest is byte-identical across the move.** KGLite 0.17.2 adds
+modern read-`CALL` scope clauses and set composition, Cypher 25 spellings, and
+incoming-row semantics for procedures and read subqueries. KGLite 0.17.3
+accelerates typed and undirected relationship counts and bound-node incident
+predicates, and fixes correlated `EXISTS` and fused aggregate plans. Those are
+query-engine paths exposed through `codingest query` and the embedded
+`codingest-mcp` server. The builder's persistence entries
+(`prepare_kgl_write`, `write_kgl`, and `save_graph`) are unchanged, matching the
+unchanged corpus bytes.
+
+**The perf anchor PASSES in both modes.** Against the 0.2.13 baseline selected
+by the three-release window, the `top20_by_branch_count` control read +6.25%
+docs-on and +20.00% docs-off; the docs-off movement was only +0.003 ms raw,
+below the baseline's 0.005 ms noise floor, so the instrument remained steady.
+No row cleared both the +30% limit and its absolute floor. Node and edge counts
+were unchanged in both modes. `BENCHMARKS.md` was not refreshed because no
+perf-sensitive builder path changed; the fresh 0.2.18 baseline will be captured
+after publication, while the committed 0.2.17 record remains the historical
+baseline for that release.
+
 ## Release 0.2.17 — 2026-09-08: 30 corpora, all green across the kglite 0.17.1 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the

@@ -10,6 +10,27 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-09-11
+
+### Changed
+- **Engine floor moves to kglite 0.17.3.** The 0.17.2 query release adds
+  modern `CALL` subquery scope clauses and set composition, Cypher 25
+  `FILTER`, `OFFSET`, `NODETACH DELETE`, `FINISH` and `INSERT`, and makes
+  ordinary procedures and read subqueries obey the incoming row pipeline.
+  These spellings and semantics reach both `codingest query` and the embedded
+  `codingest-mcp` server. The public Rust `PassCtx` struct is no longer
+  constructible with a literal, but codingest never constructs it.
+- KGLite 0.17.3 accelerates typed and undirected relationship counts and
+  bound-node incident-edge predicates. It also fixes correlated `EXISTS`
+  patterns and fused aggregate plans that previously ignored labels, inline
+  properties or null relationship bindings. These are query-engine paths;
+  codingest's builder and every persistence entry it calls are unchanged.
+- Floor declarations moved together: the workspace `kglite` and
+  `kglite-mcp-server` pins, Python requirement and lockstep comment, CI wheel
+  install, Python import-failure hint, and current README/docs snippets now
+  require 0.17.3. Historical release, parity and benchmark citations remain
+  unchanged.
+
 ## [0.2.17] - 2026-09-08
 
 ### Changed

@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.17"
+version = "0.2.18"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,8 +17,21 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.1
-# floor spans four upstream releases: codingest took none of 0.16.23, 0.16.24
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.3
+# floor spans the 0.17.2 and 0.17.3 query releases. Nothing in codingest's
+# builder source moved for either release; the changes reach users through
+# `codingest query` and the embedded `codingest-mcp` server:
+#   * read `CALL` subqueries gain modern scope clauses plus UNION / INTERSECT /
+#     EXCEPT composition, and Cypher 25 adds FILTER, OFFSET, NODETACH DELETE,
+#     FINISH and INSERT. Procedure calls now execute per incoming row instead
+#     of reviving an empty pipeline. `PassCtx`'s new private fields are a Rust
+#     break for struct-literal callers, but codingest never constructs one.
+#   * typed and undirected relationship counts, correlated EXISTS patterns,
+#     and fused OPTIONAL MATCH / two-MATCH aggregates are faster or corrected.
+#     Those are engine query paths only. The builder's `prepare_kgl_write`,
+#     `write_kgl` and `save_graph` persistence entries are unchanged.
+# The preceding 0.17.1 floor spanned four upstream releases: codingest took
+# none of 0.16.23, 0.16.24
 # or 0.17.0, so all four land here together. Nothing in our source moved for
 # it — the workspace builds, clippys and tests clean against 0.17.1 with zero
 # edits, and every corpus golden is byte-identical across the move. Where they
@@ -491,8 +504,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.1", default-features = false }
-kglite-mcp-server = { version = "0.17.1", default-features = false }
+kglite = { version = "0.17.3", default-features = false }
+kglite-mcp-server = { version = "0.17.3", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

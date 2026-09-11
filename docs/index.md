@@ -11,14 +11,25 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.1
+## Requires kglite ≥ 0.17.3
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.1 to keep the Rust writer and the
-Python reader on one engine release. It moves four upstream releases at once —
-codingest took none of 0.16.23, 0.16.24 or 0.17.0 — and none of them needed a
-source change here. In the embedded MCP server, every route that reaches the
+in-tree builder. The floor sits at 0.17.3 to keep the Rust writer and the
+Python reader on one engine release. codingest takes 0.17.2 and 0.17.3
+together, and neither needed a source change
+here. Read `CALL` subqueries now accept modern scope clauses and set
+composition; procedures and read subqueries obey their incoming row pipeline;
+Cypher 25 adds `FILTER`, `OFFSET`, `NODETACH DELETE`, `FINISH`, and `INSERT`.
+Typed and undirected relationship counts and bound-node incident predicates
+are faster, while correlated `EXISTS` patterns and fused aggregates no longer
+drop endpoint constraints or null relationship bindings. These query-engine
+changes reach `codingest query` and the embedded `codingest-mcp` server; the
+builder and its `.kgl` persistence entries are unchanged.
+
+Beneath it, 0.17.1 spans four upstream releases — codingest took none of
+0.16.23, 0.16.24 or 0.17.0 — and none of them needed a source change here. In
+the embedded MCP server, every route that reaches the
 engine (`cypher_query`, manifest `tools[].cypher` templates, recipe queries)
 now runs under a 180-second query deadline; it had none before, so a runaway
 query held the graph's read lock and took the whole server with it. The
@@ -156,6 +167,7 @@ codingest-mcp --watch /absolute/path/to/repo   # live MCP server over stdio
 cli
 mcp
 python-api
+languages
 agc-assembly
 ```
 

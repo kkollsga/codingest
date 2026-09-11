@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "codingest"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "codingest-cli"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "anyhow",
  "clap",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "codingest-mcp"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "anyhow",
  "codingest",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "codingest-py"
-version = "0.2.17"
+version = "0.2.18"
 dependencies = [
  "codingest",
  "codingest-cli",
@@ -1366,9 +1366,9 @@ dependencies = [
 
 [[package]]
 name = "kglite"
-version = "0.17.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a28e49b7ad2d0489043994eedb1f8234e355d5b3a32797cbb43013f32682ea72"
+checksum = "c414d1f4ae2d7d0af3ce088b843fbc3622cac2c29467cc81bc2dc639006136e0"
 dependencies = [
  "bzip2",
  "chrono",
@@ -1402,9 +1402,9 @@ dependencies = [
 
 [[package]]
 name = "kglite-mcp-server"
-version = "0.17.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc38e9f116553e64e560edf72c83a17bbc7f2ab947a1f47be39659d6d86890e2"
+checksum = "764efb5d817e481d9c96302c185a71bceba6ed09a79b3c6ad2f131688c7384c9"
 dependencies = [
  "anyhow",
  "bytes",
