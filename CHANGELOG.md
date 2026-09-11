@@ -10,6 +10,17 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-09-11
+
+### Changed
+- **The bundled `codingest-code-review` skill keeps evidence retrieval bounded.**
+  Review agents now choose the shortest relevant path among direct source reads,
+  targeted Cypher, bounded exploration, and literal search; reuse known schema
+  and prior evidence; constrain source ranges and result sets; and stop once the
+  requested conclusion is supported. Public-repository guidance and query
+  patterns carry the same policy, and the installable packaged copy matches the
+  authoritative skill byte for byte.
+
 ## [0.2.18] - 2026-09-11
 
 ### Changed
