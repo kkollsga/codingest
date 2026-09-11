@@ -33,9 +33,13 @@ docs-on and +20.00% docs-off; the docs-off movement was only +0.003 ms raw,
 below the baseline's 0.005 ms noise floor, so the instrument remained steady.
 No row cleared both the +30% limit and its absolute floor. Node and edge counts
 were unchanged in both modes. `BENCHMARKS.md` was not refreshed because no
-perf-sensitive builder path changed; the fresh 0.2.18 baseline will be captured
+perf-sensitive builder path changed. The fresh 0.2.18 baseline was captured
 after publication, while the committed 0.2.17 record remains the historical
-baseline for that release.
+baseline for that release. The post-publication capture recorded three
+post-warmup runs per mode: node/edge counts held at 567/880 docs-on and 560/859
+docs-off; build-time means were 0.0112 s and 0.0097 s. Its measured query-noise
+floors are 0.0125 ms and 0.0075 ms, and `varlen_callers_1_3` becomes the control
+at 0.028 ms in both modes, clearing those floors by 2.24x and 3.73x.
 
 ## Release 0.2.17 — 2026-09-08: 30 corpora, all green across the kglite 0.17.1 engine move
 
