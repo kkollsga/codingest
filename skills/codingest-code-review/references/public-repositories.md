@@ -18,3 +18,13 @@ For an existing cache, fetch only the explicit refs needed. The revision build
 uses `git archive` and never checks out or runs the repository. Do not silently
 switch a user's working checkout. Verify GitHub claims against the resolved
 commit and cite stable source links when reporting findings.
+
+## Keep repository investigations bounded
+
+When using the open-source MCP, activate the requested repository and revision,
+then follow the routing policy in the parent skill. Reuse tool signatures and
+schema shapes already observed for the same active graph. If a tool or shape is
+unknown, discover only that tool or the node/connection types needed for the
+next query; broad tool catalogs and full schemas are not prerequisites. Start
+from the named symbol or subsystem, and exclude fixtures, generated sources,
+vendored trees, and examples unless they bear on the question.

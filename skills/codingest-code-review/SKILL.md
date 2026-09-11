@@ -14,43 +14,60 @@ git diff, source reading, and literal-text search; it does not replace them.
 > `pip install codingest` provides both plus the builder-aware
 > `codingest-mcp` server. Rust-only environments can alternatively use Cargo.
 
-1. Inspect the diff and repository guidance first. Identify changed symbols and
-   the base/head revisions.
-2. Build or refresh the graph without executing repository code:
+Inspect the diff and repository guidance first. Identify changed symbols and
+the base/head revisions, then build or refresh the graph without executing
+repository code:
 
-   ```bash
-   codingest build . --output .kglite/code-review.kgl --format json
-   ```
+```bash
+codingest build . --output .kglite/code-review.kgl --format json
+```
 
-   For a committed comparison, use one graph spanning both revisions:
+For a committed comparison, use one graph spanning both revisions:
 
-   ```bash
-   codingest build . --revs '<base>' '<head>' \
-     --output .kglite/code-review.kgl --format json
-   ```
+```bash
+codingest build . --revs '<base>' '<head>' \
+  --output .kglite/code-review.kgl --format json
+```
 
-3. Always discover the actual schema before writing Cypher:
+Before reusing an artifact, check freshness:
 
-   ```bash
-   kglite describe .kglite/code-review.kgl --connections --cypher
-   ```
+```bash
+codingest status --output .kglite/code-review.kgl --format json
+```
 
-4. Query the smallest structural question that can confirm or reject a review
-   hypothesis. Use JSON for agent parsing:
+## Retrieve only what answers the question
 
-   ```bash
-   kglite query .kglite/code-review.kgl '<cypher>' --format json
-   ```
+Choose the narrowest route for the uncertainty in front of you; these are
+alternatives, not a compulsory sequence. Reuse tool signatures already known
+in the current session; if a needed tool is not visible, discover that tool
+rather than loading a broad catalog.
 
-5. Open every implicated file and verify the behavior at exact lines. Report
-   only findings supported by source evidence. Do not infer runtime behavior
-   from an edge alone.
+- **Known symbol or location:** read it directly. With MCP, use
+  `read_code_source` for a qualified name or `read_source` for a path, applying
+  `start_line`, `end_line`, and `max_chars` when a full body or file is not
+  needed.
+- **Exact structural question:** use `cypher_query`, or `kglite query` at the
+  CLI. Reuse a schema already observed for the same unchanged graph. Otherwise
+  inspect only the needed node or connection shape with `graph_overview` or
+  `kglite describe`; do not retrieve the whole schema by habit.
+- **Broad explanation or unfamiliar subsystem:** use bounded `explore`, starting
+  with a short topic, a few `max_entities`, shallow `max_depth`, and
+  `include_source: false` unless bodies are needed. Narrow to selected symbols
+  before reading source.
+- **Literal text:** use grep/ripgrep for error strings, comments, and config
+  keys, then open only the relevant matches.
 
-6. Before reusing an artifact, check freshness:
+Every additional read should resolve a concrete uncertainty needed for the
+answer. Project only useful Cypher properties, return a few relevant candidates,
+and exclude unrelated fixtures, generated code, vendors, or examples when the
+question does not cover them. If output truncates, narrow the query or source
+range instead of repeatedly increasing output. Reuse evidence already seen
+unless its source or active graph changed.
 
-   ```bash
-   codingest status --output .kglite/code-review.kgl --format json
-   ```
+Open implicated code at exact lines before claiming behavior; an edge alone is
+not runtime proof. Stop when the requested conclusions are supported. Expand
+only for a contradiction, missing evidence, or a correctness risk that could
+change the answer.
 
 See [queries.md](references/queries.md) for query patterns,
 [public-repositories.md](references/public-repositories.md) for safe public-repo
@@ -88,7 +105,8 @@ prior question — what is eligible to be a finding at all.
 
 ## Honesty rules
 
-- Never invent labels, properties, or connection types: `describe()` first.
+- Never invent labels, properties, or connection types. Discover an unfamiliar
+  shape before querying it; reuse a known shape while the graph is unchanged.
 - Treat unresolved or missing graph edges as absence of evidence, not proof.
 - Quote paths and revisions passed through the shell.
 - Never build, import, or execute code from a repository merely to review it.

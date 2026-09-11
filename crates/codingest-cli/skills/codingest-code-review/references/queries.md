@@ -1,7 +1,9 @@
 # Code-review query patterns
 
-Run `kglite describe <graph> --connections --cypher` first and adapt these
-patterns to the labels and properties it reports.
+Adapt these patterns to the labels and properties already known for the active
+graph. If the needed node or connection shape is unfamiliar, inspect that shape
+with `graph_overview` or `kglite describe <graph> --connections --cypher` before
+querying it.
 
 Find a symbol before asking about its relationships:
 
