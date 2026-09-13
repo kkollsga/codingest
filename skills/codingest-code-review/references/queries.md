@@ -1,63 +1,177 @@
 # Code-review query patterns
 
-Adapt these patterns to the labels and properties already known for the active
-graph. If the needed node or connection shape is unfamiliar, inspect that shape
-with `graph_overview` or `kglite describe <graph> --connections --cypher` before
-querying it.
+Use these recipes only when the relationship answers the current question.
+Resolve exact qualified identities first, establish per-target coverage, then
+read the selected source. Do not fetch callers, callees, paths, type consumers,
+and implementations as a routine inventory.
 
-Find a symbol before asking about its relationships:
+The examples use `codingest query` because it is installed with this skill and
+returns complete JSON/CSV. Set `GRAPH` to the saved `.kgl` artifact. Each query
+is sent on stdin through a quoted heredoc, so the shell cannot expand `$`,
+backticks, or command substitutions inside the Cypher. The CLI has no parameter
+binding flag: replace example literals only with trusted graph/source
+identifiers, and escape a Cypher string quote as `''`.
 
-```cypher
-MATCH (n)
-WHERE n.name = '<symbol>' OR n.qualified_name = '<qualified_symbol>'
-RETURN labels(n) AS labels, n.qualified_name AS symbol,
-       n.file_path AS file, n.line_number AS line
-LIMIT 20
+For MCP, send the Cypher body to `cypher_query`. Replace a CLI literal such as
+`'crate::src::graph::session::execute_mut'` with `$target` and pass
+`params={"target":"crate::src::graph::session::execute_mut"}`; MCP parameters bind
+values as data. Inspect `graph_overview` first when a label, property, or edge
+shape is not already known.
+
+Resolve requested targets and distinguish a missing target (`target` is null)
+from an existing target with no callers (`target` is present and `callers` is
+zero):
+
+<!-- codingest-query: target-coverage -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+UNWIND ['crate::src::graph::session::execute_mut',
+        'crate::src::graph::session::unused_target',
+        'crate::src::graph::session::missing_target'] AS requested
+OPTIONAL MATCH (target:Function {qualified_name: requested})
+OPTIONAL MATCH (caller:Function)-[:CALLS]->(target)
+RETURN requested, target.qualified_name AS target,
+       count(caller) AS callers
+ORDER BY requested
+CYPHER
 ```
 
-After confirming the connection name, inspect direct callers:
+Count production and test callers before requesting pages. Keep different
+targets in different queries: a global `LIMIT` shared by read and write targets
+can fill with one target and hide the other.
 
-```cypher
-MATCH (caller)-[:CALLS]->(target)
-WHERE target.qualified_name = '<qualified_symbol>'
-RETURN caller.qualified_name AS caller,
-       caller.file_path AS file, caller.line_number AS line
-ORDER BY file, line
+<!-- codingest-query: write-caller-coverage -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (caller:Function)-[:CALLS]->
+      (target:Function {qualified_name: 'crate::src::graph::session::execute_mut'})
+RETURN target.qualified_name AS target, caller.is_test AS is_test,
+       count(caller) AS callers
+ORDER BY is_test
+CYPHER
 ```
 
-Find tests structurally connected to a changed symbol — anchor the traversal on
-the symbol, not on the tests:
-
-```cypher
-MATCH (changed {qualified_name: '<qualified_symbol>'})<-[*1..4]-(test)
-WHERE test.is_test = true
-RETURN DISTINCT test.qualified_name AS test,
-       test.file_path AS file, test.line_number AS line
-LIMIT 100
+<!-- codingest-query: read-caller-coverage -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (caller:Function)-[:CALLS]->
+      (target:Function {qualified_name: 'crate::src::graph::session::execute_read'})
+RETURN target.qualified_name AS target, caller.is_test AS is_test,
+       count(caller) AS callers
+ORDER BY is_test
+CYPHER
 ```
 
-An anchored spelling starts from a point lookup instead of scanning every node
-and post-filtering a sparse property, and it is immune to the traversal seed
-caps — which since kglite 0.16.6 are advisory, with the pass re-run exactly when
-it hits a cap and comes back short of the `LIMIT`. Before that, the unanchored
-shape could silently return partial results.
+Fetch production and test pages separately. Project exact identity and source
+location plus the evidence that qualified each CALLS edge. `candidates > 1`
+means a call site fanned out; `import_backed = false` is unconfirmed, not
+refuted. `call_lines` locates call sites in the caller.
 
-For a yes/no reachability question, ask for one witness instead of the whole
-set:
-
-```cypher
-MATCH (changed {qualified_name: '<qualified_symbol>'})
-WHERE EXISTS { (changed)<-[*1..4]-({is_test: true}) }
-RETURN changed.qualified_name AS reachable_from_a_test
+<!-- codingest-query: production-callers -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (caller:Function)-[rel:CALLS]->
+      (target:Function {qualified_name: 'crate::src::graph::session::execute_mut'})
+WHERE caller.is_test = false
+RETURN target.qualified_name AS target, caller.qualified_name AS caller,
+       caller.file_path AS file, caller.line_number AS line,
+       rel.resolution AS resolution, rel.candidates AS candidates,
+       rel.import_backed AS import_backed, rel.call_lines AS call_lines
+ORDER BY caller, file, line
+SKIP 0 LIMIT 25
+CYPHER
 ```
 
-Since kglite 0.16.6 `EXISTS { … }` stops at the first witness rather than
-expanding the pattern in full — the deep-existence shape had been costing
-hundreds of times its fixed-hop equivalent. The inline `{is_test: true}` map
-keeps that fast path; an inner `WHERE` inside the braces does not.
+<!-- codingest-query: test-callers -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (caller:Function)-[rel:CALLS]->
+      (target:Function {qualified_name: 'crate::src::graph::session::execute_mut'})
+WHERE caller.is_test = true
+RETURN target.qualified_name AS target, caller.qualified_name AS caller,
+       caller.file_path AS file, caller.line_number AS line,
+       rel.resolution AS resolution, rel.candidates AS candidates,
+       rel.import_backed AS import_backed, rel.call_lines AS call_lines
+ORDER BY caller, file, line
+SKIP 0 LIMIT 25
+CYPHER
+```
 
-For a multi-revision graph, prefer the built-in delta procedure shown by
-`describe()`:
+Raise `LIMIT` or advance `SKIP` when the preceding count says more rows exist.
+A complete page does not prove the query covered another target or an edge the
+builder did not emit. In particular, an unresolved source call can have no
+CALLS edge; inspect the selected source before concluding that a call is absent.
+
+Inspect direct callees when the uncertainty runs in the other direction:
+
+<!-- codingest-query: direct-callees -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (caller:Function {qualified_name: 'crate::src::service::write_entry'})
+      -[rel:CALLS]->(callee:Function)
+RETURN caller.qualified_name AS caller, callee.qualified_name AS callee,
+       caller.file_path AS caller_file, caller.line_number AS caller_line,
+       callee.file_path AS callee_file, callee.line_number AS callee_line,
+       rel.resolution AS resolution, rel.candidates AS candidates,
+       rel.import_backed AS import_backed, rel.call_lines AS call_lines
+ORDER BY callee, callee_file, callee_line
+LIMIT 25
+CYPHER
+```
+
+Ask for a small number of bounded path witnesses between two resolved symbols,
+rather than an unbounded neighborhood:
+
+<!-- codingest-query: bounded-call-path -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH path = (start:Function {qualified_name: 'crate::src::service::path_start'})
+             -[:CALLS*1..4]->
+             (finish:Function {qualified_name: 'crate::src::service::path_finish'})
+RETURN [step IN nodes(path) | step.qualified_name] AS functions,
+       length(path) AS hops
+ORDER BY hops, functions
+LIMIT 10
+CYPHER
+```
+
+For type impact through explicit parameters, include `both` because one edge
+aggregates a type used as both a parameter and a return value:
+
+<!-- codingest-query: type-consumers -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (consumer:Function)-[use:USES_TYPE]->
+      (used:Struct {qualified_name: 'crate::src::model::Request'})
+WHERE use.position IN ['parameter', 'both']
+RETURN used.qualified_name AS used_type,
+       consumer.qualified_name AS consumer,
+       consumer.file_path AS file, consumer.line_number AS line,
+       use.position AS position
+ORDER BY consumer, file, line
+LIMIT 25
+CYPHER
+```
+
+Ask for trait implementations only when implementation coverage is the
+question. Macro-generated or heuristic structure may be absent from the graph,
+so a missing edge is a reason to inspect source, not proof of no implementation.
+
+<!-- codingest-query: trait-implementations -->
+```sh
+codingest query --graph "$GRAPH" --format json - <<'CYPHER'
+MATCH (implementor:Struct)-[:IMPLEMENTS]->
+      (implemented:Trait {qualified_name: 'crate::src::service::Handler'})
+RETURN implemented.qualified_name AS trait,
+       implementor.qualified_name AS implementor,
+       implementor.file_path AS file, implementor.line_number AS line
+ORDER BY implementor, file, line
+LIMIT 25
+CYPHER
+```
+
+For a multi-revision graph, use the built-in delta procedure shown by
+`graph_overview`/`describe`:
 
 ```cypher
 CALL rev_diff({from: '<base>', to: '<head>'})
@@ -66,22 +180,7 @@ RETURN bucket, type, qualified_name, name, file, line
 ORDER BY bucket, type, qualified_name
 ```
 
-Prefer `$placeholders` over splicing values into the query text: since kglite
-0.16.6 the MCP `cypher_query` tools take a `params` object, which binds both the
-`WHERE n.x = $p` and the inline `{x: $p}` spellings as data that can never be
-read as Cypher syntax. An unbound `$param` now raises `Missing parameter: $p` —
-it used to answer `0` or an empty result on aggregate and inline-map shapes, so
-a missing binding read as a fact about the graph. CLI one-shot queries still
-take literal Cypher: there, replace the angle-bracket placeholders only with
-trusted git or source identifiers and escape Cypher string quotes, or use the
-JSONL session API's parameter support for untrusted values.
-
-Two more behaviours, in place since kglite 0.16.6, worth knowing while reading
-results:
-
-- `=~` matches the **whole** value, not a substring. `n.name =~ 'admin'` no
-  longer selects `'superadmin'`; write `CONTAINS`, or `=~ '.*admin.*'`.
-- A result may carry a trailing `warnings:` block — an unknown projection
-  property with a "did you mean?" hint, or a relationship pattern written in the
-  wrong direction. Treat it as a signal that the query shape is wrong, not as
-  noise: those are exactly the mistakes that return a confident empty answer.
+`=~` matches the whole value. Use `CONTAINS` for substring search or include
+`.*` explicitly. Treat query warnings about unknown properties or reversed
+relationships as evidence that the query shape must be corrected before its
+empty result can support a conclusion.

@@ -45,12 +45,14 @@ pub struct UsesTypeEdge {
     pub target_node_type: &'static str,
     /// Where in the function signature this type appears. Aggregates across
     /// all sites in the same function — a type used as both a parameter and
-    /// a return value yields `"both"`. Values: `"parameter"` | `"return"` |
-    /// `"both"` | `"signature"`. `"signature"` is the fallback when the
-    /// parser couldn't extract structured parameters (typically the AC
-    /// scanner found the type embedded in the signature string).
+    /// a return value yields `"both"`. Values: `"parameter"` | `"receiver"` |
+    /// `"return"` | `"both"` | `"signature"`. `"receiver"` is the implicit
+    /// input of a method, kept distinct from an explicit parameter;
+    /// `"signature"` is the fallback when the parser couldn't extract
+    /// structured parameters (typically the AC scanner found the type embedded
+    /// in the signature string).
     ///
-    /// Cypher: `WHERE r.position IN ['parameter','both']` for "consumes T",
+    /// Cypher: `WHERE r.position IN ['parameter','receiver','both']` for "consumes T",
     /// `WHERE r.position IN ['return','both']` for "produces T".
     pub position: &'static str,
 }

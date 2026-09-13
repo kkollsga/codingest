@@ -14,6 +14,12 @@ ship time — it's the only place the version bumps.
 - **Revision builds no longer fail after a complete small archive extract.**
   The tar consumer drains Git's record padding through EOF, and real pipeline
   failures now report both child statuses and both stderr streams.
+- **The bundled code-review skill now ships executable, coverage-aware query
+  recipes.** Quoted-heredoc CLI examples resolve exact targets, separate
+  production and test caller coverage per target, and project CALLS confidence
+  and source-location metadata. Focused callee, bounded-path, type-consumer and
+  trait-implementation recipes are available when those relationships answer
+  the current question.
 - **Engine floor moves to kglite 0.17.4.** Missing Cypher parameters now fail
   before candidate selection, so empty label, inline-map and `WHERE` paths
   cannot disguise an absent binding as zero rows. Installing or clearing a
