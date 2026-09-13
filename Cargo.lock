@@ -355,6 +355,8 @@ dependencies = [
  "anyhow",
  "codingest",
  "kglite-mcp-server",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

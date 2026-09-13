@@ -17,3 +17,7 @@ path = "src/main.rs"
 codingest = { version = "0.2.19", path = "../codingest" }
 kglite-mcp-server = { workspace = true }
 anyhow = "1.0.104"
+
+[dev-dependencies]
+serde_json = "1.0.151"
+tempfile = "3.27.0"
