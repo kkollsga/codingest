@@ -17,7 +17,15 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.3
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.4
+# floor rejects every unbound Cypher parameter before candidate selection, so
+# an empty label scan, inline map, WHERE or subquery cannot hide a missing
+# binding behind zero rows. Installing or clearing a declared schema now
+# invalidates cached diagnostics, including on the Python graph returned by
+# `codingest.build()`. The embedded MCP server gains bounded, navigable query
+# responses backed by retained complete results; the standalone codingest CLI
+# keeps complete JSON and CSV output.
+# The preceding 0.17.3
 # floor spans the 0.17.2 and 0.17.3 query releases. Nothing in codingest's
 # builder source moved for either release; the changes reach users through
 # `codingest query` and the embedded `codingest-mcp` server:
@@ -504,8 +512,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.3", default-features = false }
-kglite-mcp-server = { version = "0.17.3", default-features = false }
+kglite = { version = "0.17.4", default-features = false }
+kglite-mcp-server = { version = "0.17.4", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

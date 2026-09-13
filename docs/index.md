@@ -11,14 +11,20 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.3
+## Requires kglite ≥ 0.17.4
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.3 to keep the Rust writer and the
-Python reader on one engine release. codingest takes 0.17.2 and 0.17.3
-together, and neither needed a source change
-here. Read `CALL` subqueries now accept modern scope clauses and set
+in-tree builder. The floor sits at 0.17.4 to keep the Rust writer and the
+Python reader on one engine release. Missing Cypher parameters are now rejected
+before candidate selection, so an empty label scan, inline map or `WHERE`
+cannot hide an absent binding behind zero rows. Installing or clearing a
+declared schema refreshes cached diagnostics. The embedded MCP server now
+returns bounded, navigable previews backed by retained complete results, while
+`codingest query --format json/csv` remains complete.
+
+The preceding 0.17.3 floor took 0.17.2 and 0.17.3 together, and neither needed
+a source change here. Read `CALL` subqueries accept modern scope clauses and set
 composition; procedures and read subqueries obey their incoming row pipeline;
 Cypher 25 adds `FILTER`, `OFFSET`, `NODETACH DELETE`, `FINISH`, and `INSERT`.
 Typed and undirected relationship counts and bound-node incident predicates

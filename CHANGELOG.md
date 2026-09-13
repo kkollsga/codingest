@@ -10,6 +10,21 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.17.4.** Missing Cypher parameters now fail
+  before candidate selection, so empty label, inline-map and `WHERE` paths
+  cannot disguise an absent binding as zero rows. Installing or clearing a
+  declared schema refreshes cached query diagnostics on the
+  `kglite.KnowledgeGraph` returned by `codingest.build()`.
+- The embedded `codingest-mcp` server inherits KGLite's bounded response
+  envelope, retained complete query results and advertised targeted expansion.
+  The standalone `codingest query --format json/csv` contract remains complete,
+  including results larger than the MCP preview budget.
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint and current README/docs snippets now require 0.17.4.
+  Historical release, parity and benchmark records remain unchanged.
+
 ## [0.2.19] - 2026-09-11
 
 ### Changed

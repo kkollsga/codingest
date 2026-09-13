@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 import kglite
+import pytest
 
 import codingest
 
@@ -71,6 +72,44 @@ def test_returned_graph_is_queryable(sample_tree: Path) -> None:
     g = codingest.build(str(sample_tree))
     names = {r["n"] for r in g.cypher("MATCH (f:Function) RETURN f.name AS n")}
     assert "greet" in names
+
+
+def test_missing_parameter_errors_with_empty_candidates(sample_tree: Path) -> None:
+    g = codingest.build(str(sample_tree))
+    for query in (
+        "MATCH (n:Absent {name: $missing}) RETURN n",
+        "MATCH (n:Absent) WHERE n.name = $missing RETURN n",
+    ):
+        with pytest.raises(kglite.KgError) as excinfo:
+            g.cypher(query)
+        assert type(excinfo.value) is kglite.CypherExecutionError
+        assert str(excinfo.value) == "Cypher execution error: Missing parameter: $missing"
+
+
+def test_returned_graph_refreshes_warm_query_after_schema_definition(
+    sample_tree: Path,
+) -> None:
+    g = codingest.build(str(sample_tree))
+    query = (
+        "MATCH (f:Function) WHERE f.line_number > 'forty' "
+        "RETURN f.name AS name ORDER BY name"
+    )
+
+    for _ in range(2):
+        warm = g.cypher(query)
+        assert warm.to_list() == []
+        assert warm.diagnostics["warnings"] == []
+
+    g.define_schema(
+        {"nodes": {"Function": {"types": {"line_number": "integer"}}}}
+    )
+    refreshed = g.cypher(query)
+    assert refreshed.to_list() == []
+    assert refreshed.diagnostics["warnings"] == [
+        "WHERE compares Function.line_number (schema-defined integer) with a "
+        "STRING literal 'forty' — a cross-type ordering comparison is null in "
+        "openCypher, so this filters out every row."
+    ]
 
 
 # ── save_to persistence ────────────────────────────────────────────────────

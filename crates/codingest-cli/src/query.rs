@@ -291,7 +291,7 @@ mod tests {
     /// A one-file source tree built into a `.kgl` that sits *beside* the tree,
     /// not inside it — so a test can delete the sources and exercise the
     /// "freshness could not be verified" path with the artifact still loadable.
-    fn fixture() -> Fixture {
+    fn fixture_with_source(source_text: &str) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("proj");
         fs::create_dir(&source).unwrap();
@@ -301,11 +301,7 @@ mod tests {
         )
         .unwrap();
         fs::create_dir(source.join("src")).unwrap();
-        fs::write(
-            source.join("src/lib.rs"),
-            "pub fn alpha() {}\npub fn beta() { alpha(); }\n",
-        )
-        .unwrap();
+        fs::write(source.join("src/lib.rs"), source_text).unwrap();
         let graph = dir.path().join("demo.kgl");
         build(&BuildArgs {
             source: source.clone(),
@@ -325,6 +321,10 @@ mod tests {
             source,
             graph,
         }
+    }
+
+    fn fixture() -> Fixture {
+        fixture_with_source("pub fn alpha() {}\npub fn beta() { alpha(); }\n")
     }
 
     /// `QueryArgs` for a fixture graph. `query` is unused by `run_query` (the
@@ -422,6 +422,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn query_missing_parameter_errors_with_empty_candidates_for_map_and_where() {
+        let fx = fixture();
+        for (query, expected) in [
+            (
+                "MATCH (n:$label) RETURN n",
+                "Cypher execution error: Missing parameter: $label (used as a label or relationship type)",
+            ),
+            (
+                "MATCH (n:Absent {name: $missing}) RETURN n",
+                "Cypher execution error: Missing parameter: $missing",
+            ),
+            (
+                "MATCH (n:Absent) WHERE n.name = $missing RETURN n",
+                "Cypher execution error: Missing parameter: $missing",
+            ),
+        ] {
+            for _ in 0..2 {
+                let error = run_query(&args(&fx.graph, QueryFormat::Json), query)
+                    .unwrap_err()
+                    .to_string();
+                assert_eq!(error, expected, "{query}");
+            }
+        }
+    }
+
     /// Independently execute `query` and hand back the raw engine result, so a
     /// format test can compare the CLI's rendering against the engine's own
     /// projection rather than against a hand-copied string.
@@ -483,6 +509,36 @@ mod tests {
             "f.name,f.qualified_name\nalpha,crate::src::alpha\nbeta,crate::src::beta\n"
         );
         assert_eq!(out.rows, 2);
+    }
+
+    #[test]
+    fn query_json_and_csv_remain_complete_beyond_mcp_preview_limit() {
+        let expected_names = (0..247)
+            .map(|index| format!("row_{index:03}_{}", "x".repeat(72)))
+            .collect::<Vec<_>>();
+        let source = expected_names
+            .iter()
+            .map(|name| format!("pub fn {name}() {{}}\n"))
+            .collect::<String>();
+        let fx = fixture_with_source(&source);
+        let query = "MATCH (f:Function) RETURN f.name ORDER BY f.name ASC";
+
+        let json = run_query(&args(&fx.graph, QueryFormat::Json), query).unwrap();
+        assert_eq!(json.rows, 247);
+        assert!(json.stdout.len() > 16_384, "{} bytes", json.stdout.len());
+        let parsed: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+        let expected_rows = expected_names
+            .iter()
+            .map(|name| serde_json::json!([name]))
+            .collect::<Vec<_>>();
+        assert_eq!(parsed["columns"], serde_json::json!(["f.name"]));
+        assert_eq!(parsed["rows"], serde_json::json!(expected_rows));
+
+        let csv = run_query(&args(&fx.graph, QueryFormat::Csv), query).unwrap();
+        assert_eq!(csv.rows, 247);
+        assert!(csv.stdout.len() > 16_384, "{} bytes", csv.stdout.len());
+        let expected_csv = format!("f.name\n{}\n", expected_names.join("\n"));
+        assert_eq!(csv.stdout, expected_csv);
     }
 
     #[test]
