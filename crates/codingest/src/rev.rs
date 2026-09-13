@@ -221,9 +221,28 @@ fn verify_rev(repo_root: &Path, rev: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+fn spawn_archive_extractor(
+    archive_stdout: impl Into<Stdio>,
+    dest: &Path,
+) -> Result<std::process::Child, String> {
+    Command::new("tar")
+        // Both bsdtar and GNU tar otherwise stop at the first end-of-archive
+        // blocks. Git can still be writing record padding at that point and
+        // receive SIGPIPE even though extraction completed successfully.
+        .arg("--ignore-zeros")
+        .arg("-x")
+        .arg("-C")
+        .arg(dest)
+        .stdin(archive_stdout)
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("tar failed to start: {}", e))
+}
+
 /// Stream `git archive --format=tar <rev>` into `tar -x -C <dest>`. Both run
 /// concurrently over a pipe (bounded memory — the tar is never buffered
-/// whole); list args, no shell.
+/// whole); list args, no shell. The extractor reads through tar end markers to
+/// EOF so Git can finish writing record padding without receiving SIGPIPE.
 fn archive_into(repo_root: &Path, rev: &str, dest: &Path) -> Result<(), String> {
     let mut archive = Command::new("git")
         .arg("-C")
@@ -240,14 +259,7 @@ fn archive_into(repo_root: &Path, rev: &str, dest: &Path) -> Result<(), String> 
         .take()
         .ok_or_else(|| "git archive produced no stdout".to_string())?;
 
-    let tar = Command::new("tar")
-        .arg("-x")
-        .arg("-C")
-        .arg(dest)
-        .stdin(Stdio::from(archive_stdout))
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("tar failed to start: {}", e))?;
+    let tar = spawn_archive_extractor(Stdio::from(archive_stdout), dest)?;
 
     // tar reads the pipe as git writes; wait for the reader first, then the
     // writer, so neither blocks on a full pipe.
@@ -258,16 +270,14 @@ fn archive_into(repo_root: &Path, rev: &str, dest: &Path) -> Result<(), String> 
         .wait_with_output()
         .map_err(|e| format!("git archive wait failed: {}", e))?;
 
-    if !archive_out.status.success() {
+    if !archive_out.status.success() || !tar_out.status.success() {
         return Err(format!(
-            "git archive failed: {}",
-            String::from_utf8_lossy(&archive_out.stderr).trim()
-        ));
-    }
-    if !tar_out.status.success() {
-        return Err(format!(
-            "tar extract failed: {}",
-            String::from_utf8_lossy(&tar_out.stderr).trim()
+            "archive pipeline failed: git archive status {}; stderr {:?}; \
+             tar extract status {}; stderr {:?}",
+            archive_out.status,
+            String::from_utf8_lossy(&archive_out.stderr).trim(),
+            tar_out.status,
+            String::from_utf8_lossy(&tar_out.stderr).trim(),
         ));
     }
     Ok(())
@@ -865,6 +875,110 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("outside repository root"), "{error}");
+    }
+
+    #[test]
+    fn archive_pipeline_reports_both_children_for_invalid_revision() {
+        let (repo, _) = commit_files(&[("app.py", "def compute():\n    return 1\n")]);
+        let destination = tempfile::tempdir().unwrap();
+        let error = archive_into(
+            repo.path(),
+            "revision-that-does-not-exist",
+            destination.path(),
+        )
+        .expect_err("invalid revision must fail");
+
+        assert!(error.contains("git archive status"), "{error}");
+        assert!(error.contains("tar extract status"), "{error}");
+        assert_eq!(error.matches("stderr").count(), 2, "{error}");
+        assert!(error.contains("revision-that-does-not-exist"), "{error}");
+        assert!(
+            !error.contains("git archive status exit status: 0"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn archive_pipeline_reports_both_children_after_early_consumer_exit() {
+        let body = "x".repeat(4 * 1024 * 1024);
+        let (repo, revision) = commit_files(&[("large.bin", &body)]);
+        let missing_destination = repo.path().join("missing").join("destination");
+        let error = archive_into(repo.path(), &revision, &missing_destination)
+            .expect_err("missing extraction destination must fail");
+
+        assert!(error.contains("git archive status"), "{error}");
+        assert!(error.contains("tar extract status"), "{error}");
+        assert_eq!(error.matches("stderr").count(), 2, "{error}");
+        assert!(
+            error.contains(&missing_destination.to_string_lossy().to_string()),
+            "{error}"
+        );
+        assert!(
+            !error.contains("git archive status exit status: 0"),
+            "{error}"
+        );
+        assert!(
+            !error.contains("tar extract status exit status: 0"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_extractor_drains_padding_after_end_marker() {
+        let expected = "def compute():\n    return 1\n";
+        let (repo, revision) = commit_files(&[("app.py", expected)]);
+        let archive_path = repo.path().join("fixture.tar");
+        let archive_file = std::fs::File::create(&archive_path).unwrap();
+        let archived = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["archive", "--format=tar"])
+            .arg(&revision)
+            .stdout(archive_file)
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(
+            archived.status.success(),
+            "git archive fixture failed: {}",
+            String::from_utf8_lossy(&archived.stderr)
+        );
+
+        let destination = tempfile::tempdir().unwrap();
+        let mut producer = Command::new("sh")
+            .args([
+                "-c",
+                "cat \"$1\"; sleep 0.25; dd if=/dev/zero bs=1048576 count=4 2>/dev/null",
+                "padding-producer",
+            ])
+            .arg(&archive_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let producer_stdout = producer.stdout.take().unwrap();
+        let extractor = spawn_archive_extractor(Stdio::from(producer_stdout), destination.path())
+            .expect("spawn archive extractor");
+        let extracted = extractor.wait_with_output().unwrap();
+        let produced = producer.wait_with_output().unwrap();
+
+        assert!(
+            extracted.status.success(),
+            "tar status {}; stderr {:?}",
+            extracted.status,
+            String::from_utf8_lossy(&extracted.stderr).trim()
+        );
+        assert!(
+            produced.status.success(),
+            "producer status {}; stderr {:?}",
+            produced.status,
+            String::from_utf8_lossy(&produced.stderr).trim()
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.path().join("app.py")).unwrap(),
+            expected
+        );
     }
 
     fn build(dir: &Path, revs: &[String]) -> Arc<DirGraph> {

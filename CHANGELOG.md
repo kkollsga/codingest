@@ -11,6 +11,9 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- **Revision builds no longer fail after a complete small archive extract.**
+  The tar consumer drains Git's record padding through EOF, and real pipeline
+  failures now report both child statuses and both stderr streams.
 - **Engine floor moves to kglite 0.17.4.** Missing Cypher parameters now fail
   before candidate selection, so empty label, inline-map and `WHERE` paths
   cannot disguise an absent binding as zero rows. Installing or clearing a
