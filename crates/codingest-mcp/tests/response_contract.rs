@@ -189,6 +189,10 @@ impl Fixture {
         )
         .expect("write root B source");
 
+        // Local-workspace manifest settings take precedence over the `--watch`
+        // launch argument. These response tests mutate the in-memory graph and
+        // exercise root switches explicitly, so disable filesystem refresh;
+        // Linux read-open events otherwise rebuild and erase test-owned nodes.
         let manifest = sandbox.join("response_contract_mcp.yaml");
         std::fs::write(
             &manifest,
@@ -198,7 +202,7 @@ impl Fixture {
              \x20 kind: local\n\
              \x20 root: {}\n\
              \x20 sandbox_root: {}\n\
-             \x20 watch: true\n\
+             \x20 watch: false\n\
              tools:\n\
              \x20 - name: expand_response\n\
              \x20   description: Public manifest collision fixture.\n\
