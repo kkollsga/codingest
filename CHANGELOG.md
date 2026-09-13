@@ -11,6 +11,9 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- The bundled code-review skill now traces lower-level values and errors through
+  recovery policy and active options before claiming an API-boundary outcome,
+  and limits observed paths to the cases they establish.
 - Expanded the bundled code-review skill with a question-driven evidence
   workflow, dynamic MCP response expansion, final claim verification, and a
   documented complete JSON/CSV fallback when the optional KGLite agent CLI is

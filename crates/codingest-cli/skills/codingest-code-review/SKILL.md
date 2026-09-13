@@ -109,6 +109,10 @@ check:
 
 - each required precondition holds at the reviewed revision;
 - the stated input, state, or sequence reaches the claimed behavior;
+- a returned value or error observed below the claimed API boundary is traced
+  through catches, fallbacks, retries, and active options to that boundary;
+- one observed path is used as evidence for that case, not as a universal
+  outcome;
 - each cited assertion runs on that input and guarantees what the answer says;
 - every file and line reference still points to the supporting code; and
 - completeness, absence, ownership, and reachability claims are limited to the
