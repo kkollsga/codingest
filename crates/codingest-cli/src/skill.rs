@@ -227,8 +227,23 @@ fn write_skill_atomically(dest: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn assert_installed_skill_matches_bundle(dest: &Path) {
+        for (relative, expected) in FILES {
+            assert_eq!(
+                fs::read(dest.join(relative)).unwrap(),
+                expected.as_bytes(),
+                "installed bytes differ for {}",
+                dest.join(relative).display()
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(dest.join(MARKER)).unwrap(),
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+
     #[test]
-    fn install_is_idempotent_and_uninstall_is_clean_at_both_scopes() {
+    fn install_is_byte_exact_idempotent_updating_and_clean_at_both_scopes() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let project = tmp.path().join("project");
@@ -236,39 +251,48 @@ mod tests {
         fs::create_dir_all(&project).unwrap();
 
         for project_scope in [false, true] {
-            install(
-                vec![Host::Codex, Host::Claude],
-                project_scope,
-                false,
-                &home,
-                &project,
-            )
-            .unwrap();
-            install(
-                vec![Host::Codex, Host::Claude],
-                project_scope,
-                false,
-                &home,
-                &project,
-            )
-            .unwrap();
-            for host in [Host::Codex, Host::Claude] {
-                let dest = destination(host, project_scope, &home, &project);
-                let body = fs::read_to_string(dest.join("SKILL.md")).unwrap();
-                let mut lines = body.lines();
-                assert_eq!(lines.next(), Some("---"));
-                assert_eq!(lines.next(), Some("name: codingest-code-review"));
-                assert!(dest.join(MARKER).is_file());
-                assert!(dest.join("references/queries.md").is_file());
+            let both = vec![Host::Codex, Host::Claude];
+            install(both.clone(), project_scope, false, &home, &project).unwrap();
+            for host in both.iter().copied() {
+                assert_installed_skill_matches_bundle(&destination(
+                    host,
+                    project_scope,
+                    &home,
+                    &project,
+                ));
             }
-            uninstall(
-                vec![Host::Codex, Host::Claude],
-                project_scope,
-                false,
-                &home,
-                &project,
-            )
-            .unwrap();
+
+            // A second unchanged install proves idempotence at both host paths.
+            install(both.clone(), project_scope, false, &home, &project).unwrap();
+            for host in both.iter().copied() {
+                assert_installed_skill_matches_bundle(&destination(
+                    host,
+                    project_scope,
+                    &home,
+                    &project,
+                ));
+            }
+
+            // A managed stale file must be replaced by the current embedded bytes.
+            for host in both.iter().copied() {
+                fs::write(
+                    destination(host, project_scope, &home, &project)
+                        .join("references/mcp-upgrade.md"),
+                    b"stale managed reference\n",
+                )
+                .unwrap();
+            }
+            install(both.clone(), project_scope, false, &home, &project).unwrap();
+            for host in both.iter().copied() {
+                assert_installed_skill_matches_bundle(&destination(
+                    host,
+                    project_scope,
+                    &home,
+                    &project,
+                ));
+            }
+
+            uninstall(both, project_scope, false, &home, &project).unwrap();
             assert!(!destination(Host::Codex, project_scope, &home, &project).exists());
             assert!(!destination(Host::Claude, project_scope, &home, &project).exists());
         }

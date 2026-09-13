@@ -11,6 +11,10 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Changed
+- Expanded the bundled code-review skill with a question-driven evidence
+  workflow, dynamic MCP response expansion, final claim verification, and a
+  documented complete JSON/CSV fallback when the optional KGLite agent CLI is
+  unavailable.
 - **Revision builds no longer fail after a complete small archive extract.**
   The tar consumer drains Git's record padding through EOF, and real pipeline
   failures now report both child statuses and both stderr streams.
