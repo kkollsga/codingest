@@ -8,6 +8,25 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.17.5.** Both fixes land in the embedded
+  `codingest-mcp` server. A relative workspace sandbox path declared in a
+  manifest now resolves from the manifest's own directory instead of the
+  process working directory, so a server launched from another location no
+  longer sandboxes the wrong tree. And the workspace watcher no longer replaces
+  a built graph when a source file is merely *read* — the server's own
+  `read_source`, or an editor opening a file — so a review session stops paying
+  a full graph rebuild for its own reads; only real mutations rebuild. On Linux
+  the watcher's debouncer received access events indistinguishably from writes
+  (kglite ships the fix via mcp-methods 0.4.10).
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint, bundled code-review skill and current README/docs
+  snippets now require 0.17.5. Historical release, parity and benchmark records
+  remain unchanged.
+
 ## [0.2.20] - 2026-09-13
 
 ### Changed

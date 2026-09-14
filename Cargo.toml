@@ -17,7 +17,18 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.4
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.5
+# floor fixes two MCP workspace faults that reach users through the embedded
+# `codingest-mcp` server. A relative sandbox path in a manifest now resolves
+# from the manifest's own directory instead of the process working directory,
+# so a server started from elsewhere no longer sandboxes the wrong tree. And
+# the workspace watcher no longer replaces a built graph when a source file is
+# only READ — the server's own `read_source`, an editor opening a file — so a
+# code-review session no longer pays a full rebuild for its own reads; only
+# real mutations rebuild. Linux delivered access events into the debouncer
+# indistinguishably from writes (mcp-methods 0.4.10). Nothing in codingest's
+# builder source moved for either fix.
+# The preceding 0.17.4
 # floor rejects every unbound Cypher parameter before candidate selection, so
 # an empty label scan, inline map, WHERE or subquery cannot hide a missing
 # binding behind zero rows. Installing or clearing a declared schema now
@@ -512,8 +523,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.4", default-features = false }
-kglite-mcp-server = { version = "0.17.4", default-features = false }
+kglite = { version = "0.17.5", default-features = false }
+kglite-mcp-server = { version = "0.17.5", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
