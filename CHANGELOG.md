@@ -8,7 +8,7 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
-## [Unreleased]
+## [0.2.21] - 2026-09-14
 
 ### Changed
 - **Engine floor moves to kglite 0.17.5.** Both fixes land in the embedded

@@ -7,6 +7,50 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.21 — 2026-09-14: all green across the kglite 0.17.5 engine move
+
+Released state: unchanged corpus set — the bench harness reports the same
+corpus digest `c449542e…` as the 0.2.18 baseline, and `CORPORA` holds 31
+entries, each with a frozen golden. All green in the release-mode gate
+(`cargo test --workspace --release`, 377 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 36 tests against the installed kglite 0.17.5 wheel. No builder
+source changed since v0.2.20: `git diff v0.2.20..HEAD -- crates/codingest/src`
+is empty.
+
+**Every golden digest is byte-identical across the move.** KGLite 0.17.5 is an
+MCP-workspace fix pair and touches no engine query path, no property encoding
+and no `.kgl` serialization. A relative workspace sandbox path declared in a
+manifest now resolves from the manifest's own directory instead of the process
+working directory, so a server launched from elsewhere no longer sandboxes the
+wrong tree; and the workspace watcher no longer replaces a built graph when a
+source file is only *read* — the server's own `read_source`, or an editor
+opening a file — so only real mutations rebuild (on Linux the debouncer
+received access events indistinguishably from writes; upstream ships it via
+mcp-methods 0.4.10). Both reach users through the embedded `codingest-mcp`
+server. The builder's `prepare_kgl_write`, `write_kgl` and `save_graph`
+persistence entries are unchanged, matching the unchanged corpus bytes.
+`crates/codingest-mcp/tests/response_contract.rs` — the suite that spawns the
+server with `--watch` and swaps roots — is 4/4 green in both the debug and the
+release run.
+
+**The perf anchor PASSES in both modes**, against the 0.2.18 baseline selected
+by the three-release window. The `varlen_callers_1_3` control read **+7.14% in
+both modes** — instrument steady — and no row cleared both the +30% limit and
+its absolute floor. `contains_new` reads +33.33% per row in both modes on
++0.001 ms raw, under the 0.0125 ms / 0.0075 ms floors. Node and edge counts
+are unchanged in both modes.
+
+**Machine state, recorded because this number is compared across sessions:**
+the capture was taken under heavy concurrent load (load average ~11; a sibling
+agent's headless-Chromium run at ~880% CPU). The **first** docs-off capture
+VOIDed — the control moved +146.43% (0.028 → 0.069 ms) past the ±15% void
+threshold. Four re-measures put it back at 0.029–0.031 ms, so the VOID was a
+single disturbed round, not a deterministic control move; the re-measured
+capture is the one recorded above. `BENCHMARKS.md` was not refreshed because
+no perf-sensitive builder path changed.
+
 ## Release 0.2.18 — 2026-09-11: 30 corpora, all green across the kglite 0.17.3 engine move
 
 Released state: unchanged corpus set (**30 corpora**), all green in the
