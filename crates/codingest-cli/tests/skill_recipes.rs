@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use kglite::api::io::save_graph;
-use kglite::api::session::{execute_mut, ExecuteOptions};
+use kglite::api::io::{load_file, save_graph};
+use kglite::api::param::{json_object_to_value_map, kglite_value_to_json};
+use kglite::api::session::{execute_mut, execute_read, ExecuteOptions};
 use kglite::api::storage::{new_dir_graph_in_mode, StorageMode};
 use serde_json::{json, Value};
 
@@ -750,5 +751,118 @@ fn bounded_path_type_and_impl_recipes_project_verified_schema() {
             .unwrap()
             .contains("external_missing();"),
         "an absent CALLS edge must not become proof that source has no call"
+    );
+}
+
+// ── The recipe corpus is the documented queries, parametrised ──────────────
+//
+// `codingest::methodology` ships the same nine patterns as seven
+// `run_recipe_query` recipes (two pairs differ only by a literal that became a
+// parameter). `queries.md` keeps its CLI-literal form because `codingest
+// query` binds no parameters; the two representations are pinned to each
+// other here, through the engine, with the recipe's values genuinely bound as
+// `$params` rather than substituted into the text.
+
+fn engine_rows(graph: &kglite::api::DirGraph, query: &str, params: &Value) -> Value {
+    let params = json_object_to_value_map(params.as_object().expect("params is an object"));
+    let options = ExecuteOptions::eager(&params);
+    let outcome = execute_read(graph, query, &options)
+        .unwrap_or_else(|error| panic!("engine refused the query:\n{query}\n{error}"));
+    json!({
+        "columns": outcome.result.columns,
+        "rows": outcome
+            .result
+            .rows
+            .iter()
+            .map(|row| row.iter().map(kglite_value_to_json).collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+    })
+}
+
+#[test]
+fn methodology_recipes_return_the_documented_queries_rows() {
+    let fixture = fixture();
+    let documented = extract_recipes();
+    let corpus: BTreeMap<String, codingest::methodology::RecipeRecord> =
+        codingest::methodology::recipe_records()
+            .into_iter()
+            .map(|record| (record.name.clone(), record))
+            .collect();
+    let graph = load_file(fixture.graph.to_str().unwrap()).expect("fixture graph loads");
+
+    // (documented marker, recipe, the recipe's parameters for the same rows)
+    let cases = [
+        (
+            "target-coverage",
+            "target_coverage",
+            json!({"requested": [WRITE_TARGET, UNUSED_TARGET, MISSING_TARGET]}),
+        ),
+        (
+            "write-caller-coverage",
+            "caller_coverage",
+            json!({"qualified_name": WRITE_TARGET}),
+        ),
+        (
+            "read-caller-coverage",
+            "caller_coverage",
+            json!({"qualified_name": READ_TARGET}),
+        ),
+        (
+            "production-callers",
+            "callers_page",
+            json!({"qualified_name": WRITE_TARGET, "is_test": false}),
+        ),
+        (
+            "test-callers",
+            "callers_page",
+            json!({"qualified_name": WRITE_TARGET, "is_test": true}),
+        ),
+        (
+            "direct-callees",
+            "direct_callees",
+            json!({"qualified_name": WRITE_ENTRY}),
+        ),
+        (
+            "bounded-call-path",
+            "bounded_call_path",
+            json!({"start": PATH_START, "finish": PATH_FINISH}),
+        ),
+        (
+            "type-consumers",
+            "type_consumers",
+            json!({"qualified_name": USED_TYPE}),
+        ),
+        (
+            "trait-implementations",
+            "trait_implementations",
+            json!({"qualified_name": USED_TRAIT}),
+        ),
+    ];
+
+    let mut markers_seen = std::collections::BTreeSet::new();
+    let mut recipes_seen = std::collections::BTreeSet::new();
+    for (marker, recipe, params) in cases {
+        let expected = engine_rows(&graph, &instantiate(&documented[marker]), &json!({}));
+        assert!(
+            !expected["rows"].as_array().unwrap().is_empty(),
+            "{marker} returns no rows on the fixture, so equality would prove nothing"
+        );
+        let actual = engine_rows(&graph, &corpus[recipe].cypher, &params);
+        assert_eq!(
+            actual, expected,
+            "recipe {recipe} diverges from documented {marker}"
+        );
+        markers_seen.insert(marker.to_string());
+        recipes_seen.insert(recipe.to_string());
+    }
+    assert_eq!(
+        markers_seen.into_iter().collect::<Vec<_>>(),
+        documented.keys().cloned().collect::<Vec<_>>(),
+        "every documented pattern must be pinned to a recipe"
+    );
+    assert_eq!(
+        recipes_seen.into_iter().collect::<Vec<_>>(),
+        corpus.keys().cloned().collect::<Vec<_>>(),
+        "every shipped recipe must be pinned to a documented pattern"
     );
 }

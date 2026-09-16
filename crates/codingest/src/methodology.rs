@@ -24,10 +24,15 @@
 
 use std::collections::BTreeMap;
 
-use kglite::api::recipes::{self, RecipeCatalog, RecipeCatalogError, RecipeRecord};
-use kglite::api::skills::{self, Delivery, SkillRecord};
+use kglite::api::recipes;
+use kglite::api::skills;
 use kglite::api::{DirGraph, KgError};
 use serde_json::Value;
+
+// Re-exported so consumers (codingest-mcp, the CLI tests) name the record
+// types through this module rather than through a direct kglite dependency.
+pub use kglite::api::recipes::{RecipeCatalog, RecipeCatalogError, RecipeRecord};
+pub use kglite::api::skills::{Delivery, SkillRecord};
 
 /// The skill's name and the recipe group: `run_recipe_query("code_review", …)`.
 pub const SKILL_NAME: &str = "code_review";
