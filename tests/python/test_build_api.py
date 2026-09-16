@@ -222,3 +222,51 @@ def test_language_for_path() -> None:
 def test_version_present() -> None:
     assert isinstance(codingest.__version__, str)
     assert codingest.__version__
+
+
+# ── Opt-in graph-carried methodology ──────────────────────────────────────
+
+
+def test_embed_skills_is_off_by_default_and_writes_records_when_on(
+    sample_tree: Path,
+) -> None:
+    plain = codingest.build(str(sample_tree))
+    assert plain.list_skills() == []
+    assert plain.list_recipes() == []
+    assert "<skills" not in plain.describe()
+
+    embedded = codingest.build(str(sample_tree), embed_skills=True)
+    skills = embedded.list_skills()
+    assert [s["name"] for s in skills] == ["code_review"]
+    assert skills[0]["delivery"] == "lazy"
+    assert "run_recipe_query" in skills[0]["references_tools"]
+    body = embedded.get_skill("code_review")["body"]
+    assert "code_review/target_coverage" in body
+    recipes = embedded.list_recipes()
+    assert sorted(r["name"] for r in recipes) == [
+        "bounded_call_path",
+        "caller_coverage",
+        "callers_page",
+        "direct_callees",
+        "target_coverage",
+        "trait_implementations",
+        "type_consumers",
+    ]
+    assert {r["recipe"] for r in recipes} == {"code_review"}
+    assert "<skills" in embedded.describe()
+    assert "<recipes" in embedded.describe()
+    # The records are system labels: the graph's own type inventory is unchanged
+    # (compared as sets — the inventory's order is not part of the contract).
+    assert sorted(embedded.node_types) == sorted(plain.node_types)
+    assert "KgliteSkill" not in embedded.node_types
+    assert "KgliteRecipe" not in embedded.node_types
+    assert _count(embedded, "MATCH (n) RETURN count(n) AS c") == _count(
+        plain, "MATCH (n) RETURN count(n) AS c"
+    ) + 8
+
+
+def test_embedded_recipe_runs_with_bound_parameters(sample_tree: Path) -> None:
+    g = codingest.build(str(sample_tree), embed_skills=True)
+    recipe = g.get_recipe("code_review", "target_coverage")
+    rows = g.cypher(recipe["cypher"], params={"requested": ["nowhere::missing"]}).to_list()
+    assert rows == [{"requested": "nowhere::missing", "target": None, "callers": 0}]

@@ -23,6 +23,7 @@ def build(
     rev: Optional[str] = None,
     revs: Optional[list[str]] = None,
     repo_root: Optional[str] = None,
+    embed_skills: bool = False,
 ) -> KnowledgeGraph:
     """Parse a codebase at ``src_dir`` into a :class:`kglite.KnowledgeGraph`.
 
@@ -70,6 +71,12 @@ def build(
         include_tests: Include test files/dirs in the graph (default True).
         max_loc_per_file: Skip files longer than this many lines (None = no cap).
         include_docs: Ingest markdown as ``:Doc`` nodes (see above).
+        embed_skills: Also write codingest's ``code_review`` skill and its
+            recipe catalogue into the graph as graph-carried records
+            (``KgliteSkill`` / ``KgliteRecipe``), for a ``.kgl`` served by a
+            plain ``kglite-mcp-server --graph``. Off by default: the default
+            graph is byte-identical to earlier releases, and ``codingest-mcp``
+            serves the methodology by itself. ``repo_tree`` never embeds.
         rev: A single git revspec to build (mutually exclusive with ``revs``).
         revs: A list of git revspecs to merge into a multi-rev graph.
         repo_root: Override the auto-resolved git root for ``rev``/``revs``.

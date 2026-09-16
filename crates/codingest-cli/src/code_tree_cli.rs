@@ -61,6 +61,11 @@ pub struct BuildArgs {
     /// Print parser progress to stderr.
     #[arg(long)]
     pub verbose: bool,
+    /// Also write codingest's code-review skill and recipe catalogue into the
+    /// graph as graph-carried records, for a `.kgl` served by a plain
+    /// `kglite-mcp-server --graph` (codingest-mcp serves them by itself).
+    #[arg(long)]
+    pub embed_skills: bool,
     /// Status output format.
     #[arg(long, value_enum, default_value_t = StatusFormat::Human)]
     pub format: StatusFormat,
@@ -243,6 +248,19 @@ fn mark(started: std::time::Instant, label: &str) {
 
 fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -> Result<Value> {
     let output_text = plan.output.to_string_lossy().to_string();
+    if args.embed_skills {
+        // Opt-in only, and only here at the persist site — never inside the
+        // builder — so a default build's bytes (and every parity golden) are
+        // untouched. The graph is uniquely owned at this point, so the
+        // lineage-preserving accessor is the plain `Arc::get_mut` fast path.
+        let t_attach = std::time::Instant::now();
+        let summary = codingest::methodology::attach(
+            kglite::api::make_dir_graph_mut_preserving_lineage(&mut graph),
+        )
+        .map_err(|error| anyhow::anyhow!("could not embed the code-review skill: {error}"))?;
+        mark(t_attach, "embed skills");
+        debug_assert_eq!(summary.skills, 1);
+    }
     let t_save = std::time::Instant::now();
     save_graph(&mut graph, &output_text)
         .map_err(|e| anyhow::anyhow!("failed to save {}: {e}", plan.output.display()))?;
@@ -260,6 +278,7 @@ fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -
         "include_tests": plan.include_tests,
         "include_docs": args.include_docs,
         "max_loc_per_file": args.max_loc_per_file,
+        "embed_skills": args.embed_skills,
         "fingerprint": fingerprint,
         "artifact_bytes": artifact_bytes,
         "artifact_fingerprint": artifact_fingerprint,
@@ -275,6 +294,7 @@ fn persist_build(args: &BuildArgs, plan: &BuildPlan, mut graph: Arc<DirGraph>) -
         "source": &plan.source,
         "mode": plan.mode,
         "revisions": metadata["revisions"],
+        "embed_skills": args.embed_skills,
         "bytes": artifact_bytes,
     }))
 }
@@ -779,6 +799,7 @@ mod tests {
             include_docs: false,
             max_loc_per_file: None,
             verbose: false,
+            embed_skills: false,
             format: StatusFormat::Json,
         })
         .unwrap();
@@ -817,6 +838,7 @@ mod tests {
             include_docs: false,
             max_loc_per_file: None,
             verbose: false,
+            embed_skills: false,
             format: StatusFormat::Json,
         })
         .unwrap();
@@ -838,6 +860,7 @@ mod tests {
             include_docs: false,
             max_loc_per_file: None,
             verbose: false,
+            embed_skills: false,
             format: StatusFormat::Json,
         };
         assert_eq!(build(&args).unwrap()["mode"], "multi-revision");

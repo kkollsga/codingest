@@ -63,6 +63,11 @@ Common options:
 - `--include-docs` — also ingest markdown as `:Doc` nodes linked to the code
   they mention.
 - `--no-tests` — exclude test files/dirs from the graph.
+- `--embed-skills` — also write codingest's `code_review` skill and recipe
+  catalogue into the `.kgl` as graph-carried records, for a graph served by a
+  plain `kglite-mcp-server --graph`. Off by default (the default artifact is
+  byte-identical to earlier releases); `codingest-mcp` serves the methodology
+  by itself, so it needs no embedding.
 
 Run `codingest build --help` for the full flag list.
 

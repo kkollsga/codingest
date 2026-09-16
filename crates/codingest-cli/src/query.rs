@@ -313,6 +313,7 @@ mod tests {
             include_docs: false,
             max_loc_per_file: None,
             verbose: false,
+            embed_skills: false,
             format: StatusFormat::Json,
         })
         .unwrap();

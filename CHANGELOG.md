@@ -23,6 +23,14 @@ ship time — it's the only place the version bumps.
   (measured: 21.0 KB of tool descriptions across 13 tools, versus 6.9 KB
   across 12 with `skills: false`, which silences everything). Operator packs
   still win by name. `--selftest` reports the producer layer.
+- **`codingest build --embed-skills`** and **`codingest.build(...,
+  embed_skills=True)`** write the same `code_review` skill and recipe
+  catalogue into the `.kgl` as graph-carried `KgliteSkill` / `KgliteRecipe`
+  records, for a graph served by a plain `kglite-mcp-server --graph` where no
+  producer is present. Off by default: the default artifact is byte-identical
+  to earlier releases and every parity golden is unchanged. `repo_tree` never
+  embeds. The build report and the `.kgl.meta.json` sidecar record
+  `embed_skills`.
 - `codingest::methodology` — the code-review methodology as data: the lazy
   `code_review` skill record and the `code_review/*` Cypher recipe catalogue
   (`target_coverage`, `caller_coverage`, `callers_page`, `direct_callees`,

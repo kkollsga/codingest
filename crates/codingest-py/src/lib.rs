@@ -36,7 +36,19 @@ fn handoff_via_kgl(
     py: Python<'_>,
     mut graph: Arc<DirGraph>,
     save_to: Option<PathBuf>,
+    embed_skills: bool,
 ) -> PyResult<Py<PyAny>> {
+    if embed_skills {
+        // Opt-in, at the persist site only (never in the builder), so the
+        // default handoff's bytes are unchanged. The graph is uniquely owned
+        // here, so this is the `Arc::get_mut` fast path.
+        codingest::methodology::attach(kglite::api::make_dir_graph_mut_preserving_lineage(
+            &mut graph,
+        ))
+        .map_err(|e| {
+            PyRuntimeError::new_err(format!("could not embed the code-review skill: {e}"))
+        })?;
+    }
     match save_to {
         // Caller wants the `.kgl` persisted — write there and load it back.
         Some(path) => {
@@ -95,7 +107,7 @@ pub fn language_for_path(path: &str) -> Option<&'static str> {
 /// tree (git-archive into a tempdir). `save_to` writes the `.kgl` there and
 /// still returns the loaded graph.
 #[pyfunction]
-#[pyo3(signature = (src_dir, *, save_to=None, verbose=false, include_tests=true, max_loc_per_file=None, include_docs=false, rev=None, revs=None, repo_root=None))]
+#[pyo3(signature = (src_dir, *, save_to=None, verbose=false, include_tests=true, max_loc_per_file=None, include_docs=false, rev=None, revs=None, repo_root=None, embed_skills=false))]
 #[allow(clippy::too_many_arguments)]
 pub fn build(
     py: Python<'_>,
@@ -108,6 +120,7 @@ pub fn build(
     rev: Option<String>,
     revs: Option<Vec<String>>,
     repo_root: Option<PathBuf>,
+    embed_skills: bool,
 ) -> PyResult<Py<PyAny>> {
     if rev.is_some() && revs.is_some() {
         return Err(PyValueError::new_err(
@@ -151,7 +164,7 @@ pub fn build(
             ),
         })
         .map_err(PyRuntimeError::new_err)?;
-    handoff_via_kgl(py, graph, save_to)
+    handoff_via_kgl(py, graph, save_to, embed_skills)
 }
 
 /// Clone a GitHub repo and build its `kglite.KnowledgeGraph`.
@@ -199,7 +212,9 @@ pub fn repo_tree(
             )
         })
         .map_err(PyRuntimeError::new_err)?;
-    handoff_via_kgl(py, graph, save_to)
+    // `repo_tree` never embeds: its graphs are served through codingest-mcp,
+    // which registers the methodology itself.
+    handoff_via_kgl(py, graph, save_to, false)
 }
 
 /// Read a project manifest and return a dict of project metadata, or `None`

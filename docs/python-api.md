@@ -52,12 +52,17 @@ codingest.build(
     rev=None,              # build a single git revision instead of the working tree
     revs=None,             # merge a list of revisions into one multi-rev graph
     repo_root=None,        # override the auto-resolved git root for rev/revs
+    embed_skills=False,    # also embed the code_review skill + recipes as graph records
 ) -> kglite.KnowledgeGraph
 ```
 
 Parse a codebase at `src_dir`. Pass `include_docs=True` to also ingest markdown
 as `:Doc` nodes linked to the code they mention
-(`(:Doc)-[:MENTIONS]->(:Function|:Class|…)`).
+(`(:Doc)-[:MENTIONS]->(:Function|:Class|…)`). Pass `embed_skills=True` to also
+write codingest's `code_review` skill and recipe catalogue into the graph as
+graph-carried records (`g.list_skills()` / `g.list_recipes()`), for a `.kgl`
+served by a plain `kglite-mcp-server --graph`; the default graph carries none,
+and `codingest-mcp` serves the methodology by itself. `repo_tree` never embeds.
 
 **Git revisions.** `rev="v1.0"` builds the codebase as it existed at that
 revision — the revision's tracked files are materialized into a tempdir via
