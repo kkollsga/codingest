@@ -7,6 +7,45 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.23 — 2026-09-16: methodology on the MCP route, all green across the kglite 0.17.7 move
+
+Released state: unchanged corpus set — the bench harness reports the same
+corpus digest `c449542e…` as the 0.2.18 baseline, and `CORPORA` holds 31
+entries, each with a frozen golden. All green in the release-mode gate
+(`cargo test --workspace --release`, 387 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 39 tests against the installed kglite 0.17.7 wheel (`make gate`
+9/9 on the branch at f95beae, the release tree minus the version bump). The
+builder diff since v0.2.22 is the new `crates/codingest/src/methodology.rs`
+module and its `lib.rs` registration — a module no build path calls; every
+walk, partition, parse and resolve stage is untouched.
+
+**Every golden digest is byte-identical across the move, and no golden was
+regenerated.** This release ships codingest's code-review methodology on the
+MCP route: `codingest-mcp` registers the lazy `code_review` skill and the
+seven-query `code_review/*` recipe catalogue through kglite 0.17.7's producer
+hooks, so every graph it serves carries them in every mode. Nothing is written
+into a graph by default. The opt-in `codingest build --embed-skills` /
+`embed_skills=True` attaches `KgliteSkill` / `KgliteRecipe` records at the two
+persist sites only, never inside the builder, which is why the parity path
+never sees them; a flagged build is pinned byte-stable across two runs by its
+own test (`crates/codingest-cli/tests/embed_skills.rs`), and the recipe corpus
+is pinned row-for-row to the documented query patterns
+(`crates/codingest-cli/tests/skill_recipes.rs`). The response-contract suite
+(now 6/6) proves the producer layer on the real binary; a manifest-less stdio
+smoke proves it on the installed wheel.
+
+**The perf anchor PASSES in both modes**, against the 0.2.20 baseline selected
+by the three-release window. The `varlen_callers_1_3` control read **+3.57%
+docs-on / +0.00% docs-off** — instrument steady — and no row cleared both the
++30% limit and its absolute floor. `build_secs` reads +79.49% docs-on /
++17.35% docs-off, under the 0.05 s absolute floor; it is a once-per-build cost
+captured on a heavily loaded machine (load average ~11–15), and the builder
+diff is empty on every hot path. Node and edge counts are unchanged in both
+modes. `BENCHMARKS.md` was not refreshed because no perf-sensitive builder
+path changed.
+
 ## Release 0.2.22 — 2026-09-16: all green across the kglite 0.17.6 engine move
 
 Released state: unchanged corpus set — the bench harness reports the same

@@ -8,7 +8,7 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
-## [Unreleased]
+## [0.2.23] - 2026-09-16
 
 ### Added
 - **`codingest-mcp` serves the code-review methodology for every graph.** The
