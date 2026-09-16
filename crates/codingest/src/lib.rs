@@ -23,6 +23,7 @@ pub mod cross_lang;
 #[cfg(feature = "docs")]
 pub mod docs;
 pub mod manifest;
+pub mod methodology;
 pub mod models;
 pub mod parsers;
 pub mod repo;

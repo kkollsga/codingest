@@ -10,6 +10,15 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Added
+- `codingest::methodology` — the code-review methodology as data: the lazy
+  `code_review` skill record and the `code_review/*` Cypher recipe catalogue
+  (`target_coverage`, `caller_coverage`, `callers_page`, `direct_callees`,
+  `bounded_call_path`, `type_consumers`, `trait_implementations`), compiled by
+  the same gate the MCP server runs at boot so a bad recipe fails the unit test
+  rather than a user's boot, plus `attach()` to write them into a graph as
+  graph-carried records.
+
 ### Changed
 - **Engine floor moves to kglite 0.17.7.** 0.17.7 adds the producer-level
   methodology hook codingest asked for (`ServerExtensions::with_skills` /

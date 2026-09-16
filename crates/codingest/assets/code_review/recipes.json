@@ -1,0 +1,97 @@
+{
+  "code_review": {
+    "description": "Exact, parameter-checked operations for reviewing a change to a codingest code graph: resolve targets, count and page callers, walk callees, witness bounded call paths, and find type consumers and trait implementors.",
+    "queries": {
+      "target_coverage": {
+        "description": "For each requested qualified name: whether the Function exists (target is null when missing) and how many Functions call it (callers is zero for an existing target with no callers). Run this before reading any empty result as an absence.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "requested": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Exact Function qualified names to resolve."
+            }
+          },
+          "required": ["requested"],
+          "additionalProperties": false
+        },
+        "cypher": "UNWIND $requested AS requested OPTIONAL MATCH (target:Function {qualified_name: requested}) OPTIONAL MATCH (caller:Function)-[:CALLS]->(target) RETURN requested, target.qualified_name AS target, count(caller) AS callers ORDER BY requested"
+      },
+      "caller_coverage": {
+        "description": "Caller counts of one Function split by whether the caller is a test (is_test), so production and test pages can be requested separately with callers_page.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "qualified_name": { "type": "string", "description": "Exact Function qualified name." }
+          },
+          "required": ["qualified_name"],
+          "additionalProperties": false
+        },
+        "cypher": "MATCH (caller:Function)-[:CALLS]->(target:Function) WHERE target.qualified_name = $qualified_name RETURN target.qualified_name AS target, caller.is_test AS is_test, count(caller) AS callers ORDER BY is_test"
+      },
+      "callers_page": {
+        "description": "One page (25 rows) of direct callers of a Function, production (is_test false) or test (is_test true), with each caller's location and the evidence behind the CALLS edge: resolution, candidates (>1 means the call site fanned out), import_backed (false is unconfirmed, not refuted) and call_lines.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "qualified_name": { "type": "string", "description": "Exact Function qualified name of the callee." },
+            "is_test": { "type": "boolean", "description": "true for test callers, false for production callers." }
+          },
+          "required": ["is_test", "qualified_name"],
+          "additionalProperties": false
+        },
+        "cypher": "MATCH (caller:Function)-[rel:CALLS]->(target:Function) WHERE target.qualified_name = $qualified_name AND caller.is_test = $is_test RETURN target.qualified_name AS target, caller.qualified_name AS caller, caller.file_path AS file, caller.line_number AS line, rel.resolution AS resolution, rel.candidates AS candidates, rel.import_backed AS import_backed, rel.call_lines AS call_lines ORDER BY caller, file, line LIMIT 25"
+      },
+      "direct_callees": {
+        "description": "Up to 25 Functions a Function calls directly, with both locations and the CALLS edge evidence (resolution, candidates, import_backed, call_lines). An unresolved source call has no CALLS edge; inspect the source before concluding a call is absent.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "qualified_name": { "type": "string", "description": "Exact Function qualified name of the caller." }
+          },
+          "required": ["qualified_name"],
+          "additionalProperties": false
+        },
+        "cypher": "MATCH (caller:Function)-[rel:CALLS]->(callee:Function) WHERE caller.qualified_name = $qualified_name RETURN caller.qualified_name AS caller, callee.qualified_name AS callee, caller.file_path AS caller_file, caller.line_number AS caller_line, callee.file_path AS callee_file, callee.line_number AS callee_line, rel.resolution AS resolution, rel.candidates AS candidates, rel.import_backed AS import_backed, rel.call_lines AS call_lines ORDER BY callee, callee_file, callee_line LIMIT 25"
+      },
+      "bounded_call_path": {
+        "description": "Up to ten CALLS paths of one to four hops from one Function to another, shortest first: bounded path witnesses instead of an unbounded neighbourhood.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "start": { "type": "string", "description": "Exact qualified name of the starting Function." },
+            "finish": { "type": "string", "description": "Exact qualified name of the Function to reach." }
+          },
+          "required": ["finish", "start"],
+          "additionalProperties": false
+        },
+        "cypher": "MATCH path = (start:Function)-[:CALLS*1..4]->(finish:Function) WHERE start.qualified_name = $start AND finish.qualified_name = $finish RETURN [step IN nodes(path) | step.qualified_name] AS functions, length(path) AS hops ORDER BY hops, functions LIMIT 10"
+      },
+      "type_consumers": {
+        "description": "Up to 25 Functions that take a Struct as an explicit parameter (position parameter or both, since one USES_TYPE edge aggregates a type used as both parameter and return value), with each consumer's location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "qualified_name": { "type": "string", "description": "Exact Struct qualified name." }
+          },
+          "required": ["qualified_name"],
+          "additionalProperties": false
+        },
+        "cypher": "MATCH (consumer:Function)-[use:USES_TYPE]->(used:Struct) WHERE used.qualified_name = $qualified_name AND use.position IN ['parameter', 'both'] RETURN used.qualified_name AS used_type, consumer.qualified_name AS consumer, consumer.file_path AS file, consumer.line_number AS line, use.position AS position ORDER BY consumer, file, line LIMIT 25"
+      },
+      "trait_implementations": {
+        "description": "Up to 25 Structs with an IMPLEMENTS edge to a Trait, with each implementor's location. Macro-generated or heuristic structure may be absent from the graph: a missing edge is a reason to inspect source, not proof of no implementation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "qualified_name": { "type": "string", "description": "Exact Trait qualified name." }
+          },
+          "required": ["qualified_name"],
+          "additionalProperties": false
+        },
+        "cypher": "MATCH (implementor:Struct)-[:IMPLEMENTS]->(implemented:Trait) WHERE implemented.qualified_name = $qualified_name RETURN implemented.qualified_name AS trait, implementor.qualified_name AS implementor, implementor.file_path AS file, implementor.line_number AS line ORDER BY implementor, file, line LIMIT 25"
+      }
+    }
+  }
+}
