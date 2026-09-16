@@ -11,21 +11,28 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.6
+## Requires kglite ≥ 0.17.7
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.6 to keep the Rust writer and the
-Python reader on one engine release. 0.17.6 is the graph-carried skills and
-recipes release: a `.kgl` can carry its own methodology and named queries as
-`KgliteSkill` / `KgliteRecipe` records. codingest writes neither, and both are
-system labels hidden from every type enumeration, so a codingest graph reports
-the same node types and description as before and its golden digests are
-unchanged. In the embedded `codingest-mcp` server, and only when an operator
-manifest turns `skills:` on, methodology skills are now delivered lazily —
-each contributes its when-to-use paragraph to the tools it references and the
-body arrives through the `skill(name)` tool — and a served graph's own skills
-load as a layer beneath the operator's. Nothing in the builder moved.
+in-tree builder. The floor sits at 0.17.7 to keep the Rust writer and the
+Python reader on one engine release. 0.17.7 adds the producer-level
+methodology hook: `ServerExtensions::with_skills` and `with_recipes` let the
+embedded `codingest-mcp` server register codingest's code-review skill and its
+Cypher recipe catalogue once, for every graph it serves, in every mode —
+including the manifest-less workspace boot where graph-carried records are
+never read. With no manifest, or one that never mentions `skills:`, the server
+serves kglite's bundled methodology plus codingest's layer; an explicit
+`skills: false` silences both. 0.17.7 also revives kglite's bundled code-graph
+skills, which were suppressed for the life of every workspace server before
+it. Nothing in the builder moved.
+
+The preceding 0.17.6 floor is the graph-carried skills and recipes release: a
+`.kgl` can carry its own methodology and named queries as `KgliteSkill` /
+`KgliteRecipe` records, which codingest writes only behind the opt-in
+`codingest build --embed-skills`. Both are system labels hidden from every
+type enumeration, so a default codingest graph reports the same node types
+and description as before and its golden digests are unchanged.
 
 The preceding 0.17.5 floor fixed two MCP workspace faults. A relative sandbox
 path declared in a manifest resolves from the manifest's own directory rather

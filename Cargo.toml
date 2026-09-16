@@ -17,12 +17,28 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.6
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.7
+# floor adds the producer-level methodology hook codingest asked for on
+# 2026-09-16: `ServerExtensions::with_skills` / `with_recipes` let the binary
+# embedding the server register its own skill layer and Cypher recipe
+# catalogue once, applying to every graph it serves in EVERY mode — including
+# codingest-mcp's manifest-less workspace boot, where graph-carried records
+# are never read. Precedence `bundled < producer < graph < operator`; with no
+# manifest, or one that never mentions `skills:`, the server serves the
+# bundled set plus the producer layer, and an explicit `skills: false`
+# silences both. A producer record that fails validation fails the boot
+# naming itself. 0.17.7 also revives the bundled predicate-gated code-graph
+# skills, which were dead in every workspace deployment (no graph at boot,
+# never re-evaluated): they now activate on the first `set_root_dir`.
+# codingest-mcp registers the code-review skill and recipe corpus through
+# these builders (`crates/codingest-mcp/src/lib.rs`).
+# The preceding 0.17.6
 # floor is the graph-carried skills and recipes release. `kglite::api::skills`
-# and `kglite::api::recipes` are new and uncalled here: their `KgliteSkill` /
+# and `kglite::api::recipes` arrived here: their `KgliteSkill` /
 # `KgliteRecipe` records are system labels, hidden from every type enumeration,
 # so a codingest graph reports the same `node_types()` / `describe()` as before
-# and every golden digest is unchanged. What reaches users is in the embedded
+# and every golden digest is unchanged (codingest writes them only behind the
+# opt-in `codingest build --embed-skills`). What reaches users is in the embedded
 # `codingest-mcp` server, and only when an operator manifest turns `skills:`
 # on: methodology skills are now delivered lazily (mcp-methods 0.4.11 — a
 # skill contributes its when-to-use paragraph to the tools it references and
@@ -535,8 +551,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.6", default-features = false }
-kglite-mcp-server = { version = "0.17.6", default-features = false }
+kglite = { version = "0.17.7", default-features = false }
+kglite-mcp-server = { version = "0.17.7", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

@@ -8,6 +8,23 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.17.7.** 0.17.7 adds the producer-level
+  methodology hook codingest asked for (`ServerExtensions::with_skills` /
+  `with_recipes`), which this release adopts (see below). It also fixes a
+  defect every codingest-mcp deployment had been living with: kglite's bundled
+  `code_graph_analysis`, `code_graph_views` and `read_code_source` skills gate
+  on the graph carrying Function and Class nodes, and a workspace server has
+  no graph at boot, so they were suppressed for the life of the process. They
+  now activate on the first `set_root_dir` that builds a code graph.
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint, bundled code-review skill and current README/docs
+  snippets now require 0.17.7. Historical release, parity and benchmark records
+  remain unchanged.
+
 ## [0.2.22] - 2026-09-16
 
 ### Changed
