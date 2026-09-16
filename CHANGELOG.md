@@ -8,6 +8,26 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.17.6** (mcp-methods 0.4.11 with it). This is
+  the graph-carried skills and recipes release: a `.kgl` can now carry its own
+  methodology and named queries as `KgliteSkill` / `KgliteRecipe` records.
+  codingest writes neither, and both are system labels hidden from every type
+  enumeration, so a codingest graph reports the same node types and description
+  as before and every golden digest is unchanged. In the embedded
+  `codingest-mcp` server, and only when an operator manifest turns `skills:`
+  on, methodology skills are now delivered lazily — a skill contributes its
+  when-to-use paragraph to the tools it references and the body arrives through
+  the new `skill(name)` tool — and a served graph's own skills and recipes load
+  as a layer beneath the operator's. Nothing in the builder moved.
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint, bundled code-review skill and current README/docs
+  snippets now require 0.17.6. Historical release, parity and benchmark records
+  remain unchanged.
+
 ## [0.2.21] - 2026-09-14
 
 ### Changed

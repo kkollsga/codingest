@@ -11,19 +11,29 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.5
+## Requires kglite ≥ 0.17.6
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.5 to keep the Rust writer and the
-Python reader on one engine release. Two MCP workspace fixes reach the embedded
-`codingest-mcp` server. A relative sandbox path declared in a manifest now
-resolves from the manifest's own directory rather than the process working
-directory, so a server launched from elsewhere no longer sandboxes the wrong
-tree. And the workspace watcher no longer replaces a built graph when a source
-file is only *read* — the server's own `read_source`, an editor opening a file
-— so a review session stops paying a full rebuild for its own reads; only real
-mutations rebuild. Neither fix needed a source change here.
+in-tree builder. The floor sits at 0.17.6 to keep the Rust writer and the
+Python reader on one engine release. 0.17.6 is the graph-carried skills and
+recipes release: a `.kgl` can carry its own methodology and named queries as
+`KgliteSkill` / `KgliteRecipe` records. codingest writes neither, and both are
+system labels hidden from every type enumeration, so a codingest graph reports
+the same node types and description as before and its golden digests are
+unchanged. In the embedded `codingest-mcp` server, and only when an operator
+manifest turns `skills:` on, methodology skills are now delivered lazily —
+each contributes its when-to-use paragraph to the tools it references and the
+body arrives through the `skill(name)` tool — and a served graph's own skills
+load as a layer beneath the operator's. Nothing in the builder moved.
+
+The preceding 0.17.5 floor fixed two MCP workspace faults. A relative sandbox
+path declared in a manifest resolves from the manifest's own directory rather
+than the process working directory, so a server launched from elsewhere no
+longer sandboxes the wrong tree; and the workspace watcher no longer replaces a
+built graph when a source file is only *read* — the server's own
+`read_source`, an editor opening a file — so a review session stops paying a
+full rebuild for its own reads; only real mutations rebuild.
 
 The preceding 0.17.4 floor rejects every missing Cypher parameter
 before candidate selection, so an empty label scan, inline map or `WHERE`

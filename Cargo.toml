@@ -17,7 +17,19 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.5
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.6
+# floor is the graph-carried skills and recipes release. `kglite::api::skills`
+# and `kglite::api::recipes` are new and uncalled here: their `KgliteSkill` /
+# `KgliteRecipe` records are system labels, hidden from every type enumeration,
+# so a codingest graph reports the same `node_types()` / `describe()` as before
+# and every golden digest is unchanged. What reaches users is in the embedded
+# `codingest-mcp` server, and only when an operator manifest turns `skills:`
+# on: methodology skills are now delivered lazily (mcp-methods 0.4.11 — a
+# skill contributes its when-to-use paragraph to the tools it references and
+# the body arrives on `skill(name)`), a served `.kgl`'s own skills and recipes
+# load as a layer under the operator's, and `graph_has_node_type` answers
+# false for the two system labels. Nothing in codingest's builder source moved.
+# The preceding 0.17.5
 # floor fixes two MCP workspace faults that reach users through the embedded
 # `codingest-mcp` server. A relative sandbox path in a manifest now resolves
 # from the manifest's own directory instead of the process working directory,
@@ -523,8 +535,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.5", default-features = false }
-kglite-mcp-server = { version = "0.17.5", default-features = false }
+kglite = { version = "0.17.6", default-features = false }
+kglite-mcp-server = { version = "0.17.6", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
