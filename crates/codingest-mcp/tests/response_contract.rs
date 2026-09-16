@@ -798,3 +798,126 @@ fn graph_overview_schema_refreshes_after_root_switch() {
     assert!(!result_text(&refreshed).contains("fixture_000"));
     assert!(result_text(&refreshed).contains("<type name=\"Class\""));
 }
+
+// ── Producer methodology (kglite 0.17.7 `with_skills` / `with_recipes`) ────
+//
+// The fixture manifest never mentions `skills:`, which is the shape every
+// codingest-mcp deployment ships in. Under kglite 0.17.7 that means the
+// server serves kglite's bundled methodology plus codingest's own layer —
+// the `code_review` skill and the `code_review/*` recipe catalogue — in every
+// mode, including this manifest-driven workspace boot.
+
+#[test]
+fn producer_methodology_is_served_without_a_skills_key() {
+    let fixture = Fixture::new();
+    let mut rpc = fixture.rpc();
+
+    let listing = rpc.request_ok("tools/list", json!({}));
+    listed_tool(&listing, "list_recipe_queries");
+    listed_tool(&listing, "run_recipe_query");
+    listed_tool(&listing, "skill");
+    for tool in ["cypher_query", "run_recipe_query", "read_code_source"] {
+        let description = listed_tool(&listing, tool)["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            description.contains("skill(\"code_review\")"),
+            "{tool} description carries no code_review pointer: {description}"
+        );
+    }
+
+    // Lazy delivery: the body arrives only through the loader, verbatim.
+    let body = rpc.call("skill", json!({"name": "code_review"}));
+    assert_success(&body);
+    let text = result_text(&body);
+    assert!(
+        text.contains("# Reviewing a codingest code graph"),
+        "{text}"
+    );
+    for recipe in [
+        "target_coverage",
+        "caller_coverage",
+        "callers_page",
+        "direct_callees",
+        "bounded_call_path",
+        "type_consumers",
+        "trait_implementations",
+    ] {
+        assert!(
+            text.contains(&format!("`code_review/{recipe}`")),
+            "skill body does not name {recipe}"
+        );
+    }
+
+    let catalogue = rpc.call("list_recipe_queries", json!({}));
+    assert_success(&catalogue);
+    assert_eq!(
+        catalogue["structuredContent"]["recipes"][0]["name"],
+        "code_review"
+    );
+    assert_eq!(
+        catalogue["structuredContent"]["recipes"][0]["query_count"],
+        7
+    );
+
+    // Recipes are boot-registered but need a graph; after activation they run
+    // against it with the variables genuinely bound.
+    activate(&mut rpc, &fixture.root_a);
+    let resolved = rpc.call(
+        "run_recipe_query",
+        json!({
+            "recipe": "code_review",
+            "query": "target_coverage",
+            "variables": {"requested": ["crate::src::fixture_000", "nowhere::missing"]}
+        }),
+    );
+    assert_success(&resolved);
+    assert_eq!(
+        resolved["structuredContent"]["result"]["rows"],
+        json!([
+            ["crate::src::fixture_000", "crate::src::fixture_000", 0],
+            ["nowhere::missing", null, 0],
+        ]),
+        "{resolved}"
+    );
+
+    // The exact `$param` <-> schema contract is enforced at call time too.
+    let unbound = rpc.call(
+        "run_recipe_query",
+        json!({"recipe": "code_review", "query": "target_coverage", "variables": {}}),
+    );
+    assert_eq!(unbound["isError"], true, "{unbound}");
+}
+
+#[test]
+fn selftest_reports_the_producer_layer() {
+    let fixture = Fixture::new();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codingest-mcp"))
+        .arg("--selftest")
+        .arg("--watch")
+        .arg(&fixture.root_a)
+        .arg("--mcp-config")
+        .arg(&fixture.manifest)
+        .output()
+        .expect("spawn codingest-mcp --selftest");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "selftest failed ({:?})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status.code()
+    );
+    assert!(
+        stdout.contains("1 recipe(s), 7 quer(ies) served"),
+        "selftest does not count the producer catalogue:\n{stdout}"
+    );
+    let skills_line = stdout
+        .lines()
+        .find(|line| line.contains("skills:") && line.contains("served"))
+        .unwrap_or_default();
+    assert!(skills_line.contains("code_review"), "{stdout}");
+    // The boot summary is mirrored from the child's stderr and is the only
+    // surface that attributes a skill to its layer.
+    assert!(stderr.contains("producer skills: 1 served"), "{stderr}");
+    assert!(stderr.contains("producer recipes: 7 served"), "{stderr}");
+}

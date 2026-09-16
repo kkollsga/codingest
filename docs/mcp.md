@@ -287,35 +287,46 @@ If you have set `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` (or the broader
 { "skills": { "paths": ["~/.claude/skills/codingest-code-review"] } }
 ```
 
-### The `skills:` manifest key is a real tradeoff
+### Skills: on by default, and what that costs
 
-Leaving it unset (the default) gives lean tool descriptions. Setting
+`codingest-mcp` registers its own methodology with the server (kglite ≥
+0.17.7): the `code_review` skill and the `code_review/*` recipe catalogue
+(`list_recipe_queries` / `run_recipe_query`) travel in the binary and apply to
+every graph it serves, in every mode. Because the producer contributes a
+layer, a manifest that never mentions `skills:` — or no manifest at all —
+serves kglite's bundled methodology **plus** codingest's; that is the shape
+every codingest-mcp deployment ships in. To silence it, say so explicitly:
 
 ```yaml
-skills:
-  - true
+skills: false
 ```
 
-in the manifest attaches the bundled methodology to the tool descriptions, which
-are sent verbatim and uncapped on **every** request. Measured against this
-project's own graph: total tool-description size goes from **3.3 KB to 40.5 KB**
-across nine tools. In exchange, seven skills are served as MCP `prompts`, which
-opencode turns into slash commands named `/<server>:<skill>` — for an `mcp` entry
-keyed `codingest`, that is `/codingest:cypher_query`, `/codingest:graph_overview`,
-`/codingest:grep`, `/codingest:read_source`, `/codingest:list_source`,
-`/codingest:github_issues`, `/codingest:repo_management`. Other bundled skills are
-gated on what the active graph contains and may not surface as commands at all,
-so treat that list as the shape rather than a guarantee.
+which drops every skill, codingest's included, and the `skill` loader tool.
+An explicit list (`skills: [true, ./my-pack]`) is used exactly as written and
+still includes the producer layer; an operator pack or `<basename>.skills/`
+file named `code_review` replaces codingest's body.
 
-Worth it if you use those commands; expensive if you do not. Two ways to opt in
-more cheaply:
+Skills are delivered lazily (mcp-methods ≥ 0.4.11): a tool description
+carries only each referencing skill's when-to-use paragraph and a
+`skill("<name>")` pointer, and the body arrives when the agent calls the
+`skill` tool. Measured against a small workspace on the same binary:
+descriptions total **21.0 KB across 13 tools** with skills on and **6.9 KB
+across 12 tools** with `skills: false` (the `skill` loader is the thirteenth
+tool). With skills on, the served skills are also MCP `prompts`, which opencode
+turns into slash commands named `/<server>:<skill>` — for an `mcp` entry keyed
+`codingest`: `/codingest:code_review`, `/codingest:cypher_query`,
+`/codingest:graph_overview`, `/codingest:grep`, `/codingest:list_source`,
+`/codingest:read_source`, `/codingest:recipe_queries`. kglite's code-graph
+skills (`code_graph_analysis`, `code_graph_views`, `read_code_source`) are
+gated on the active graph carrying Function and Class nodes and appear after
+the first `set_root_dir` that builds one.
 
-- The manifest's `<basename>.skills/` override directory (auto-detected next to
-  the YAML) replaces individual skill bodies by name, so you can swap a long
-  methodology file for a short pointer.
-- opencode's experimental code mode (`OPENCODE_EXPERIMENTAL_CODE_MODE`) collapses
-  all MCP tools into a single `execute` tool with a budgeted catalog instead of
-  passing every description through.
+The recipe catalogue is the exact, parameter-checked form of the query
+patterns in the code-review Agent Skill's `references/queries.md`: the
+documented pattern uses `codingest query` with literals, the recipe takes
+`$parameters` and is pinned to the same rows by test. `codingest build
+--embed-skills` writes the same skill and recipes into a `.kgl` for a graph
+served by a plain `kglite-mcp-server --graph`, where no producer is present.
 
 ### Which root mechanism to use
 
@@ -383,4 +394,7 @@ notifications land.
 
 To rule out the codingest side independently of opencode, run
 `codingest-mcp --selftest` with the same flags. It re-spawns the binary, drives a
-real handshake, and exits non-zero if anything fails.
+real handshake, and exits non-zero if anything fails. Its report counts the
+recipe catalogue and lists the served skills (`code_review` among them), and
+the mirrored boot line on stderr attributes them: `producer skills: 1 served
+…; producer recipes: 7 served`.

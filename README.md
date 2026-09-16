@@ -32,7 +32,9 @@ a real `kglite.KnowledgeGraph`, ready for Cypher queries.
 ## Built for agents and code analysis
 
 - **Agent-ready MCP:** give an MCP client `graph_overview`, `cypher_query`,
-  `read_code_source`, repository switching, and automatic graph refresh.
+  `read_code_source`, repository switching, automatic graph refresh, and the
+  code-review methodology itself — a `code_review` skill and a catalogue of
+  parameter-checked review recipes (`run_recipe_query`) served for every graph.
   [opencode is set up and verified end to end](https://codingest.readthedocs.io/en/latest/mcp.html#using-codingest-mcp-with-opencode)
   — including a config that needs no absolute paths — and `codingest skill
   install` packages the review skill for Claude Code and Codex, which opencode
@@ -210,7 +212,7 @@ Documentation: **[codingest.readthedocs.io](https://codingest.readthedocs.io)**
 |---|---|
 | `crates/codingest` | The component library (`codingest`): builder, parsers, manifest reader, docs pass, multi-rev merge, cross-language edges. Extracted from the former `KGLite/crates/kglite/src/code_tree/` (removed upstream 2026-07-16) and re-targeted at the public `kglite::api` facade. Ships the `codingest_stats` + `codingest_bench` binaries. |
 | `crates/codingest-cli` | `codingest` binary — `build` a checkout or git revision(s) into a `.kgl` graph, `status` to check staleness, and `skill` to install Codingest's code-review Agent Skill. |
-| `crates/codingest-mcp` | `codingest-mcp` binary — the full MCP tool surface imported from the `kglite-mcp-server` library, with the codingest builder injected. |
+| `crates/codingest-mcp` | `codingest-mcp` binary — the full MCP tool surface imported from the `kglite-mcp-server` library, with the codingest builder injected and codingest's `code_review` skill + recipe catalogue registered as the producer's methodology. |
 | `crates/codingest-py` | PyO3 wrapper built by maturin into the `codingest` wheel (`pip install codingest`). Python package source is `codingest/`; `pyproject.toml` drives the maturin build. Not published to crates.io (`publish = false`). |
 
 ## CI-equivalent local gate

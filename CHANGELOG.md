@@ -11,6 +11,18 @@ ship time — it's the only place the version bumps.
 ## [Unreleased]
 
 ### Added
+- **`codingest-mcp` serves the code-review methodology for every graph.** The
+  embedded server registers codingest's lazy `code_review` skill and the
+  `code_review/*` recipe catalogue through kglite 0.17.7's producer hooks, so
+  `list_recipe_queries` / `run_recipe_query` (`target_coverage`,
+  `caller_coverage`, `callers_page`, `direct_callees`, `bounded_call_path`,
+  `type_consumers`, `trait_implementations`) and the `skill("code_review")`
+  loader are available in every mode, including the manifest-less workspace
+  boot. **Skills are therefore on by default**: a manifest that never
+  mentions `skills:` now serves kglite's bundled methodology plus codingest's
+  (measured: 21.0 KB of tool descriptions across 13 tools, versus 6.9 KB
+  across 12 with `skills: false`, which silences everything). Operator packs
+  still win by name. `--selftest` reports the producer layer.
 - `codingest::methodology` — the code-review methodology as data: the lazy
   `code_review` skill record and the `code_review/*` Cypher recipe catalogue
   (`target_coverage`, `caller_coverage`, `callers_page`, `direct_callees`,

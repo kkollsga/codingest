@@ -1,8 +1,15 @@
 //! Reusable Codingest MCP server composition.
 //!
 //! KGLite owns the graph/Cypher server and `mcp-methods` owns the generic MCP
-//! lifecycle. This crate contributes the Codingest workspace-graph producer:
-//! source parsing, revision builds, and watch relevance.
+//! lifecycle. This crate contributes the Codingest workspace-graph producer —
+//! source parsing, revision builds, and watch relevance — and the producer's
+//! own methodology: the `code_review` skill and the `code_review/*` recipe
+//! catalogue from `codingest::methodology`, registered once per server so they
+//! apply to every graph it serves in every mode, including the manifest-less
+//! workspace boot where graph-carried records are never read (kglite 0.17.7).
+//! With no manifest, or one that never mentions `skills:`, that turns skills
+//! on (kglite's bundled set plus ours); an explicit `skills: false` silences
+//! both, and operator layers win collisions.
 
 use kglite_mcp_server::{
     ServerExtensions, WorkspaceGraphHooks, WorkspaceGraphMode, WorkspaceGraphRequest,
@@ -20,7 +27,7 @@ fn is_graph_source(path: &Path) -> bool {
             })
 }
 
-fn server_extensions() -> ServerExtensions {
+fn server_extensions() -> anyhow::Result<ServerExtensions> {
     let hooks = WorkspaceGraphHooks {
         // Unified plain/revision-set build. Call shapes mirror the previous
         // in-tree activation (`build_code_tree(dir, verbose=false,
@@ -68,7 +75,15 @@ fn server_extensions() -> ServerExtensions {
         is_relevant: Box::new(|change| is_graph_source(change.path())),
     };
 
-    ServerExtensions::default().with_workspace_graph(hooks)
+    // A producer record that fails validation fails the boot naming itself
+    // (it is our code, not graph data); `codingest::methodology`'s unit tests
+    // run the same compile, so this `?` fires in CI before it can at a user's.
+    let recipes = codingest::methodology::recipe_catalog()
+        .map_err(|error| anyhow::anyhow!("codingest recipe catalogue is invalid: {error}"))?;
+    Ok(ServerExtensions::default()
+        .with_workspace_graph(hooks)
+        .with_skills([codingest::methodology::skill_record()])
+        .with_recipes(recipes))
 }
 
 /// Run the KGLite MCP server with Codingest's workspace builder installed.
@@ -81,7 +96,7 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    kglite_mcp_server::run_with_extensions(args, server_extensions())
+    kglite_mcp_server::run_with_extensions(args, server_extensions()?)
 }
 
 #[cfg(test)]
