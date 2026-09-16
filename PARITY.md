@@ -7,6 +7,46 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.22 — 2026-09-16: all green across the kglite 0.17.6 engine move
+
+Released state: unchanged corpus set — the bench harness reports the same
+corpus digest `c449542e…` as the 0.2.18 baseline, and `CORPORA` holds 31
+entries, each with a frozen golden. All green in the release-mode gate
+(`cargo test --workspace --release`, 377 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 36 tests against the installed kglite 0.17.6 wheel. No builder
+source changed since v0.2.21: `git diff v0.2.21..HEAD -- crates/codingest/src`
+is empty.
+
+**Every golden digest is byte-identical across the move.** KGLite 0.17.6 is
+the graph-carried skills and recipes release: a `.kgl` may now carry
+`KgliteSkill` / `KgliteRecipe` records, managed through `kglite::api::skills`
+and `kglite::api::recipes`. codingest writes neither, and both are system
+labels hidden from every type enumeration, so a codingest graph's
+`node_types()`, `describe()` and `.kgl` bytes are what they were under 0.17.5.
+The user-visible change sits in the embedded `codingest-mcp` server and only
+when an operator manifest turns `skills:` on: methodology skills are delivered
+lazily (mcp-methods 0.4.10 → 0.4.11), a served graph's own skills and recipes
+load as a layer beneath the operator's, and `graph_has_node_type` answers
+false for the two system labels. codingest deliberately does **not** embed its
+review skill in built graphs — the codingest-mcp producer runs in workspace
+mode, which never loads graph-carried records; the producer-level hook ask
+went upstream on 2026-09-16. `crates/codingest-mcp/tests/response_contract.rs`
+is 4/4 green in both the debug and the release run.
+
+**The perf anchor PASSES in both modes**, against the 0.2.19 baseline selected
+by the three-release window. The `varlen_callers_1_3` control read **+3.57%
+docs-on / +7.14% docs-off** — instrument steady — and no row cleared both the
++30% limit and its absolute floor. `contains_new` reads +33.33% per row in
+both modes on +0.001 ms raw, under its floors. `build_secs` reads +68.14%
+docs-on / +41.30% docs-off but under the 0.05 s absolute floor; it is a
+once-per-build cost captured on a heavily loaded machine (load average
+~13–19 at capture), so the ratio is not evidence of a builder change — the
+builder diff is empty. Node and edge counts are unchanged in both modes.
+`BENCHMARKS.md` was not refreshed because no perf-sensitive builder path
+changed.
+
 ## Release 0.2.21 — 2026-09-14: all green across the kglite 0.17.5 engine move
 
 Released state: unchanged corpus set — the bench harness reports the same
