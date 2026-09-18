@@ -5,10 +5,10 @@
  "control_query": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
  "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
- "version": "0.2.21",
- "captured_at_commit": "0b75e52db247f10e9ebbe83e17206528847be73d",
- "captured_at": "2026-09-14",
- "stability_across_3_runs": "worst normalized per-query spread was 0.0010 ms docs-on (contains_new) and 0.0030 ms docs-off (varlen_callers_1_3), across three post-warmup runs per mode. Node and edge counts were identical in all runs (567/880 docs-on, 560/859 docs-off) and every cross-build parity flag held. build_secs means were 0.0115 s docs-on from per-run 0.0115/0.0115/0.0115 and 0.0100 s docs-off from 0.0100/0.0100/0.0100. FLOORS HELD AT 0.0075 IN BOTH MODES rather than re-derived as 2.5x each mode's measured spread. Docs-off lands on 0.0075 mechanically (2.5 x 0.0030). Docs-on's 2.5x would be 0.0025, and that number is not a measured spread: contains_new is a 0.003 ms cell and its whole observed range is ONE 1 microsecond quantization tick, so 2.5x it sets a floor below the instrument's own resolution-derived jitter and tightens the gate on the luckiest available round. That is the 'percentages lie about small numbers' trap running in reverse, and the cost of getting it wrong is asymmetric: a too-tight floor BLOCKS a future tag with a verdict that may not be re-baselined away, while a too-loose one still trips on the 2x this backstop exists to catch. Holding 0.0075 keeps the gate at the sensitivity 0.2.20 shipped. varlen_callers_1_3 remains the control: stored at 0.028 ms in BOTH modes, 3.73x the floor in each, well over the 2x minimum, and flat versus the 0.2.20 record (0.028/0.029) across the kglite 0.17.4 -> 0.17.5 engine move -- a move that touches no engine query path at all, only the MCP workspace layer. MACHINE STATE, recorded because this file is read across sessions: captured under HEAVY CONCURRENT LOAD (load average ~10; a sibling agent's headless-Chromium run at ~785% CPU), NOT under a sole performance lease as 0.2.20 was. The release-gate compare taken minutes earlier on the same machine VOIDed once on a docs-off control spike (0.028 -> 0.069 ms) and four re-measures returned 0.029-0.031, so the spike was a single disturbed round; this capture's own three runs agree within one tick. Thirteenth baseline of corpus epoch c449542e (31 corpus directories).",
+ "version": "0.2.25",
+ "captured_at_commit": "6cbb4f72e189443993bf11bf912b497a42c286e3",
+ "captured_at": "2026-09-19",
+ "stability_across_3_runs": "worst per-query median spread was 0.002 ms docs-on (defs_per_file) and 0.002 ms docs-off (top20_by_branch_count), across three post-warmup runs per mode -- two 1 microsecond quantization ticks. Node and edge counts were identical in all runs (567/880 docs-on, 560/859 docs-off), unchanged from the 0.2.24 record across the kglite 0.17.9 -> 0.17.10 engine move, and every cross-build parity flag held. build_secs means were 0.0117 s docs-on from per-run 0.012/0.0115/0.0115 and 0.0098 s docs-off from 0.010/0.0095/0.010. FLOORS HELD AT 0.0075 IN BOTH MODES, as 0.2.20 through 0.2.24 did: 2.5x a two-tick spread sits at or below the instrument's own resolution-derived jitter, and a too-tight floor blocks a future tag asymmetrically against a too-loose one that still trips on the 2x this backstop exists to catch. varlen_callers_1_3 remains the control: stored at 0.028 ms docs-on / 0.029 ms docs-off, 3.73x / 3.87x the floor, well over the 2x minimum, and flat versus the 0.2.24 record (0.028/0.028) across this engine move -- 0.17.10 is a Cypher-executor fix release with no API change and no codingest source change at all, so no builder path it could touch exists. MACHINE STATE, recorded because this file is read across sessions: captured at load average ~9-16 while sibling releases built concurrently; the release-gate compare PASSED in both modes with the control at +0.00% / -3.33% and every moving row negative, which is the conservative direction for a loaded capture. Seventeenth baseline of corpus epoch c449542e (31 corpus directories).",
  "corpora": [
   {
    "target": "tests/corpus",
@@ -21,7 +21,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 567,
    "edges": 880,
-   "build_secs": 0.0115,
+   "build_secs": 0.0117,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -44,14 +44,14 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.017,
-     "min_ms": 0.017
+     "median_ms": 0.016,
+     "min_ms": 0.015
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
      "median_ms": 0.03,
-     "min_ms": 0.029
+     "min_ms": 0.027
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
@@ -75,7 +75,7 @@
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
      "median_ms": 0.028,
-     "min_ms": 0.028,
+     "min_ms": 0.025,
      "control": true
     },
     {
@@ -103,7 +103,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 560,
    "edges": 859,
-   "build_secs": 0.01,
+   "build_secs": 0.0098,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -126,14 +126,14 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.017,
-     "min_ms": 0.017
+     "median_ms": 0.016,
+     "min_ms": 0.016
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
      "median_ms": 0.03,
-     "min_ms": 0.03
+     "min_ms": 0.027
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
@@ -156,8 +156,8 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.028,
-     "min_ms": 0.028,
+     "median_ms": 0.029,
+     "min_ms": 0.026,
      "control": true
     },
     {
