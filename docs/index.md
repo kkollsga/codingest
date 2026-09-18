@@ -11,12 +11,30 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.7
+## Requires kglite ≥ 0.17.9
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.7 to keep the Rust writer and the
-Python reader on one engine release. 0.17.7 adds the producer-level
+in-tree builder. The floor sits at 0.17.9 to keep the Rust writer and the
+Python reader on one engine release.
+
+0.17.9 and 0.17.8 are the Obsidian vault releases. Almost everything in them
+lands on `dialect="obsidian"`, which codingest never selects — but they
+reshaped the `kglite::okf` types that codingest's documentation pass builds on,
+so the floor is a hard one: `BuildOptions` gained a `Profile` and lost its
+never-read `embed` flag, and `walk::DiscoveredFile` gained `size` / `mtime`.
+Under `dialect="okf"` the parser behaves as it always did — the OKF profile has
+every vault feature off — with one dialect-independent correction that reaches
+a `:Doc` title: a line starting with `#` is a heading only when one to six `#`
+are followed by a space, a tab, or the line end, so an inline-tag line such as
+`#project see …` is no longer read as an `# H1`. Every frozen golden digest is
+byte-identical across the move. On the server side, `kglite-mcp-server` now
+bundles its code-graph skills only where the graph carries `Function` /
+`Class` — which is exactly a codingest graph — so the skills an agent reaches
+through `codingest-mcp` are unchanged while a document deployment stops paying
+for them.
+
+The preceding 0.17.7 floor adds the producer-level
 methodology hook: `ServerExtensions::with_skills` and `with_recipes` let the
 embedded `codingest-mcp` server register codingest's code-review skill and its
 Cypher recipe catalogue once, for every graph it serves, in every mode —

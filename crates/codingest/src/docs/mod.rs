@@ -249,20 +249,29 @@ fn discover_and_parse(root: &Path) -> Result<Vec<DocEntry>, String> {
     // computes titles from frontmatter / first heading, honors `kg_skip`,
     // flattens frontmatter). We bypass `okf::walk` so `.rst` shares one traversal and so
     // `index.md` is kept (the docs pass builds no Folder hierarchy).
+    // `for_dialect` rather than a struct literal: it carries the dialect's
+    // `Profile` (the conventions the parser reads — id scheme, reserved keys,
+    // wikilinks, collection encoding), which a literal cannot construct from
+    // outside kglite and which a bare `dialect:` assignment would leave at the
+    // wrong dialect's defaults. Only the two fields the docs pass deliberately
+    // differs on are overridden: every `.md` is admitted (a repo's docs carry
+    // no frontmatter) and the body is stored (the `:Doc` node's prose).
     let md_opts = okf::BuildOptions {
-        dialect: okf::Dialect::Okf,
         require_frontmatter: false,
-        respect_skip: true,
-        skip_dirs: Vec::new(),
         with_body: true,
-        embed: false,
+        ..okf::BuildOptions::for_dialect(okf::Dialect::Okf)
     };
+    // `size` / `mtime` feed only `okf::fingerprint` and the attachment nodes,
+    // neither of which the docs pass reaches — `parse_concepts` reads nothing
+    // but the two paths — so the walk does not stat a second time to fill them.
     let md_files: Vec<okf::walk::DiscoveredFile> = found
         .iter()
         .filter(|d| d.format == DocFormat::Markdown)
         .map(|d| okf::walk::DiscoveredFile {
             rel_path: d.rel_path.clone(),
             abs_path: d.abs_path.clone(),
+            size: 0,
+            mtime: None,
         })
         .collect();
     let mut docs: Vec<DocEntry> = okf::parse_concepts(&md_files, &md_opts)

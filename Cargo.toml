@@ -17,7 +17,51 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.7
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.9
+# floor covers two same-day releases, 0.17.8 (the Obsidian vault format) and
+# 0.17.9 (the vault structure profile). Both land almost entirely on
+# `dialect="obsidian"`, which codingest never selects — but they rebuilt the
+# `kglite::okf` *type* surface underneath our docs pass, so this is the first
+# kglite bump since 0.16.x that needs a source change:
+#   * `okf::BuildOptions` gained `profile` (a `Profile` the parser reads for
+#     its conventions) and lost `embed` (a field the loader never read — it
+#     embedded nothing in any dialect, so removing it changes no behaviour),
+#     and `okf::walk::DiscoveredFile` gained `size` / `mtime`. Our docs pass
+#     built both as exhaustive struct literals. `BuildOptions` is now
+#     constructed through `BuildOptions::for_dialect(Dialect::Okf)` with only
+#     the two fields we deliberately differ on overridden — a `Profile` cannot
+#     be a struct literal outside kglite any more, and `for_dialect` is the
+#     constructor that keeps a future field at its dialect default instead of
+#     failing the build a third time. `size`/`mtime` are `0`/`None`: they feed
+#     only `okf::fingerprint` and the vault's attachment nodes, and
+#     `parse_concepts` — the one entry point we call — reads neither.
+#   * The rest of the breaking set does not reach us: `okf::build` now returns
+#     `BuildOutput { graph, report }`, `links::extract_links` and
+#     `walk::discover` take the options/profile instead of a `Dialect` /
+#     `skip_dirs` slice, `Dialect` gained `Obsidian`, `Link` lost
+#     `is_wikilink`, and `ExportOptions` / `ExportReport` gained
+#     `edge_tables` / `warnings`. codingest calls none of them (grep: zero
+#     hits outside `docs/mod.rs`) — we use `okf::parse_concepts` and nothing
+#     else, and we read only `concept_id` / `file_path` / `title` / `body` /
+#     `props` off each `ConceptDoc`, never its links.
+#   * Behaviour under `Dialect::Okf` is the old behaviour by construction:
+#     `Profile::default()` is the OKF-bundle profile with every vault feature
+#     (wikilinks, embeds, inline tags, frontmatter edges, aliases, folder
+#     notes, attachments, `structure:`) off, which is what the parser hardcoded
+#     before. The one 0.17.8 parser fix that is dialect-independent and lands
+#     on a value we store is the heading rule: a line starting with `#` is a
+#     heading only when one to six `#` are followed by a space, a tab, or the
+#     line end, so an inline-tag line like `#project see …` is no longer read
+#     as an `# H1`. That feeds our `:Doc` title fallback. The 31 frozen
+#     goldens are the gate on it, and they are byte-identical across this move.
+#   * kglite-mcp-server: `--vault` mode and the vault-authoring skill are new
+#     surface we do not register, and the bundled skill set is now gated by
+#     graph shape — the four code-graph skills bundle only where the graph
+#     carries `Function` / `Class`, which is exactly a codingest graph, so the
+#     skills an agent reaches through `codingest-mcp` are unchanged while a
+#     document deployment stops paying for ours. Our producer layer
+#     (`ServerExtensions::with_skills` / `with_recipes`) is untouched.
+# The preceding 0.17.7
 # floor adds the producer-level methodology hook codingest asked for on
 # 2026-09-16: `ServerExtensions::with_skills` / `with_recipes` let the binary
 # embedding the server register its own skill layer and Cypher recipe
@@ -551,8 +595,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.7", default-features = false }
-kglite-mcp-server = { version = "0.17.7", default-features = false }
+kglite = { version = "0.17.9", default-features = false }
+kglite-mcp-server = { version = "0.17.9", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

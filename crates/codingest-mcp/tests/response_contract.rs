@@ -802,7 +802,7 @@ fn graph_overview_schema_refreshes_after_root_switch() {
 // ── Producer methodology (kglite 0.17.7 `with_skills` / `with_recipes`) ────
 //
 // The fixture manifest never mentions `skills:`, which is the shape every
-// codingest-mcp deployment ships in. Under kglite 0.17.7 that means the
+// codingest-mcp deployment ships in. Under kglite 0.17.9 that means the
 // server serves kglite's bundled methodology plus codingest's own layer —
 // the `code_review` skill and the `code_review/*` recipe catalogue — in every
 // mode, including this manifest-driven workspace boot.

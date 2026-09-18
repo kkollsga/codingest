@@ -8,6 +8,39 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.17.9**, covering two same-day upstream
+  releases: 0.17.8 (the Obsidian vault format) and 0.17.9 (the vault structure
+  profile). Both land almost entirely on `dialect="obsidian"`, which codingest
+  never selects, but they reshaped the `kglite::okf` types the documentation
+  pass builds on — `BuildOptions` gained a `Profile` and lost its never-read
+  `embed` flag, and `walk::DiscoveredFile` gained `size` / `mtime` — so this is
+  the first engine bump since 0.16.x that required a source change. The docs
+  pass now constructs its options through `BuildOptions::for_dialect`, which
+  carries the dialect's profile and keeps a future field at its dialect
+  default.
+- **One upstream parser fix reaches a `:Doc` title.** A markdown line starting
+  with `#` is read as a heading only when one to six `#` are followed by a
+  space, a tab, or the line end, so an inline-tag line such as `#project see …`
+  is no longer taken for an `# H1` and no longer supplies the fallback title of
+  a doc that has no frontmatter `title`. Everything else the two releases
+  changed in the parser is gated on the vault profile, which `dialect="okf"`
+  leaves entirely off. Every frozen golden digest is byte-identical across the
+  move and no golden was regenerated.
+- **The embedded MCP server bundles kglite's code-graph skills only where the
+  graph carries `Function` / `Class` nodes** — which is exactly a codingest
+  graph, so the skills an agent reaches through `codingest-mcp` are unchanged.
+  What moves is the per-session skill budget upstream charges at resolve time;
+  document deployments stop paying for methodology they could never activate.
+  codingest's own producer layer (`with_skills` / `with_recipes`) is untouched.
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint, bundled code-review skill and current README/docs
+  snippets now require 0.17.9. Historical release, parity and benchmark records
+  remain unchanged.
+
 ## [0.2.23] - 2026-09-16
 
 ### Added
