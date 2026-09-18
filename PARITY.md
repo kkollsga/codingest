@@ -7,6 +7,48 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.25 — 2026-09-19: the kglite 0.17.10 engine move, zero source changes
+
+Released state: unchanged corpus set — the bench harness reports the same
+corpus digest `c449542e…` as the 0.2.18 baseline, and `CORPORA` holds 31
+entries, each with a frozen golden. All green in the release-mode gate
+(`cargo test --workspace --release`, 387 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 39 tests against the installed kglite 0.17.10 wheel (`make gate`
+9/9 at 172cff7, the release tree minus the version bump). The builder diff
+since v0.2.24 is **empty** — `git diff v0.2.24..HEAD -- crates/codingest/src`
+returns nothing — so every walk, partition, parse and resolve stage is
+untouched and `BENCHMARKS.md` is deliberately unrefreshed.
+
+**Every golden digest is byte-identical across the move, and no golden was
+regenerated.** kglite 0.17.10 is a pure Cypher-executor fix release: upstream
+`cargo semver-checks` reports no API change across 196 checks, and both fixes
+land on the *query* path, which the builder never takes. A non-aggregating
+`WITH` is a scope barrier again (it had left node / edge / path identity
+bindings alive past a projection that dropped them, so a later `MATCH` anchored
+a stale node and a following write clause silently acted on nothing), and `*`
+written beside another projection item now expands instead of becoming a column
+literally named `*`. Neither shape occurs in codingest's own Cypher — the
+shipped code-review recipe catalogue, the skill examples, `codingest query` and
+the CLI/MCP contract tests contain no `WITH` clause and no `*` projection — and
+the full battery run against the new engine confirms it rather than asserting
+it from a grep.
+
+**The perf anchor PASSES in both modes**, against the 0.2.22 baseline selected
+by the three-release window, and the verdict reproduced identically across all
+three post-warmup runs per mode. The `varlen_callers_1_3` control read **+0.00%
+docs-on / −3.33% docs-off** — instrument steady — and no row cleared both the
++30% limit and its absolute floor; every moving row moved *down*
+(`build_secs` −21.05% / −32.43%, `contains_new` −25.00% both modes,
+`top20_by_branch_count` −5.56% / −11.11%, `anchored_callers` +0.00% / −20.00%).
+Node and edge counts are identical to the 0.2.24 record in both modes
+(567/880 docs-on, 560/859 docs-off), which is the same statement the goldens
+make. MACHINE STATE: captured at load average ~9–16 with sibling releases
+building concurrently — recorded because this reading is compared across
+sessions, and because a loaded machine is the conservative direction for a
+capture whose every delta is negative.
+
 ## Release 0.2.24 — 2026-09-18: the kglite 0.17.9 engine move, every golden byte-identical
 
 Released state: unchanged corpus set — the bench harness reports the same
