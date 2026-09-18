@@ -5,10 +5,10 @@
  "control_query": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
  "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
- "version": "0.2.20",
- "captured_at_commit": "a8e21323bcc3180806f185ed471fb07157e42d35",
- "captured_at": "2026-09-13",
- "stability_across_3_runs": "worst normalized per-query spread was 0.0030 ms docs-on (defs_per_file and varlen_callers_1_3) and 0.0030 ms docs-off (defs_per_file and varlen_callers_1_3), across three post-warmup runs per mode. Floors are 2.5x those measured spreads: 0.0075 ms in both modes. Node and edge counts were identical in all runs (567/880 docs-on, 560/859 docs-off), and every cross-build parity flag held. build_secs means were 0.0117 s docs-on from 0.0120/0.0115/0.0115 and 0.0098 s docs-off from 0.0100/0.0100/0.0095. The largest median-to-min gap was 9.68% on docs-off varlen_callers_1_3 (0.031/0.028 ms), with no heavy-tailed cell. varlen_callers_1_3 remains the control: stored at 0.028 ms docs-on and 0.029 ms docs-off, 3.73x/3.87x the respective floors and flat within +3.6% versus the 0.2.19 engine baseline. Captured under the sole performance lease with no concurrent build or benchmark. Twelfth baseline of corpus epoch c449542e (30 corpora).",
+ "version": "0.2.24",
+ "captured_at_commit": "c31214a16589ade4da067f6da23618c7427980cd",
+ "captured_at": "2026-09-18",
+ "stability_across_3_runs": "worst per-query median spread was 0.002 ms docs-on (defs_per_file) and 0.001 ms docs-off (defs_per_file), across three post-warmup runs per mode -- one to two 1 microsecond quantization ticks. Node and edge counts were identical in all runs (567/880 docs-on, 560/859 docs-off), unchanged from the 0.2.23 record across the kglite 0.17.7 -> 0.17.9 engine move, and every cross-build parity flag held. build_secs means were 0.0125 s docs-on from per-run 0.0125/0.0125/0.0125 and 0.0105 s docs-off from 0.010/0.011/0.0105. FLOORS HELD AT 0.0075 IN BOTH MODES, as 0.2.20 through 0.2.23 did: 2.5x a one- or two-tick spread sits at or below the instrument's own resolution-derived jitter, and a too-tight floor blocks a future tag asymmetrically against a too-loose one that still trips on the 2x this backstop exists to catch. varlen_callers_1_3 remains the control: stored at 0.028 ms docs-on / 0.028 ms docs-off, 3.73x / 3.73x the floor, well over the 2x minimum, and flat versus the 0.2.23 record (0.029/0.029) across this engine move -- 0.17.8 and 0.17.9 are the Obsidian vault releases and touch no engine query path; the only builder-crate change is the construction of two kglite::okf values in the docs pass, which runs once per build and not per file. MACHINE STATE, recorded because this file is read across sessions: captured at load average ~3 (the release-gate compare ran earlier at ~4-11, while four sibling releases built concurrently, and PASSED both modes with the control at +0.00%/+0.00%). Sixteenth baseline of corpus epoch c449542e (31 corpus directories).",
  "corpora": [
   {
    "target": "tests/corpus",
@@ -21,7 +21,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 567,
    "edges": 880,
-   "build_secs": 0.0117,
+   "build_secs": 0.0125,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -44,14 +44,14 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.016,
+     "median_ms": 0.017,
      "min_ms": 0.015
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.028,
-     "min_ms": 0.028
+     "median_ms": 0.031,
+     "min_ms": 0.027
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
@@ -75,7 +75,7 @@
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
      "median_ms": 0.028,
-     "min_ms": 0.027,
+     "min_ms": 0.025,
      "control": true
     },
     {
@@ -103,7 +103,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 560,
    "edges": 859,
-   "build_secs": 0.0098,
+   "build_secs": 0.0105,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -126,14 +126,14 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.016,
-     "min_ms": 0.016
+     "median_ms": 0.017,
+     "min_ms": 0.015
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.029,
-     "min_ms": 0.029
+     "median_ms": 0.032,
+     "min_ms": 0.028
     },
     {
      "name": "calls_edge_scan (1-hop edge scan + count)",
@@ -156,15 +156,15 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.029,
-     "min_ms": 0.028,
+     "median_ms": 0.028,
+     "min_ms": 0.025,
      "control": true
     },
     {
      "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
      "rows": 6,
      "median_ms": 0.004,
-     "min_ms": 0.004
+     "min_ms": 0.003
     },
     {
      "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
