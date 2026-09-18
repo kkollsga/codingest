@@ -11,28 +11,42 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.9
+## Requires kglite ≥ 0.17.10
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.9 to keep the Rust writer and the
+in-tree builder. The floor sits at 0.17.10 to keep the Rust writer and the
 Python reader on one engine release.
 
-0.17.9 and 0.17.8 are the Obsidian vault releases. Almost everything in them
-lands on `dialect="obsidian"`, which codingest never selects — but they
-reshaped the `kglite::okf` types that codingest's documentation pass builds on,
-so the floor is a hard one: `BuildOptions` gained a `Profile` and lost its
-never-read `embed` flag, and `walk::DiscoveredFile` gained `size` / `mtime`.
-Under `dialect="okf"` the parser behaves as it always did — the OKF profile has
-every vault feature off — with one dialect-independent correction that reaches
-a `:Doc` title: a line starting with `#` is a heading only when one to six `#`
-are followed by a space, a tab, or the line end, so an inline-tag line such as
-`#project see …` is no longer read as an `# H1`. Every frozen golden digest is
-byte-identical across the move. On the server side, `kglite-mcp-server` now
-bundles its code-graph skills only where the graph carries `Function` /
-`Class` — which is exactly a codingest graph — so the skills an agent reaches
-through `codingest-mcp` are unchanged while a document deployment stops paying
-for them.
+0.17.10 is a Cypher-executor fix release — no API change, no codingest source
+change — and both fixes are silent wrong answers on the query surface
+`codingest query` and `codingest-mcp` expose. A non-aggregating `WITH` is a
+scope barrier again: it used to project the row's values while leaving node,
+edge and path *bindings* in place, so a name its projection dropped stayed
+silently bound and a later `MATCH` anchored the stale node instead of scanning
+(write clauses after such a `WITH` acted on nothing, with no error). And `*`
+written beside another projection item now expands instead of becoming a column
+literally named `*` — `WITH *, a + 1 AS b` used to drop every value-carrying
+name, `WITH *, count(*)` grouped by a constant, and `WITH DISTINCT *, k`
+collapsed the rows. Neither shape appears in codingest's own Cypher: the
+builder writes graphs and never queries them, and the shipped code-review
+recipes and skill examples contain no `WITH` clause and no `*` projection.
+
+The preceding 0.17.9 and 0.17.8 floors are the Obsidian vault releases. Almost
+everything in them lands on `dialect="obsidian"`, which codingest never selects
+— but they reshaped the `kglite::okf` types that codingest's documentation pass
+builds on, so that floor was a hard one: `BuildOptions` gained a `Profile` and
+lost its never-read `embed` flag, and `walk::DiscoveredFile` gained `size` /
+`mtime`. Under `dialect="okf"` the parser behaves as it always did — the OKF
+profile has every vault feature off — with one dialect-independent correction
+that reaches a `:Doc` title: a line starting with `#` is a heading only when
+one to six `#` are followed by a space, a tab, or the line end, so an
+inline-tag line such as `#project see …` is no longer read as an `# H1`. Every
+frozen golden digest is byte-identical across the move. On the server side,
+`kglite-mcp-server` now bundles its code-graph skills only where the graph
+carries `Function` / `Class` — which is exactly a codingest graph — so the
+skills an agent reaches through `codingest-mcp` are unchanged while a document
+deployment stops paying for them.
 
 The preceding 0.17.7 floor adds the producer-level
 methodology hook: `ServerExtensions::with_skills` and `with_recipes` let the

@@ -8,6 +8,43 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.17.10**, a pure Cypher-executor fix release:
+  `cargo semver-checks` reports no API change across 196 checks, codingest
+  needed no source edit, and every frozen golden digest is byte-identical
+  across the move. The floor moves anyway because both upstream fixes were
+  *silent wrong answers* on the query surface `codingest query` and the
+  embedded `codingest-mcp` server expose.
+- **A non-aggregating `WITH` is a scope barrier again.** Upstream projected the
+  row's values but left node, edge and path *identity* bindings in place, so a
+  name the projection dropped stayed silently bound: a later `MATCH` on that
+  name anchored the stale node instead of scanning, `count(*)` behind the
+  barrier counted 1 instead of the label, and `CREATE` / `SET` / `MERGE` /
+  `FOREACH` after such a `WITH` acted on nothing, with no error and no warning.
+  `WITH n AS m` now frees `n`; `WITH *` and a projected `WITH n` keep their
+  bindings as before. An *aggregating* `WITH` was correct throughout.
+- **`*` written beside another projection item now expands.** Alone it always
+  did; alongside anything else — `WITH *, a + 1 AS b` — it was projected like
+  an ordinary expression, producing a column literally named `*` while every
+  value-carrying name in scope was dropped. Two spellings lost whole rows
+  rather than cells: `WITH *, count(*) AS c` grouped by that constant, and
+  `WITH DISTINCT *, 1 AS k` deduplicated every row down to one. `RETURN *` now
+  also lists a path variable, and where `*` and an explicit item would project
+  the same name the explicit item wins.
+- **Neither shape reaches codingest's own Cypher.** The builder writes graphs
+  and never queries them, and the shipped code-review recipe catalogue, skill
+  examples, CLI query paths and contract tests contain no `WITH` clause and no
+  `*` projection — verified by grep across `assets/code_review/recipes.json`,
+  both `skills/` trees, `crates/codingest-cli/src/query.rs` and the CLI/MCP
+  test suites, then by running the full battery against the new engine.
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint, bundled code-review skill and current README/docs
+  snippets now require 0.17.10. Historical release, parity and benchmark
+  records remain unchanged.
+
 ## [0.2.24] - 2026-09-18
 
 ### Changed

@@ -17,7 +17,39 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.9
+# kglite engine + MCP server — imported as crates.io libraries. The 0.17.10
+# floor is a pure Cypher-executor fix release: `cargo semver-checks` reports no
+# API change across 196 checks, and codingest needs no source edit for it. It
+# moves anyway because both fixes were SILENT wrong answers on the query
+# surface `codingest query` and the embedded `codingest-mcp` server expose —
+# the class of defect a floor exists to keep users off:
+#   * a non-aggregating `WITH` is a scope barrier again. It projected the row's
+#     values but left the node / edge / path *identity* bindings in place, so a
+#     name the projection dropped stayed silently bound: a later `MATCH` on
+#     that name anchored the stale node instead of scanning, `count(*)` behind
+#     the barrier counted 1 instead of the label, and `CREATE` / `SET` /
+#     `MERGE` / `FOREACH` after such a `WITH` acted on nothing with no error.
+#     `WITH n AS m` now frees `n`; `WITH *` and a projected `WITH n` keep their
+#     bindings as before. An *aggregating* `WITH` rebuilds its rows from the
+#     projection and was correct throughout, which is why this survived.
+#   * `*` written beside another projection item now expands. Alone it always
+#     did; alongside anything else it was projected as an ordinary expression —
+#     a column literally named `*` holding `1` — and every value-carrying name
+#     in scope was dropped, so `UNWIND [1] AS a WITH *, a + 1 AS b RETURN a, b`
+#     answered `{a: null, b: 2}`. Two spellings lost whole rows: `WITH *,
+#     count(*) AS c` grouped by that constant, and `WITH DISTINCT *, 1 AS k`
+#     deduplicated every row down to one. `RETURN *` now also lists a path
+#     variable, and where `*` and an explicit item would project the same name
+#     the explicit item wins.
+#   Neither reaches codingest's own Cypher. The builder writes graphs and never
+#   queries them, and the shipped code-review recipe catalogue and skill
+#   examples contain no `WITH` clause and no `*` projection at all
+#   (grep-verified across `assets/code_review/recipes.json`, both `skills/`
+#   trees, `query.rs` and the CLI/MCP tests). Optimized and unoptimized plans
+#   agreed on every old wrong answer, so these were invisible to kglite's
+#   optimizer-differential corpus and are now pinned there by absolute goldens.
+#   Zero source changes here; every frozen golden byte-identical.
+# The preceding 0.17.9
 # floor covers two same-day releases, 0.17.8 (the Obsidian vault format) and
 # 0.17.9 (the vault structure profile). Both land almost entirely on
 # `dialect="obsidian"`, which codingest never selects — but they rebuilt the
@@ -595,8 +627,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.9", default-features = false }
-kglite-mcp-server = { version = "0.17.9", default-features = false }
+kglite = { version = "0.17.10", default-features = false }
+kglite-mcp-server = { version = "0.17.10", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
