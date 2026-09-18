@@ -7,6 +7,49 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.24 — 2026-09-18: the kglite 0.17.9 engine move, every golden byte-identical
+
+Released state: unchanged corpus set — the bench harness reports the same
+corpus digest `c449542e…` as the 0.2.18 baseline, and `CORPORA` holds 31
+entries, each with a frozen golden. All green in the release-mode gate
+(`cargo test --workspace --release`, 387 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 39 tests against the installed kglite 0.17.9 wheel (`make gate`
+9/9 at a44b23e, the release tree minus the version bump). The builder diff
+since v0.2.23 is 13 added and 4 removed lines in
+`crates/codingest/src/docs/mod.rs`, all of it the construction of the two
+`kglite::okf` values the documentation pass hands the OKF parser; every walk,
+partition, parse and resolve stage is untouched.
+
+**Every golden digest is byte-identical across the move, and no golden was
+regenerated.** This release moves the engine floor two upstream versions, from
+kglite 0.17.7 to 0.17.9 — 0.17.8 (the Obsidian vault format) and 0.17.9 (the
+vault structure profile). Both rebuilt the `kglite::okf` type surface the docs
+pass sits on: `BuildOptions` gained a `Profile` and lost its never-read
+`embed` flag, and `walk::DiscoveredFile` gained `size` / `mtime`, so the two
+exhaustive struct literals had to move. The options now come from
+`BuildOptions::for_dialect(Dialect::Okf)`, which carries the dialect's profile
+— and the OKF profile is the pre-0.17.8 hardcoded behaviour with every vault
+feature (wikilinks, embeds, inline tags, frontmatter edges, aliases, folder
+notes, attachments, `structure:`) off. **The one upstream parser fix that is
+not gated on the vault profile is the heading rule**: a line starting with `#`
+is a heading only when one to six `#` are followed by a space, a tab, or the
+line end, so an inline-tag line is no longer read as an `# H1` and no longer
+supplies a doc's fallback title. The docs corpora (`docs_mdx`, `docs_ext_collide`)
+carry that path through `golden_parity`, and their digests did not move.
+
+**The perf anchor PASSES in both modes**, against the 0.2.21 baseline selected
+by the three-release window. The `varlen_callers_1_3` control read **+0.00%
+docs-on / +0.00% docs-off** — instrument steady — and no row cleared both the
++30% limit and its absolute floor. `build_secs` reads +34.78% docs-on / +0.00%
+docs-off, under the 0.05 s absolute floor; it is a once-per-build cost captured
+on a machine running four sibling releases concurrently (load average ~4–11),
+and the builder diff touches no hot path. `contains_new` reads +33.33%
+docs-off on a +0.001 ms raw move, under the 0.0075 ms floor. Node and edge
+counts are identical to the 0.2.23 record in both modes (567/880 docs-on,
+560/859 docs-off), which is the same statement the goldens make.
+
 ## Release 0.2.23 — 2026-09-16: methodology on the MCP route, all green across the kglite 0.17.7 move
 
 Released state: unchanged corpus set — the bench harness reports the same
