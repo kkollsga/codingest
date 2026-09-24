@@ -7,6 +7,39 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.26 — 2026-09-24: the kglite 0.18.0 engine move, every golden byte-identical
+
+Released state: unchanged corpus set — the bench harness reports the same
+corpus digest `c449542e…` as the 0.2.18 baseline, and `CORPORA` holds 31
+entries, each with a frozen golden. All green in the release-mode gate
+(`cargo test --workspace --release`, 388 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 39 tests against the installed kglite 0.18.0 wheel (`make gate` at
+91753e3, the release tree minus the version bump). The builder diff since
+v0.2.25 is confined to `methodology.rs` — the opt-in `--embed-skills` recipe
+writer, which the default build and the goldens never reach — so every walk,
+partition, parse and resolve stage is untouched and `BENCHMARKS.md` is
+deliberately unrefreshed.
+
+**Every golden digest is byte-identical across the move, and no golden was
+regenerated.** The floor moves 0.17.10 → 0.18.0, taking 0.17.11 and 0.17.12
+with it. 0.18.0's headline — relationship embeddings and text indexes at
+parity with nodes — is not on the builder's path: codingest writes no
+embeddings and no text indexes, and none of 0.18.0's declared Rust API breaks
+touches an API it calls. The one compile break came from 0.17.12: the public
+`RecipeRecord` gained `tool: Option<String>`, and the methodology writer now
+carries it through from the recipe manifest (pinned by a unit test).
+
+**The perf anchor PASSES in both modes**, against the 0.2.23 baseline selected
+by the three-release window, and the verdict reproduced across all three
+post-warmup runs per mode. The `varlen_callers_1_3` control read within
+±3.45% in every run — instrument steady. Node and edge counts are identical to
+the record in both modes; `build_secs` moved −20% to −23%; the only positive
+rows (`top20_by_branch_count` +5.88%, `anchored_callers` +25.00% in some runs)
+are single-tick moves under the absolute floor. MACHINE STATE: captured at load
+average ~4–15 with sibling releases building concurrently.
+
 ## Release 0.2.25 — 2026-09-19: the kglite 0.17.10 engine move, zero source changes
 
 Released state: unchanged corpus set — the bench harness reports the same
