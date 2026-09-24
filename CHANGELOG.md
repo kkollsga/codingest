@@ -8,6 +8,33 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.18.0** (from 0.17.10, taking 0.17.11 and
+  0.17.12 with it). The Python requirement is now `kglite>=0.18.0,<0.19`: the
+  wheel's `.kgl` writer and the installed kglite reader stay on one engine
+  minor. 0.18.0's headline — relationship embeddings and text indexes at
+  parity with nodes — is not something codingest consumes: the builder writes
+  no embeddings and no text indexes, none of 0.18.0's declared Rust API breaks
+  (`TextScoreRewrite`, `RelValue`, `EdgeBinding`, `ImportStats`, `RawOp`, the
+  embedding import/export arities) touches an API codingest calls, and every
+  frozen parity golden is byte-identical across the move.
+- **Graph-carried code-review recipes keep their MCP tool name.** kglite
+  0.17.12 lets a recipe query be served as its own MCP tool and added
+  `RecipeRecord.tool`; the methodology writer that stores the `code_review/*`
+  recipes into a graph now carries a query's `tool` through from the recipe
+  manifest, so a `.kgl` served by a plain `kglite-mcp-server --graph` exposes
+  the same tools as the compiled catalogue. The bundled catalogue declares no
+  `tool` today, so the served tool list is unchanged. With 0.17.11–0.17.12 the
+  `run_recipe_query` catalogue block `codingest-mcp` serves also keeps each
+  query's parameter schema.
+- Live floor declarations moved together: the Rust `kglite` and
+  `kglite-mcp-server` requirements, Python requirement, CI wheel pin,
+  import-failure hint, bundled code-review skill and current README/docs
+  snippets now require 0.18.0. Historical release, parity and benchmark
+  records keep their earlier citations.
+
 ## [0.2.25] - 2026-09-19
 
 ### Changed

@@ -17,7 +17,19 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.17.10
+# kglite engine + MCP server — imported as crates.io libraries. The 0.18.0
+# floor is a minor release whose headline — relationship embeddings and text
+# indexes at parity with nodes — codingest does not consume: the builder
+# writes no embeddings and no text indexes, and every frozen parity golden is
+# byte-identical across the move. It is taken because the Python pairing in
+# pyproject.toml must follow the engine minor (KGLite may change the `.kgl`
+# format across a minor). The one source edit it needed is 0.17.12's: the
+# public `RecipeRecord` gained `tool: Option<String>` (a recipe query served as
+# its own MCP tool), and `methodology::recipe_records` now carries it through
+# from the recipe manifest so a graph-carried record matches the compiled
+# catalogue. 0.17.11–0.17.12 also keep parameter schemas in the
+# `run_recipe_query` catalogue block codingest-mcp serves.
+# The preceding 0.17.10
 # floor is a pure Cypher-executor fix release: `cargo semver-checks` reports no
 # API change across 196 checks, and codingest needs no source edit for it. It
 # moves anyway because both fixes were SILENT wrong answers on the query
@@ -627,8 +639,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.17.10", default-features = false }
-kglite-mcp-server = { version = "0.17.10", default-features = false }
+kglite = { version = "0.18.0", default-features = false }
+kglite-mcp-server = { version = "0.18.0", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

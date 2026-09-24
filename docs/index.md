@@ -11,15 +11,26 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.17.10
+## Requires kglite ≥ 0.18.0
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.17.10 to keep the Rust writer and the
-Python reader on one engine release.
+in-tree builder. The floor sits at 0.18.0 to keep the Rust writer and the
+Python reader on one engine release — KGLite may change the `.kgl` format
+across a minor, so the writer and reader are pinned to the same one.
 
-0.17.10 is a Cypher-executor fix release — no API change, no codingest source
-change — and both fixes are silent wrong answers on the query surface
+0.18.0 is a minor release whose headline — relationship embeddings and text
+indexes at parity with nodes — codingest does not consume: the builder writes
+no embeddings and no text indexes, and graph output is unchanged (every frozen
+parity golden is byte-identical across the move). The one source change it
+needed came from 0.17.12, which the floor now also covers: a graph-carried
+recipe record gained an optional `tool` name (a recipe query can be served as
+its own MCP tool), and codingest's methodology writer now carries that field
+through from the recipe manifest. 0.17.11–0.17.12 also keep parameter schemas
+in the `run_recipe_query` catalogue block that `codingest-mcp` serves.
+
+The preceding 0.17.10 floor was a Cypher-executor fix release — no API
+change, no codingest source change — and both fixes were silent wrong answers on the query surface
 `codingest query` and `codingest-mcp` expose. A non-aggregating `WITH` is a
 scope barrier again: it used to project the row's values while leaving node,
 edge and path *bindings* in place, so a name its projection dropped stayed

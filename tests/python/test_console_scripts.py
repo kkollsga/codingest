@@ -147,7 +147,7 @@ def test_documented_optional_kglite_agent_cli_expands_retained_result(
 
     installed = importlib.metadata.version("kglite")
     release = tuple(map(int, installed.split(".")[:3]))
-    assert (0, 17, 4) <= release < (0, 18), (
+    assert (0, 18, 0) <= release < (0, 19), (
         f"kglite {installed} is outside the documented agent-response line"
     )
     version_run = _run([str(executable), "--version"])

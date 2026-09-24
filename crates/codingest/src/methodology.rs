@@ -87,7 +87,10 @@ pub fn recipe_catalog() -> Result<RecipeCatalog, RecipeCatalogError> {
 /// The catalogue as individual records, in `(recipe, name)` order, for
 /// writing into a graph with [`attach`].
 pub fn recipe_records() -> Vec<RecipeRecord> {
-    let value = recipe_catalog_value();
+    records_from_catalog_value(&recipe_catalog_value())
+}
+
+fn records_from_catalog_value(value: &Value) -> Vec<RecipeRecord> {
     let groups = value.as_object().expect("recipes.json root is a mapping");
     let mut records = BTreeMap::new();
     for (recipe, group) in groups {
@@ -111,6 +114,9 @@ pub fn recipe_records() -> Vec<RecipeRecord> {
                     parameters: query["parameters"].clone(),
                     cypher: query["cypher"].as_str().unwrap_or_default().to_string(),
                     recipe_description: recipe_description.clone(),
+                    // Carried through so a graph-carried record serves under
+                    // the same MCP tool name the manifest catalogue does.
+                    tool: query["tool"].as_str().map(str::to_string),
                 },
             );
         }
@@ -183,6 +189,25 @@ mod tests {
             recipes::validate(record)
                 .unwrap_or_else(|error| panic!("recipe {} is invalid: {error}", record.name));
         }
+    }
+
+    #[test]
+    fn a_declared_tool_name_survives_into_the_record() {
+        let mut value = recipe_catalog_value();
+        value[RECIPE_GROUP]["queries"]["callers_page"]["tool"] = "find_callers".into();
+        let records = records_from_catalog_value(&value);
+        let tools: Vec<(&str, Option<&str>)> = records
+            .iter()
+            .map(|record| (record.name.as_str(), record.tool.as_deref()))
+            .filter(|(_, tool)| tool.is_some())
+            .collect();
+        assert_eq!(tools, [("callers_page", Some("find_callers"))]);
+        let tagged = records.iter().find(|r| r.name == "callers_page").unwrap();
+        recipes::validate(tagged).unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            recipe_records().iter().all(|record| record.tool.is_none()),
+            "the bundled catalogue declares no tool names"
+        );
     }
 
     #[test]

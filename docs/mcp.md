@@ -290,7 +290,7 @@ If you have set `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` (or the broader
 ### Skills: on by default, and what that costs
 
 `codingest-mcp` registers its own methodology with the server (kglite ≥
-0.17.10): the `code_review` skill and the `code_review/*` recipe catalogue
+0.18.0): the `code_review` skill and the `code_review/*` recipe catalogue
 (`list_recipe_queries` / `run_recipe_query`) travel in the binary and apply to
 every graph it serves, in every mode. Because the producer contributes a
 layer, a manifest that never mentions `skills:` — or no manifest at all —
