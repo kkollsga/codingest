@@ -5,10 +5,10 @@
  "control_query": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
  "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
- "version": "0.2.23",
- "captured_at_commit": "95f48fc52005cd0eb8698bbcbcd172d03c17e91a",
- "captured_at": "2026-09-16",
- "stability_across_3_runs": "worst per-query median spread was 0.001 ms docs-on (eq_filter_pub) and 0.002 ms docs-off (defs_per_file), across three post-warmup runs per mode -- one to two 1 microsecond quantization ticks. Node and edge counts were identical in all runs (567/880 docs-on, 560/859 docs-off) and every cross-build parity flag held. build_secs means were 0.015 s docs-on from per-run 0.015/0.0145/0.0155 and 0.013 s docs-off from 0.013/0.013/0.013. FLOORS HELD AT 0.0075 IN BOTH MODES, as 0.2.20 through 0.2.22 did: 2.5x a one- or two-tick spread sits at or below the instrument's own resolution-derived jitter, and a too-tight floor blocks a future tag asymmetrically against a too-loose one that still trips on the 2x this backstop exists to catch. varlen_callers_1_3 remains the control: stored at 0.029 ms docs-on / 0.029 ms docs-off, 3.87x / 3.87x the floor, well over the 2x minimum, and flat versus the 0.2.22 record (0.029/0.030) across the kglite 0.17.6 -> 0.17.7 engine move and the methodology release -- neither touches an engine query path or a builder stage; the only builder-crate change is a new module no build path calls. MACHINE STATE, recorded because this file is read across sessions: captured at load average ~6.5 (the release-gate compare minutes earlier ran at ~11-16 and PASSED both modes with the control at +3.57%/+0.00%). Fifteenth baseline of corpus epoch c449542e (31 corpus directories).",
+ "version": "0.2.27",
+ "captured_at_commit": "e0c203b35a3ef870495c7aaac50f4e12468f3cf5",
+ "captured_at": "2026-10-03",
+ "stability_across_3_runs": "worst per-query median spread was 0.002 ms docs-on and 0.001 ms docs-off across three post-warmup runs per mode (one and two 1 microsecond quantization ticks). Node and edge counts were identical in all runs (567/880 docs-on, 560/859 docs-off), unchanged from the 0.2.26 record across the kglite 0.18.0 -> 0.19.1 engine move. build_secs means were 0.0128 s docs-on from per-run 0.013/0.0125/0.013 and 0.0108 s docs-off from 0.011/0.011/0.0105. An earlier capture the same minute was discarded and retaken because its first docs-on build read 0.0435 s (cold start after idle), which would have inflated the once-per-build mean. Floors unchanged at 0.0075 in both modes. varlen_callers_1_3 remains the control, stored at 0.029 ms. MACHINE STATE, recorded because this file is read across sessions: captured at load average ~3.7-4.1 with no sibling build running at the time; the release-gate compare PASSED in both modes against the 0.2.24 anchor with the control at +3.57%. Nineteenth baseline of corpus epoch c449542e (31 corpus directories).",
  "corpora": [
   {
    "target": "tests/corpus",
@@ -21,7 +21,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 567,
    "edges": 880,
-   "build_secs": 0.015,
+   "build_secs": 0.0128,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -32,25 +32,25 @@
     {
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
-     "median_ms": 0.003,
-     "min_ms": 0.003
+     "median_ms": 0.004,
+     "min_ms": 0.004
     },
     {
      "name": "contains_new (CONTAINS string filter)",
      "rows": 1,
      "median_ms": 0.004,
-     "min_ms": 0.003
+     "min_ms": 0.004
     },
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.017,
+     "median_ms": 0.018,
      "min_ms": 0.017
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.03,
+     "median_ms": 0.032,
      "min_ms": 0.03
     },
     {
@@ -62,7 +62,7 @@
     {
      "name": "anchored_callers (anchored 1-hop, in-hub)",
      "rows": 7,
-     "median_ms": 0.004,
+     "median_ms": 0.005,
      "min_ms": 0.004
     },
     {
@@ -74,7 +74,7 @@
     {
      "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
      "rows": 1,
-     "median_ms": 0.029,
+     "median_ms": 0.028,
      "min_ms": 0.028,
      "control": true
     },
@@ -103,7 +103,7 @@
    "corpus_sha256": "c449542e613faad7f323c0d88c9335c23fb69c97590b0a4e0667b1dbd83dcc63",
    "nodes": 560,
    "edges": 859,
-   "build_secs": 0.013,
+   "build_secs": 0.0108,
    "queries": [
     {
      "name": "count_functions (full-label scan + count)",
@@ -114,8 +114,8 @@
     {
      "name": "eq_filter_pub (equality property filter)",
      "rows": 1,
-     "median_ms": 0.003,
-     "min_ms": 0.003
+     "median_ms": 0.004,
+     "min_ms": 0.004
     },
     {
      "name": "contains_new (CONTAINS string filter)",
@@ -126,13 +126,13 @@
     {
      "name": "top20_by_branch_count (ORDER BY + LIMIT)",
      "rows": 20,
-     "median_ms": 0.017,
-     "min_ms": 0.017
+     "median_ms": 0.018,
+     "min_ms": 0.018
     },
     {
      "name": "defs_per_file (grouped aggregation)",
      "rows": 20,
-     "median_ms": 0.03,
+     "median_ms": 0.031,
      "min_ms": 0.029
     },
     {
@@ -144,7 +144,7 @@
     {
      "name": "anchored_callers (anchored 1-hop, in-hub)",
      "rows": 7,
-     "median_ms": 0.004,
+     "median_ms": 0.005,
      "min_ms": 0.004
     },
     {
