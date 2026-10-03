@@ -19,7 +19,7 @@ in-tree builder. The floor sits at 0.19.1 to keep the Rust writer and the
 Python reader on one engine release — KGLite may change the `.kgl` format
 across a minor, so the writer and reader are pinned to the same one.
 
-The floor moved from 0.18.0 to 0.19.1 (two engine minors); the notes below record
+The floor moved from 0.18.0 to 0.19.1 (one engine minor); the notes below record
 the earlier floors. 0.18.0 is a minor release whose headline — relationship embeddings and text
 indexes at parity with nodes — codingest does not consume: the builder writes
 no embeddings and no text indexes, and graph output is unchanged (every frozen

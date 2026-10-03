@@ -18,7 +18,7 @@ repository = "https://github.com/kkollsga/codingest"
 base64 = "0.22"
 sha2 = "0.11"
 # kglite engine + MCP server — imported as crates.io libraries. The 0.19.1
-# floor moves the engine two minors (0.18 -> 0.19); the history below records
+# floor moves the engine one minor (0.18 -> 0.19); the history below records
 # the preceding 0.18.0 floor and earlier ones. The 0.18.0
 # floor is a minor release whose headline — relationship embeddings and text
 # indexes at parity with nodes — codingest does not consume: the builder
