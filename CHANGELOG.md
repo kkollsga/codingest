@@ -8,6 +8,17 @@ Add user-visible changes to `[Unreleased]` as you land them (per the
 `phased-plan` skill). The `release` skill promotes `[Unreleased]` → `[x.y.z]` at
 ship time — it's the only place the version bumps.
 
+## [Unreleased]
+
+### Changed
+- **Engine floor moves to kglite 0.19.1** (from 0.18.0, taking 0.19.0 with it).
+  The Python requirement is now `kglite>=0.19.1,<0.20` and the Rust
+  requirements for `kglite` and `kglite-mcp-server` are `0.19.1`, so the
+  wheel's `.kgl` writer and the installed kglite reader stay on one engine
+  minor. None of the declared Rust API changes in 0.19.0 and 0.19.1 touches an
+  API codingest calls; the workspace compiles unchanged and the frozen parity
+  goldens are unchanged.
+
 ## [0.2.26] - 2026-09-24
 
 ### Changed

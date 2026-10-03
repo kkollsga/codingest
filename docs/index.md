@@ -11,15 +11,16 @@ the code-review Agent Skill. KGLite owns the graph engine and reusable
 query/read infrastructure: storage, Cypher, `.kgl` persistence, code-entity
 reads, and the underlying MCP server.
 
-## Requires kglite ≥ 0.18.0
+## Requires kglite ≥ 0.19.1
 
 codingest builds against engine APIs (`kglite::api::code_entities`,
 `WorkspaceGraphHooks`, and `ServerExtensions`) exposed after KGLite removed its
-in-tree builder. The floor sits at 0.18.0 to keep the Rust writer and the
+in-tree builder. The floor sits at 0.19.1 to keep the Rust writer and the
 Python reader on one engine release — KGLite may change the `.kgl` format
 across a minor, so the writer and reader are pinned to the same one.
 
-0.18.0 is a minor release whose headline — relationship embeddings and text
+The floor moved from 0.18.0 to 0.19.1 (two engine minors); the notes below record
+the earlier floors. 0.18.0 is a minor release whose headline — relationship embeddings and text
 indexes at parity with nodes — codingest does not consume: the builder writes
 no embeddings and no text indexes, and graph output is unchanged (every frozen
 parity golden is byte-identical across the move). The one source change it
