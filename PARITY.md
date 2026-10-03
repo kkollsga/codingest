@@ -7,6 +7,24 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.27 — 2026-10-03: the kglite 0.19.1 engine move, every golden byte-identical
+
+Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
+entries, each with a frozen golden). All green in the release-mode gate
+(`cargo test --workspace --release`, 388 passed / 0 failed; `golden_parity`
+and `rev_self_consistency` ok). The Python acceptance suite passed all 39
+tests against the installed kglite 0.19.1 wheel. The builder source is
+unchanged since v0.2.26, so no golden was regenerated and `BENCHMARKS.md` is
+deliberately unrefreshed. The floor moves 0.18.0 → 0.19.1, taking 0.19.0 with
+it; none of the declared Rust API changes touches an API codingest calls, and
+the workspace compiled unchanged.
+
+**The perf anchor PASSES in both modes** against the 0.2.24 baseline selected
+by the three-release window; the `varlen_callers_1_3` control read +3.57% in
+both modes (instrument steady). Node and edge counts are identical; the rows
+over 30% are single-tick moves under the absolute floors. MACHINE STATE:
+captured at load average ~5-13 while sibling releases built concurrently.
+
 ## Release 0.2.26 — 2026-09-24: the kglite 0.18.0 engine move, every golden byte-identical
 
 Released state: unchanged corpus set — the bench harness reports the same
