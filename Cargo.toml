@@ -18,8 +18,10 @@ repository = "https://github.com/kkollsga/codingest"
 base64 = "0.22"
 sha2 = "0.11"
 # kglite engine + MCP server — imported as crates.io libraries. The 0.19.3
-# floor moves the engine one minor (0.18 -> 0.19); the history below records
-# the preceding 0.18.0 floor and earlier ones. The 0.18.0
+# floor is a patch step within 0.19 (0.19.1 -> 0.19.3; none of its changes
+# reaches codingest, see PARITY.md); 0.19.1 moved the engine one minor
+# (0.18 -> 0.19). The history below records the preceding 0.18.0 floor and
+# earlier ones. The 0.18.0
 # floor is a minor release whose headline — relationship embeddings and text
 # indexes at parity with nodes — codingest does not consume: the builder
 # writes no embeddings and no text indexes, and every frozen parity golden is
