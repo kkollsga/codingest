@@ -14,7 +14,7 @@ git diff, source reading, and literal-text search; it does not replace them.
 > codingest` also provides the builder-aware `codingest-mcp` server and a
 > compatible graph engine. Rust-only environments can alternatively use Cargo.
 > Examples that invoke the external `kglite` CLI require a compatible
-> `kglite>=0.19.1,<0.20`; verify `kglite --version` before using its
+> `kglite>=0.19.3,<0.20`; verify `kglite --version` before using its
 > agent-response features.
 
 Inspect the diff and repository guidance first. Identify changed symbols and
