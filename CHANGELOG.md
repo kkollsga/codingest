@@ -10,6 +10,20 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-10-05
+
+### Changed
+- **Engine floor moves to kglite 0.19.3** (from 0.19.1, taking 0.19.2 with it;
+  0.19.2 was published to PyPI only, so on crates.io 0.19.3 follows 0.19.1).
+  The Python requirement is now `kglite>=0.19.3,<0.20` and the Rust
+  requirements for `kglite` and `kglite-mcp-server` are `0.19.3`. None of the
+  breaking changes in 0.19.2 and 0.19.3 reaches codingest: it declares no
+  valid-time on its graphs (the default-today read, the refused
+  `degree()` family and the calendar-month date arithmetic do not apply), uses
+  no blueprint loader (the `OF_<PARENT>` edge naming and `strict` do not
+  apply), and constructs no `Settings` struct literal. The workspace compiles
+  unchanged and the frozen parity goldens are unchanged.
+
 ## [0.2.27] - 2026-10-03
 
 ### Changed

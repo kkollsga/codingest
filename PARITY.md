@@ -7,6 +7,25 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.28 — 2026-10-05: the kglite 0.19.3 engine move, every golden byte-identical
+
+Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
+entries, each with a frozen golden). All green in the release-mode gate
+(`cargo test --workspace --release`, 388 passed / 0 failed; `golden_parity`,
+`rev_self_consistency`, `reloaded_graph_renders_identically` and
+`kgl_bytes_are_stable_across_builds` all ok). The Python acceptance suite
+passed all 39 tests against the installed kglite 0.19.3 wheel. The builder
+source is unchanged since v0.2.26, so no golden was regenerated, and
+`BENCHMARKS.md` and the perf anchor were not refreshed.
+
+The floor moves 0.19.1 → 0.19.3, taking 0.19.2 with it (0.19.2 reached PyPI
+only; on crates.io 0.19.3 follows 0.19.1). None of the breaking changes in the
+two releases reaches codingest. The graph it writes declares no valid-time, so
+the default-today read, the refused `degree()` family and the calendar-month
+date arithmetic have nothing to act on. It loads no blueprint, so the
+`OF_<PARENT>` edge naming and `strict` do not apply. It builds no `Settings`
+literal, and the workspace compiled unchanged.
+
 ## Release 0.2.27 — 2026-10-03: the kglite 0.19.1 engine move, every golden byte-identical
 
 Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`

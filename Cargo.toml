@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.27"
+version = "0.2.28"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,7 +17,7 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.19.1
+# kglite engine + MCP server — imported as crates.io libraries. The 0.19.3
 # floor moves the engine one minor (0.18 -> 0.19); the history below records
 # the preceding 0.18.0 floor and earlier ones. The 0.18.0
 # floor is a minor release whose headline — relationship embeddings and text
@@ -641,8 +641,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.19.1", default-features = false }
-kglite-mcp-server = { version = "0.19.1", default-features = false }
+kglite = { version = "0.19.3", default-features = false }
+kglite-mcp-server = { version = "0.19.3", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
