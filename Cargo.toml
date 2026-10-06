@@ -17,9 +17,10 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.19.3
-# floor is a patch step within 0.19 (0.19.1 -> 0.19.3; none of its changes
-# reaches codingest, see PARITY.md); 0.19.1 moved the engine one minor
+# kglite engine + MCP server — imported as crates.io libraries. The 0.19.4
+# floor is a patch step within 0.19 (0.19.3 -> 0.19.4; its titling, valid-time
+# writer, `DeclareReport` and `create_index` changes do not reach codingest,
+# see PARITY.md); 0.19.1 moved the engine one minor
 # (0.18 -> 0.19). The history below records the preceding 0.18.0 floor and
 # earlier ones. The 0.18.0
 # floor is a minor release whose headline — relationship embeddings and text
@@ -643,8 +644,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.19.3", default-features = false }
-kglite-mcp-server = { version = "0.19.3", default-features = false }
+kglite = { version = "0.19.4", default-features = false }
+kglite-mcp-server = { version = "0.19.4", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
