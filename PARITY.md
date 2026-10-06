@@ -7,6 +7,16 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.29 — 2026-10-06: the kglite 0.19.4 engine move, every golden byte-identical
+
+Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
+entries, each with a frozen golden). `make gate` passed all nine steps against
+kglite 0.19.4, including `golden_parity` and `rev_self_consistency`, and the
+Python acceptance suite passed all 39 tests. The builder source is unchanged,
+so no golden was regenerated. The 0.19.4 title, valid-time-writer,
+`DeclareReport` and `create_index` changes have nothing to act on: every
+`add_nodes` call names its title field and the graph declares no valid-time.
+
 ## Release 0.2.28 — 2026-10-05: the kglite 0.19.3 engine move, every golden byte-identical
 
 Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`

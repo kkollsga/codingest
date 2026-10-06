@@ -10,6 +10,20 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-10-06
+
+### Changed
+- **Engine floor moves to kglite 0.19.4** (from 0.19.3). The Python requirement
+  is now `kglite>=0.19.4,<0.20` and the Rust requirements for `kglite` and
+  `kglite-mcp-server` are `0.19.4`. None of the breaking changes in 0.19.4
+  reaches codingest: every `add_nodes` call names its title field, so the new
+  `title`-column default does not apply, and it writes no `title` property
+  through `CREATE` or `MERGE`. It uses none of the fluent `update()` /
+  `add_properties()` / `store_as=` writers, `DeclareReport`,
+  `update_node_properties` or `create_index`, and it reads integer metrics
+  through both `Value::Int64` and `Value::UniqueId`. The workspace compiles
+  unchanged and the frozen parity goldens are unchanged.
+
 ## [0.2.28] - 2026-10-05
 
 ### Changed
