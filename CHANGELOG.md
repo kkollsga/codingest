@@ -10,6 +10,25 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.30] - 2026-10-10
+
+### Changed
+- **Engine floor moves to kglite 0.19.6** (from 0.19.4, taking 0.19.5 with it).
+  The Python requirement is now `kglite>=0.19.6,<0.20` and the Rust
+  requirements for `kglite` and `kglite-mcp-server` are `0.19.6`. None of the
+  breaking changes in 0.19.5 and 0.19.6 reaches codingest's code or output:
+  - Enforced ontologies (`enforcement: warn|error`) bind writes only on a graph
+    that declares one. The builder declares no ontology, so builds are unchanged.
+  - The new `KgError` / `KgErrorCode` variants, the `OntologyStore` fields and
+    `CommitOutcome` no longer being `UnwindSafe` need no source edit: codingest
+    only boxes a `KgError` and never matches it.
+  - Unaliased `RETURN` items are now named by their source text. The
+    `codingest query` and MCP tools pass columns through from the engine, so
+    an unaliased column in a user's query is named by its source text; alias
+    with `AS` for stable names.
+  - The workspace compiles unchanged and the frozen parity goldens are
+    unchanged.
+
 ## [0.2.29] - 2026-10-06
 
 ### Changed

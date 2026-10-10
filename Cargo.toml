@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.29"
+version = "0.2.30"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -17,7 +17,16 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.22"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.19.4
+# kglite engine + MCP server — imported as crates.io libraries. The 0.19.6
+# floor is a patch step within 0.19 (0.19.4 -> 0.19.6, taking 0.19.5 with it).
+# Its Rust API changes do not reach codingest: `KgError` / `KgErrorCode` gained
+# variants but codingest only boxes a `KgError` and never matches it,
+# `OntologyStore` gained `closed_labels` / `enforcement` but codingest declares
+# no ontology, and `CommitOutcome` is not used; `ReturnItem` (0.19.5) is never
+# built here. Ontology write-time enforcement binds nothing because the builder
+# declares no ontology. The 0.19.5 unaliased-`RETURN` column naming (the query's
+# source text) reaches only callers that read unaliased column names; the
+# builder and its frozen goldens use none. The 0.19.4
 # floor is a patch step within 0.19 (0.19.3 -> 0.19.4; its titling, valid-time
 # writer, `DeclareReport` and `create_index` changes do not reach codingest,
 # see PARITY.md); 0.19.1 moved the engine one minor
@@ -644,8 +653,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.19.4", default-features = false }
-kglite-mcp-server = { version = "0.19.4", default-features = false }
+kglite = { version = "0.19.6", default-features = false }
+kglite-mcp-server = { version = "0.19.6", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

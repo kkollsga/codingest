@@ -7,6 +7,16 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.30 — 2026-10-10: the kglite 0.19.6 engine move, every golden byte-identical
+
+Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
+entries, each with a frozen golden). Debug-profile `cargo test -p codingest
+-p codingest-mcp -p codingest-cli` passed against kglite 0.19.6, including
+`golden_parity` and `rev_self_consistency`, and the Python acceptance suite
+passed all 39 tests. The builder source is unchanged, so no golden was
+regenerated. The 0.19.5/0.19.6 ontology enforcement and error-code changes have
+nothing to act on: the builder declares no ontology.
+
 ## Release 0.2.29 — 2026-10-06: the kglite 0.19.4 engine move, every golden byte-identical
 
 Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
