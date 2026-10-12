@@ -10,6 +10,25 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-10-12
+
+### Changed
+- **Engine floor moves to kglite 0.20.0** (from 0.19.6, taking 0.19.7 with it).
+  This is an engine minor, so the Python requirement is now
+  `kglite>=0.20.0,<0.21` and the Rust requirements for `kglite` and
+  `kglite-mcp-server` are `0.20.0`. The Rust writer and the Python reader must
+  move together: files written by 0.20.0 (`.kgl` v8) cannot be opened by
+  kglite 0.19.x. None of the 0.20.0 breaking changes reaches codingest's code
+  or output:
+  - The new `Value` variants and the `Value::Duration { nanos }` field break
+    exhaustive matches, but codingest only matches `Value` with a wildcard arm,
+    so no source edit was needed.
+  - `datetime()`, `localtime()` and `time()` return different types, and loader
+    `on_invalid` defaults to `'error'`. The builder writes no temporal values
+    and does not use the bulk loaders.
+  - The workspace compiles unchanged and the frozen parity goldens are
+    unchanged.
+
 ## [0.2.30] - 2026-10-10
 
 ### Changed
