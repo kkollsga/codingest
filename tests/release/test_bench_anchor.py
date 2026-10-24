@@ -579,14 +579,16 @@ def test_committed_baseline_docs_modes_are_independent(path):
 def test_committed_baseline_gate_is_not_vacuous(path):
     """A gate nothing can trip is the defect this whole file guards against.
 
-    For each mode, doubling the slowest query must FAIL. If the corpus were
-    too small for its own floor — every cell under `query_abs_ms` — this
-    passes silently and the anchor is decoration.
+    For each mode, doubling the slowest gated query must FAIL. If the corpus
+    were too small for its own floor — every cell under `query_abs_ms` — this
+    passes silently and the anchor is decoration. The control is excluded: a
+    moved control VOIDs the capture instead of failing it, so it can never be
+    the witness, and it may legitimately be the slowest query (0.2.32).
     """
     doc = json.loads(path.read_text())
     for entry in doc["corpora"]:
-        slowest = max(entry["queries"], key=lambda q: q["median_ms"])
-        assert not slowest.get("control"), "the control cannot be the trip witness"
+        gated = [q for q in entry["queries"] if not q.get("control")]
+        slowest = max(gated, key=lambda q: q["median_ms"])
         current = _capture_from(entry)
         for q in current["queries"]:
             if q["name"] == slowest["name"]:
