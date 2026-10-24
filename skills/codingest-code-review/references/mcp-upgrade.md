@@ -54,7 +54,7 @@ preconditions are still current.
 ## External CLI agent output is optional
 
 The examples below require an external `kglite` CLI satisfying
-`>=0.20.0,<0.21`:
+`>=0.21.1,<0.22`:
 
 ```console
 kglite --version

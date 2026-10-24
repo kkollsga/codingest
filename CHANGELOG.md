@@ -10,6 +10,37 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.32] - 2026-10-24
+
+### Changed
+- **Engine floor moves to kglite 0.21.1** (from 0.20.0, taking 0.21.0 with it).
+  The Python requirement is now `kglite>=0.21.1,<0.22` and the Rust
+  requirements for `kglite` and `kglite-mcp-server` are `0.21.1`. The Rust
+  writer and the Python reader must move together: kglite 0.21 writes `.kgl`
+  container v9 for graphs of 65,536 nodes or more, 262,144 relationships or
+  more, or a column of 256 KB or more, and kglite releases before 0.21.0 refuse
+  it. v8 files still load unchanged. None of the kglite 0.21 Rust API breaks
+  reaches codingest's code:
+  - `LoadOptions` is now `#[non_exhaustive]`, `GraphInfo` gained fields,
+    `KgError` / `KgErrorCode` gained `WriteBudgetExceeded`, and `GraphBackend`
+    gained `Frozen`. codingest builds none of those by literal and matches none
+    of those enums, so no source edit was needed.
+  - The write budget applies only to a read-only `mapped` load that then
+    accepts writes. A code-graph build runs in `memory` storage and is
+    unaffected.
+  - A saved code graph is larger and a default save slower on large graphs. A
+    reader on an older kglite can open a graph saved with
+    `save(..., layout="compact")`.
+- `codingest-mcp` (and the wheel's embedded server) now declares its identity
+  to the kglite server (`ServerExtensions::with_identity`), so the stale-build
+  notice and the `--version` probe name codingest and its version, and a
+  `ping(reload=true)` compares codingest's version rather than kglite's.
+  `codingest-mcp --version` / `-V` now prints `codingest <version>` itself, because
+  kglite reads the installed version by running `<binary> --version`.
+  The hidden `--reload-preflight` flag needs no pass-through: `main` hands the
+  full argument list straight to `run_with_extensions`.
+- The agent-CLI acceptance test's accepted kglite range moves to 0.21.x.
+
 ## [0.2.31] - 2026-10-12
 
 ### Changed
