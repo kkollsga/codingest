@@ -10,6 +10,23 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.33] - 2026-10-24
+
+### Changed
+- **Engine floor moves to kglite 0.21.2** (from 0.21.1). The Python requirement
+  is now `kglite>=0.21.2,<0.22` and the Rust requirements for `kglite` and
+  `kglite-mcp-server` are `0.21.2`. None of the 0.21.2 breaking changes reaches
+  codingest's code or output: the builder uses no ontology types, `Diagnostic`
+  or `OntologyRule`, and the frozen parity goldens are unchanged.
+- `codingest-mcp --version` / `-V` is now answered by the kglite server from the
+  declared identity (`codingest <version>`, the same line as before); the
+  local answer added in 0.2.32 is removed and an acceptance test pins the line.
+- `codingest-mcp --help` now prints `Usage: codingest` (the declared identity)
+  where it printed `Usage: codingest-mcp`.
+- `codingest-mcp --selftest` now names each skill's layer and counts every
+  stored node in its hydration check; it still passes, and the server's
+  bundled-skill budget warning is a kglite-side warning that does not fail it.
+
 ## [0.2.32] - 2026-10-24
 
 ### Changed

@@ -70,9 +70,12 @@ def test_installed_console_scripts_dispatch_packaged_entry_points() -> None:
         "codingest-mcp": "codingest.mcp_server:main",
     }
 
+    # kglite 0.21.2 names the clap usage line after the declared identity
+    # ("codingest"), not the launcher name, so `--help` reads "Usage: codingest".
     for name, arguments, expected in (
         ("codingest", ["--version"], "codingest "),
-        ("codingest-mcp", ["--help"], "Usage: codingest-mcp"),
+        ("codingest-mcp", ["--version"], "codingest "),
+        ("codingest-mcp", ["--help"], "Usage: codingest "),
     ):
         executable = _installed_script(name)
         assert executable.is_file(), f"missing installed script: {executable}"

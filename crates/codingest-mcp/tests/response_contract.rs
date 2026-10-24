@@ -921,3 +921,20 @@ fn selftest_reports_the_producer_layer() {
     assert!(stderr.contains("producer skills: 1 served"), "{stderr}");
     assert!(stderr.contains("producer recipes: 7 served"), "{stderr}");
 }
+
+#[test]
+fn version_flags_print_the_package_identity() {
+    let expected = format!("codingest {}\n", env!("CARGO_PKG_VERSION"));
+    for flag in ["--version", "-V"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_codingest-mcp"))
+            .arg(flag)
+            .output()
+            .expect("spawn codingest-mcp --version");
+        assert!(
+            output.status.success(),
+            "{flag} exited {:?}",
+            output.status.code()
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{flag}");
+    }
+}

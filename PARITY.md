@@ -7,6 +7,15 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.33 — 2026-10-24: the kglite 0.21.2 engine move, every golden byte-identical
+
+Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
+entries, each with a frozen golden). Debug-profile `cargo test --workspace`
+passed against kglite 0.21.2, including `golden_parity` and
+`rev_self_consistency`, and the Python acceptance suite ran against the
+installed kglite 0.21.2 wheel. The builder source is unchanged, so no golden
+was regenerated.
+
 ## Release 0.2.32 — 2026-10-24: the kglite 0.21.1 engine move, every golden byte-identical
 
 Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`

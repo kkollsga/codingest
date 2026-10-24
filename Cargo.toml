@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.32"
+version = "0.2.33"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -662,8 +662,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.21.1", default-features = false }
-kglite-mcp-server = { version = "0.21.1", default-features = false }
+kglite = { version = "0.21.2", default-features = false }
+kglite-mcp-server = { version = "0.21.2", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a

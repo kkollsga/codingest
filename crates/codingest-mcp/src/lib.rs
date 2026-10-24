@@ -81,10 +81,9 @@ fn server_extensions() -> anyhow::Result<ServerExtensions> {
     let recipes = codingest::methodology::recipe_catalog()
         .map_err(|error| anyhow::anyhow!("codingest recipe catalogue is invalid: {error}"))?;
     Ok(ServerExtensions::default()
-        // Names this package in the stale-build notice; a reload then
-        // compares codingest's version, not kglite's. kglite learns the
-        // installed version by running `<binary> --version`, so `run` must
-        // answer that line itself (`version_line`).
+        // Names this package in the stale-build notice and in the
+        // `--version` / `-V` line (`codingest <version>`); a reload then
+        // compares codingest's version, not kglite's.
         .with_identity("codingest", env!("CARGO_PKG_VERSION"))
         .with_workspace_graph(hooks)
         .with_skills([codingest::methodology::skill_record()])
@@ -102,30 +101,12 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
-    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
-        println!("{}", version_line());
-        return Ok(());
-    }
     kglite_mcp_server::run_with_extensions(args, server_extensions()?)
-}
-
-/// The line `--version` / `-V` prints; must match the identity declared in
-/// `server_extensions` so the stale-build probe sees one name and version.
-fn version_line() -> String {
-    format!("codingest {}", env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn version_line_names_codingest_and_its_package_version() {
-        assert_eq!(
-            version_line(),
-            format!("codingest {}", env!("CARGO_PKG_VERSION"))
-        );
-    }
 
     #[test]
     fn graph_source_predicate_includes_code_and_docs_only() {
