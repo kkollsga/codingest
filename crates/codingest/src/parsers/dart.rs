@@ -257,7 +257,7 @@ impl DartParser {
         if let Some(body) = node.child_by_field_name("body") {
             let mut cursor = body.walk();
             for child in body.named_children(&mut cursor) {
-                if child.kind() == "enum_constant" {
+                if child.kind() == "enum_entry" {
                     if let Some(v) = child.child_by_field_name("name") {
                         variants.push(node_text(v, source).to_string());
                     }
@@ -295,7 +295,7 @@ impl DartParser {
     }
 
     /// Walk a `class_body` / `extension_body` / `enum_body`, descending
-    /// through `class_member` wrappers.
+    /// through `member_declaration` wrappers.
     fn walk_class_body(
         body: Node,
         source: &[u8],
@@ -306,14 +306,14 @@ impl DartParser {
         let mut cursor = body.walk();
         for member in body.named_children(&mut cursor) {
             match member.kind() {
-                "class_member" => {
+                "member_declaration" => {
                     let mut inner = member.walk();
                     for item in member.named_children(&mut inner) {
                         Self::handle_member_item(item, source, class_qname, rel_path, result);
                     }
                 }
                 // Defensive: handle a directly-nested member if the
-                // grammar ever inlines the `class_member` wrapper.
+                // grammar ever inlines the `member_declaration` wrapper.
                 "method_declaration" | "declaration" => {
                     Self::handle_member_item(member, source, class_qname, rel_path, result);
                 }
@@ -322,7 +322,7 @@ impl DartParser {
         }
     }
 
-    /// One item inside a `class_member`. `method_declaration` carries a
+    /// One item inside a `member_declaration`. `method_declaration` carries a
     /// `method_signature` + body; a bare `declaration` carries a bodyless
     /// signature (abstract method / redirecting constructor) or a field list.
     fn handle_member_item(
@@ -1374,5 +1374,32 @@ mod tests {
         let part = root.join("lib/a.dart");
         assert_eq!(part_of_module_path("../../outside.dart", &part, root), None);
         assert_eq!(part_of_module_path("", &part, root), None);
+    }
+
+    /// Class members and enum variants are reached through the grammar's
+    /// `member_declaration` wrapper and `enum_entry` nodes; a grammar rename
+    /// of either leaves methods and variants silently empty.
+    #[test]
+    fn class_methods_and_enum_variants_are_extracted() {
+        use crate::parsers::LanguageParser;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("lib/shapes.dart");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            "class Circle {\n  double area() => 3.14;\n  void draw() {}\n}\n\
+             enum Color { red, green, blue; String label() => name; }\n",
+        )
+        .unwrap();
+        let result = super::DartParser::new().parse_file(&file, dir.path());
+        let methods: Vec<&str> = result.functions.iter().map(|f| f.name.as_str()).collect();
+        for expected in ["area", "draw", "label"] {
+            assert!(
+                methods.contains(&expected),
+                "{expected} missing: {methods:?}"
+            );
+        }
+        assert_eq!(result.enums.len(), 1);
+        assert_eq!(result.enums[0].variants, ["red", "green", "blue"]);
     }
 }
