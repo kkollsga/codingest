@@ -160,6 +160,11 @@ fn pattern_literals(pat: &syn::Pat, out: &mut Vec<Hit>) {
         fn visit_lit_str(&mut self, lit: &'ast syn::LitStr) {
             self.0.push((lit.value(), lit.span().start().line));
         }
+        // `syn` 3 nests an arm guard inside the pattern; only the pattern
+        // before `if` holds node kinds, the guard expression does not.
+        fn visit_pat_guard(&mut self, guard: &'ast syn::PatGuard) {
+            self.visit_pat(&guard.pat);
+        }
     }
     Collect(out).visit_pat(pat);
 }
@@ -400,4 +405,33 @@ fn every_matched_node_kind_exists_in_its_grammar() {
          (guarded per file, as (kinds, fields, skipped scrutinees): {guarded:?})",
         offenders.join("\n")
     );
+}
+
+/// A match-arm guard is not a node-kind pattern. `syn` 3 stores the guard
+/// inside the arm's pattern (`Pat::Guard`), so a literal in the guard
+/// expression (`k if k.contains("type")`) must not be read as a node kind,
+/// while a kind comparison inside the guard is still extracted.
+#[test]
+fn match_arm_guard_literals_are_not_node_kinds() {
+    let source = r#"
+        fn f(sub: Node) {
+            match sub.kind() {
+                "identifier" => {}
+                k if k.contains("type") => {}
+                "block" if sub.parent().map(|p| p.kind()) == Some("body") => {}
+                _ => {}
+            }
+        }
+    "#;
+    let kinds: Vec<String> = extract_literals(source)
+        .kinds
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect();
+    assert!(
+        !kinds.contains(&"type".to_string()),
+        "guard literal read as a node kind: {kinds:?}"
+    );
+    assert!(kinds.contains(&"identifier".to_string()), "{kinds:?}");
+    assert!(kinds.contains(&"block".to_string()), "{kinds:?}");
 }
