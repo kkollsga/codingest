@@ -37,8 +37,9 @@ docs/_build/
 docs/autoapi/
 
 # Agent skills and local settings are working state, not published source.
-# `.agents/skills/` is the local authority and `.claude/skills/` its adapter;
-# both can be re-derived from doctrine plus this repository's conventions.
+# `.agents/skills/` holds the skills; `.claude/skills` is a symlink to it.
+# Both are workstation-local and can be re-derived from doctrine plus this
+# repository's conventions.
 /.claude/
 /.agents/skills/
 

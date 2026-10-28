@@ -6,14 +6,9 @@ graphs. The graph engine and MCP server are imported from KGLite as cargo
 libraries; this repo owns only the code-tree component. See `README.md` for the
 workspace map and `PARITY.md` / `BENCHMARKS.md` for the regression record.
 
-**Authority:** `CLAUDE.md` is the authority this repo's conventions are
-regenerated from, with `AGENTS.md` as its generated adapter; for the skills the
-authority is the local **`.agents/skills/`** tree, and `.claude/skills/` is a
-generated adapter of it. Both skill trees are gitignored working state and can
-be re-derived from doctrine plus this repository's conventions. Edit the
-authority and regenerate in the same action — never edit
-an adapter. (This line is exempt from the `CLAUDE.md`↔`AGENTS.md` substitution —
-it names the authority literally in every copy, per doctrine `R7`/`R14`.)
+**Authority:** `AGENTS.md` is this repo's agent instructions; there is no
+`CLAUDE.md` (Claude Code loads `AGENTS.md` in its place). `.agents/skills/` holds
+the skills; `.claude/skills` is a symlink to it so Claude Code finds them.
 
 ## Working style
 - **Evidence over assertion.** For a bug, reproduce it and confirm the **root
