@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "codingest"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "aho-corasick",
  "base64",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "codingest-cli"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "clap",
@@ -354,7 +354,7 @@ dependencies = [
 
 [[package]]
 name = "codingest-mcp"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "anyhow",
  "codingest",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "codingest-py"
-version = "0.2.33"
+version = "0.2.34"
 dependencies = [
  "codingest",
  "codingest-cli",

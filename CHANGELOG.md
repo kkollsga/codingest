@@ -10,6 +10,31 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.34] - 2026-10-29
+
+### Breaking
+- **Python 3.10 and 3.11 are dropped.** The wheel requires Python 3.12 or newer
+  (`requires-python >=3.12`, `cp312-abi3`) and is tested on 3.12 to 3.15.
+  Anyone on 3.10 or 3.11 stays on codingest 0.2.33 (with kglite 0.21.2).
+
+### Changed
+- **Engine floor moves to kglite 0.21.4** (from 0.21.2). The Python requirement
+  is now `kglite>=0.21.4,<0.22` and the Rust requirements for `kglite` and
+  `kglite-mcp-server` are `0.21.4`. No builder source changed; the frozen
+  parity goldens are unchanged.
+- **`codingest-mcp` answers MCP clients on protocol 2026-07-28.** Claude Code
+  2.1.312 and newer never send `initialize`; with 0.2.33 every `tools/call`
+  failed with `-32600 "initialize is required"`. `codingest-mcp --selftest` now
+  runs the `stateless ...` checks.
+- `codingest-mcp --help` prints `Usage: codingest-mcp` again (kglite 0.21.3);
+  `--version` still reports `codingest <version>`.
+- `codingest-mcp` reports its MCP server name as `codingest (<mode>)` (kglite
+  0.21.4) instead of `KGLite (<mode>)`; a manifest `name:` still wins.
+- Dependencies at their latest releases: `base64` 0.23, `pyo3` 0.30,
+  `tree-sitter-php` 0.25, `tree-sitter-dart` 0.3, `syn` 3 and the compatible
+  patch updates in `Cargo.lock`. The Dart parser follows 0.3's renamed node
+  kinds (`member_declaration`, `enum_entry`).
+
 ## [0.2.33] - 2026-10-24
 
 ### Changed
