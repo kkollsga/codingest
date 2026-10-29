@@ -938,3 +938,34 @@ fn version_flags_print_the_package_identity() {
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{flag}");
     }
 }
+
+/// With no manifest `name:`, the embedder reports its declared identity as the
+/// MCP server name (kglite 0.21.4; 0.21.3 reported "KGLite (watch)"), and the
+/// selftest's stateless-client checks all pass.
+#[test]
+fn default_server_name_is_the_identity_and_stateless_checks_pass() {
+    let corpus =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/agc_basic");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_codingest-mcp"))
+        .arg("--selftest")
+        .arg("--watch")
+        .arg(&corpus)
+        .output()
+        .expect("spawn codingest-mcp --selftest");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("serverInfo.name = codingest (watch)"),
+        "{stdout}"
+    );
+    for line in [
+        "stateless discover",
+        "stateless tools/list",
+        "stateless tools/call",
+    ] {
+        assert!(
+            stdout.contains(&format!("✓ {line}")),
+            "{line} missing: {stdout}"
+        );
+    }
+}

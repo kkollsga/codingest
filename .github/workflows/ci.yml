@@ -210,7 +210,7 @@ jobs:
         # in [tool.pytest.ini_options], and that option is only honoured if the
         # plugin is present. A job that installs bare pytest silently runs with
         # no ceiling at all, which is the failure this pin prevents.
-        run: python -m pip install pytest==9.1.1 pytest-timeout==2.4.0
+        run: python -m pip install pytest==9.2.0 pytest-timeout==2.4.0
 
       - name: Unit-test scripts/release_gates.sh
         # release.yml runs ONLY on a `v*` tag push, so its gate logic can never
@@ -231,7 +231,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.10', '3.14']
+        python-version: ['3.12', '3.13', '3.14', '3.15']
     steps:
       - uses: actions/checkout@v7
 
@@ -251,13 +251,13 @@ jobs:
           workspaces: ". -> target"
 
       - name: Create venv and install build + runtime deps
-        # `kglite>=0.21.2,<0.22` is the runtime engine (the `.kgl`-bytes handoff loads
+        # `kglite>=0.21.4,<0.22` is the runtime engine (the `.kgl`-bytes handoff loads
         # the built graph through the installed kglite wheel). maturin builds
         # the codingest extension into the venv.
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install maturin==1.14.1 pytest==9.1.1 pytest-timeout==2.4.0 kglite==0.21.2
+          .venv/bin/python -m pip install maturin==1.15.0 pytest==9.2.0 pytest-timeout==2.4.0 kglite==0.21.4
 
       - name: Build the codingest extension into the venv (maturin develop)
         # DECISION (2026-08-10): this job keeps `--release`, deliberately — it
@@ -269,7 +269,7 @@ jobs:
         # is already obtained on the Rust side, where `cargo test --workspace`
         # in rust-checks runs the whole builder unoptimised on both OSes. A
         # debug `maturin develop` here would duplicate that at several minutes
-        # per matrix cell (4 cells) while weakening what this job uniquely
+        # per matrix cell (8 cells) while weakening what this job uniquely
         # tests. Revisit only if a bug is ever found that a debug-profile
         # Python run would have caught and rust-checks did not.
         run: .venv/bin/maturin develop --release
@@ -288,10 +288,10 @@ jobs:
         run: .venv/bin/python -m pytest tests/python -v --tb=short
 
       - name: Verify the wheel's pip-installation contract
-        # ONE matrix leg, not four. What this checks — console-script entry
+        # ONE matrix leg, not eight. What this checks — console-script entry
         # points, the payload shims, the native extension, the kglite
         # requirement — is declared in pyproject/Cargo and is identical on
-        # every OS and interpreter, so the other three legs would re-prove the
+        # every OS and interpreter, so the other seven legs would re-prove the
         # same metadata at several minutes each. The leg is pinned by value
         # rather than left to `matrix.os == runner.os` guesswork so a matrix
         # edit that renames a leg turns this into a NEVER-RUN step loudly (the

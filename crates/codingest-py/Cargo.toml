@@ -17,14 +17,14 @@ description = "PyO3 wrapper for codingest — `import codingest; g = codingest.b
 publish = false
 
 [features]
-# `abi3` (single cdylib for Python 3.10+) is default-on so `cargo build` /
+# `abi3` (single cdylib for Python 3.12+) is default-on so `cargo build` /
 # `maturin develop` behave normally. `python-extension` toggles pyo3's
 # extension-module feature — off for plain `cargo build` (so the rlib is
 # reusable and the workspace builds without a libpython link surprise), on
 # for the maturin wheel build. Same pattern as kglite-datasets-py.
 default = ["abi3", "docs"]
 python-extension = ["pyo3/extension-module"]
-abi3 = ["pyo3/abi3-py310"]
+abi3 = ["pyo3/abi3-py312"]
 # Docs pass (`include_docs=True` → `:Doc` nodes). Default ON for parity with
 # the old kglite wheel + the codingest MCP server; maturin keeps default
 # features, so the wheel ships with docs enabled.
@@ -39,7 +39,7 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
-pyo3 = { version = "0.29" }
+pyo3 = { version = "0.30" }
 # The engine-free builder (parsers, call/type/route edges, rev merge, repo
 # clone, manifest reader). Docs pass gated by this crate's `docs` feature.
 codingest = { version = "0.2.33", path = "../codingest", default-features = false }

@@ -1,12 +1,12 @@
 [build-system]
-requires = ["maturin>=1.14.1,<2.0"]
+requires = ["maturin>=1.15.0,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "codingest"
 description = "Build fast, queryable code graphs for AI agents, MCP code review, and local or GitHub repository analysis."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -17,11 +17,10 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Rust",
     "Topic :: Software Development",
     "Topic :: Software Development :: Libraries",
@@ -42,9 +41,9 @@ dynamic = ["version"]
 # minor releases (e.g. the v3->v4 break, which refuses old files outright), so
 # pip must never be free to pair our writer with a reader from a different
 # minor. This range therefore mirrors the Cargo semver range for the pin above
-# (`version = "0.21.2"` == `>=0.21.2,<0.22.0`) exactly — bump both together.
+# (`version = "0.21.4"` == `>=0.21.4,<0.22.0`) exactly — bump both together.
 dependencies = [
-    "kglite>=0.21.2,<0.22",
+    "kglite>=0.21.4,<0.22",
 ]
 
 [project.urls]

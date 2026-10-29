@@ -15,9 +15,12 @@ license = "MIT"
 repository = "https://github.com/kkollsga/codingest"
 
 [workspace.dependencies]
-base64 = "0.22"
+base64 = "0.23"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.21.1
+# kglite engine + MCP server — imported as crates.io libraries. The 0.21.4
+# floor is a patch step within 0.21 (0.21.2 -> 0.21.4: MCP clients that never
+# send `initialize`, Python 3.12+ wheel, `with_identity` `--help` fix and the
+# embedder `serverInfo.name`); it changes no `kglite::api` codingest calls. The 0.21.1
 # floor is an engine minor (0.20.0 -> 0.21.1, taking 0.21.0 with it): graphs of
 # 65,536 nodes or more save as `.kgl` v9, which kglite before 0.21.0 refuses, so
 # the Python pin moves in lockstep. Its Rust API breaks (`LoadOptions`
@@ -662,8 +665,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.21.2", default-features = false }
-kglite-mcp-server = { version = "0.21.2", default-features = false }
+kglite = { version = "0.21.4", default-features = false }
+kglite-mcp-server = { version = "0.21.4", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
