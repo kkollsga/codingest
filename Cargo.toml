@@ -15,7 +15,7 @@ license = "MIT"
 repository = "https://github.com/kkollsga/codingest"
 
 [workspace.dependencies]
-base64 = "0.23"
+base64 = "0.23.1"
 sha2 = "0.11"
 # kglite engine + MCP server — imported as crates.io libraries. The 0.21.4
 # floor is a patch step within 0.21 (0.21.2 -> 0.21.4: MCP clients that never
