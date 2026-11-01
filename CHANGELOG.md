@@ -10,6 +10,14 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Changed
+- **Engine floor moves to kglite 0.21.5** (from 0.21.4). The Python requirement
+  is now `kglite>=0.21.5,<0.22` and the Rust requirements for `kglite` and
+  `kglite-mcp-server` are `0.21.5`. Upstream it is a query-speed release:
+  filtered `count`/`sum`/`avg`/`min`/`max` over a typed numeric property runs
+  35 to 75 times faster, with identical results. No `kglite::api` call
+  codingest makes changed, and graph output is unchanged.
+
 ### Fixed
 - **`.cjs`, `.mts` and `.cts` files are parsed.** The builder skipped them
   without a word, so a `"type": "module"` project's CommonJS files (an Electron

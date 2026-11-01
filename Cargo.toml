@@ -17,8 +17,12 @@ repository = "https://github.com/kkollsga/codingest"
 [workspace.dependencies]
 base64 = "0.23.1"
 sha2 = "0.11"
-# kglite engine + MCP server — imported as crates.io libraries. The 0.21.4
-# floor is a patch step within 0.21 (0.21.2 -> 0.21.4: MCP clients that never
+# kglite engine + MCP server — imported as crates.io libraries. The 0.21.5
+# floor is a patch step within 0.21 (0.21.4 -> 0.21.5): a query-path speedup
+# only — a fused columnar kernel for single-label filtered `count`/`sum`/`avg`/
+# `min`/`max` and negative-literal pushdown, results identical. It changes no
+# `kglite::api` codingest calls and nothing the builder writes. The 0.21.4
+# floor was a patch step within 0.21 (0.21.2 -> 0.21.4: MCP clients that never
 # send `initialize`, Python 3.12+ wheel, `with_identity` `--help` fix and the
 # embedder `serverInfo.name`); it changes no `kglite::api` codingest calls. The 0.21.1
 # floor is an engine minor (0.20.0 -> 0.21.1, taking 0.21.0 with it): graphs of
@@ -665,8 +669,8 @@ sha2 = "0.11"
 # and no disk storage. Neither 0.15.7 nor 0.15.8 changes the `kglite::api` we
 # call, graph output, property encoding, or `.kgl` serialization.
 # Keep both libraries aligned so the graph and server share one engine release.
-kglite = { version = "0.21.4", default-features = false }
-kglite-mcp-server = { version = "0.21.4", default-features = false }
+kglite = { version = "0.21.5", default-features = false }
+kglite-mcp-server = { version = "0.21.5", default-features = false }
 
 # Dependency debuginfo capped at line tables (kglite coordination, 2026-08-31,
 # after unbounded debug trees filled the build-cache disk to zero): a
