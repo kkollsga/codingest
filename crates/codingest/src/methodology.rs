@@ -228,6 +228,23 @@ mod tests {
         assert_eq!(record.references_tools, REFERENCES_TOOLS);
     }
 
+    /// mcp-methods warns on every server boot and `--selftest` when a skill
+    /// exceeds its soft limit (`SOFT_SIZE_LIMIT_BYTES`, 4 KiB in 0.6.2), and it
+    /// measures the skill as served: the frontmatter kglite renders from the
+    /// record fields plus the body. A body sized against the limit alone
+    /// (4,093 bytes) rendered to 4,709 and warned on every boot.
+    #[test]
+    fn rendered_skill_fits_the_mcp_soft_size_limit() {
+        const MCP_SOFT_SIZE_LIMIT_BYTES: usize = 4 * 1024;
+        let rendered = skills::render_markdown(&skill_record());
+        assert!(
+            rendered.len() <= MCP_SOFT_SIZE_LIMIT_BYTES,
+            "rendered skill is {} bytes (body {}), soft limit is {MCP_SOFT_SIZE_LIMIT_BYTES}",
+            rendered.len(),
+            SKILL_BODY.len()
+        );
+    }
+
     #[test]
     fn skill_body_names_every_recipe_and_the_description_loads_it_before_cypher() {
         for record in recipe_records() {

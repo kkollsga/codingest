@@ -10,6 +10,22 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+### Fixed
+- **`.cjs`, `.mts` and `.cts` files are parsed.** The builder skipped them
+  without a word, so a `"type": "module"` project's CommonJS files (an Electron
+  main process in `electron/*.cjs`, for one) were missing from a graph that
+  reported itself complete. `.cjs` is parsed as JavaScript and `.mts`/`.cts`
+  (including `.d.mts`/`.d.cts`) as TypeScript; imports reach them by their own
+  or their emitted name (`./util.mjs` → `util.mts`), and `.test.*`/`.spec.*`
+  files with these extensions are flagged `is_test`.
+- **Concise arrow functions keep their calls and metrics.** An arrow whose body
+  is an expression (`const run = cmd => execSync(cmd)`) had null
+  `branch_count`/`max_nesting` and no `CALLS` edges at all. Both are now
+  measured from the expression. `||`/`&&` still do not count as branches.
+- The bundled `code_review` MCP skill fits mcp-methods' 4 KiB soft limit as
+  served (frontmatter included), so `codingest-mcp` no longer warns about it on
+  every boot and `--selftest`.
+
 ## [0.2.34] - 2026-10-29
 
 ### Breaking

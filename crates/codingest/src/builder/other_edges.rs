@@ -228,11 +228,11 @@ fn path_import_candidates(file: &FileInfo, raw: &str) -> Vec<String> {
 }
 
 /// Module-path suffixes a TS/JS specifier may carry. Stripped before matching,
-/// mirroring `JstsParser::file_to_module_path`. `.js`/`.mjs`/`.cjs` are in the
-/// list because TS's NodeNext resolution has source files import each other by
-/// their *emitted* name (`import "./util.js"` resolving to `util.ts`).
-const MODULE_PATH_EXTENSIONS: &[&str] =
-    &[".tsx", ".ts", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".js"];
+/// with the same list `JstsParser::file_to_module_path` strips. The JS
+/// suffixes matter for TS too: NodeNext resolution has source files import
+/// each other by their *emitted* name (`import "./util.js"` resolving to
+/// `util.ts`).
+const MODULE_PATH_EXTENSIONS: &[&str] = crate::parsers::typescript::JSTS_MODULE_SUFFIXES;
 
 /// Candidate module paths for one TS/JS import specifier, in fixed priority
 /// order — first match wins, and the order IS the documented tie-break.

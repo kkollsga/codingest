@@ -389,6 +389,28 @@ what shows the change is pure identity and not behaviour. Verified the strict
 way: `capture_goldens` rewrote every file, and afterwards `git status` reported
 exactly those two digests as modified.
 
+The additive `js_module_exts` digest was captured on 2026-11-01 with the
+corpus itself. The parser registry listed `js`/`jsx`/`mjs` and `ts`/`tsx` only,
+so every `.cjs`, `.mts` and `.cts` file was skipped without a diagnostic — and
+no corpus contained one, so the gap had no golden to move. The corpus pins all
+three extensions and a `.d.mts` declaration file, the `.test.cts` test flag,
+and import resolution onto a `.mts` module both by its emitted name
+(`./util.mjs`, NodeNext) and by its own (`./util.mts`). Verified additive the
+strict way: `capture_goldens` rewrote every file, and afterwards `git status`
+reported only `js_module_exts.sha256` as new. Every pre-existing corpus is a
+control and does not move.
+
+**`ts_hof_binding` regenerated 2026-11-01 (concise-arrow bodies).** A
+TS/JS arrow whose body is an expression rather than a `{ … }` block was never
+measured and never walked for calls: `branch_count`/`max_nesting` were null and
+`const run = c => execSync(c)` had no CALLS edge. The parser now treats the
+expression as the body. The digest movement is the record: `ts_hof_binding` is
+the only corpus with a concise-bodied Function node, and its one such node
+(`createMemo(() => 1 + 2)`'s binding, no calls) gained `branch_count=0` and
+`max_nesting=0` — two added properties, nothing else. Verified by dumping every
+corpus with and without the fix (`dump_canonical`); only that file differed.
+The calls half is pinned by `concise_arrow_tests` in the parser.
+
 ## The 2026-08-10 bulk regeneration (13 of 14 digests)
 
 **This is the first bulk regeneration since the extraction**, and the only one

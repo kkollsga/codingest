@@ -351,6 +351,16 @@ const CORPORA: &[&str] = &[
     // root is still tried first. Its golden is captured additively (see
     // `tests/goldens/README.md`).
     "web_served_root",
+    // Added 2026-11-01. No other corpus contains a `.cjs`, `.mts` or `.cts`
+    // file — the parser registry did not list those extensions at all, so the
+    // builder skipped them without a word (an Electron app's whole
+    // `electron/*.cjs` main process was absent from its graph). It pins all
+    // three extensions plus a `.d.mts` declaration file, the `.test.cts` test
+    // flag, and import resolution onto a `.mts` module both by its emitted
+    // name (`./util.mjs`, NodeNext) and by its own (`./util.mts`). Its golden
+    // is captured additively (see
+    // `tests/goldens/README.md`).
+    "js_module_exts",
 ];
 
 /// Independent builds of each corpus per `golden_parity` run.

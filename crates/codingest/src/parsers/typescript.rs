@@ -142,18 +142,26 @@ thread_local! {
     };
 }
 
+/// File-name suffixes stripped to form a TS/JS module path, shared by
+/// `file_to_module_path` and the import resolver in `builder::other_edges` so
+/// the two agree on module identity. Every extension the `typescript` and
+/// `javascript` registry entries claim must be here, or its files get a
+/// module path that still carries the extension and no import can reach them.
+pub(crate) const JSTS_MODULE_SUFFIXES: &[&str] =
+    &[".tsx", ".ts", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".js"];
+
 impl JstsParser {
     pub fn typescript() -> Self {
         JstsParser {
             lang_name: "typescript",
-            extensions: &["ts", "tsx"],
+            extensions: &["ts", "tsx", "mts", "cts"],
         }
     }
 
     pub fn javascript() -> Self {
         JstsParser {
             lang_name: "javascript",
-            extensions: &["js", "jsx", "mjs"],
+            extensions: &["js", "jsx", "mjs", "cjs"],
         }
     }
 
@@ -1095,7 +1103,7 @@ impl JstsParser {
             .filter_map(|c| c.as_os_str().to_str().map(str::to_string))
             .collect();
         if let Some(last) = parts.last_mut() {
-            for ext in [".tsx", ".ts", ".jsx", ".mjs", ".js"] {
+            for ext in JSTS_MODULE_SUFFIXES {
                 if let Some(stem) = last.strip_suffix(ext) {
                     *last = stem.to_string();
                     break;
@@ -1248,7 +1256,19 @@ impl JstsParser {
             None => module_path.to_string(),
         };
         let qualified_name = format!("{}.{}", prefix, name);
-        let block = Self::get_block(node);
+        // A concise arrow (`x => expr`) has no `{ … }` block; its expression IS
+        // the body. Without this fallback such a function had null metrics and
+        // dropped every call it made (`const run = c => execSync(c)` had no
+        // CALLS edge at all).
+        let body = Self::get_block(node).or_else(|| {
+            (node.kind() == "arrow_function")
+                .then(|| node.child_by_field_name("body"))
+                .flatten()
+        });
+        // A concise body that is itself a nested scope (`a => b => f()`) stays
+        // behind the boundary a `{ return b => f(); }` block puts it behind:
+        // measured as empty, its calls not folded into this function.
+        let block = body.filter(|b| !NESTED_SCOPES.contains(&b.kind()));
 
         let mut metadata = crate::models::MetadataMap::new();
         let mut cursor = node.walk();
@@ -1269,12 +1289,13 @@ impl JstsParser {
                 .filter(|p| p.kind != ParameterKind::Receiver)
                 .count() as u32,
         );
-        let (branch_count, max_nesting) = match block {
-            Some(b) => {
+        let (branch_count, max_nesting) = match (block, body) {
+            (Some(b), _) => {
                 let (c, n) = compute_complexity(b, BRANCH_KINDS_TS, NESTED_SCOPES);
                 (Some(c), Some(n))
             }
-            None => (None, None),
+            (None, Some(_)) => (Some(0), Some(0)),
+            (None, None) => (None, None),
         };
         let is_recursive = Some(calls.iter().any(|(n, _)| n == &name));
         let docstring = Self::get_docstring(node, source);
@@ -1865,6 +1886,12 @@ impl LanguageParser for JstsParser {
             ".spec.jsx",
             ".test.mjs",
             ".spec.mjs",
+            ".test.cjs",
+            ".spec.cjs",
+            ".test.mts",
+            ".spec.mts",
+            ".test.cts",
+            ".spec.cts",
         ];
         let is_test = crate::parsers::shared::is_test_path(&rel_path, &filename, &test_suffixes);
 
@@ -2757,5 +2784,70 @@ export function outer(items: string[]) {
 }
 ";
         assert_eq!(calls_of(src, "a.outer"), vec!["items.forEach", "transform"]);
+    }
+}
+
+#[cfg(test)]
+mod concise_arrow_tests {
+    use super::*;
+    use crate::parsers::LanguageParser;
+
+    /// `(branch_count, max_nesting, call names)` for the Function named `name`.
+    fn measured(src: &str, name: &str) -> (Option<u32>, Option<u32>, Vec<String>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.ts");
+        std::fs::write(&path, src).expect("write fixture");
+        let result = JstsParser::typescript().parse_file(&path, dir.path());
+        let f = result
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap_or_else(|| panic!("no Function named {name}"));
+        let calls = f.calls.iter().map(|(c, _)| c.clone()).collect();
+        (f.branch_count, f.max_nesting, calls)
+    }
+
+    /// The regression: an arrow whose body is an expression rather than a
+    /// `{ … }` block had null metrics and no calls at all.
+    #[test]
+    fn concise_arrow_is_measured_and_keeps_its_calls() {
+        let src = "const run = (cmd: string) => execSync(cmd, { stdio: \"inherit\" });\n";
+        assert_eq!(
+            measured(src, "run"),
+            (Some(0), Some(0), vec!["execSync".to_string()])
+        );
+        let src = "const pick = (x: number) => x > 0 ? up(x) : down(x);\n";
+        assert_eq!(
+            measured(src, "pick"),
+            (Some(1), Some(1), vec!["up".to_string(), "down".to_string()])
+        );
+    }
+
+    /// A concise body that is itself an arrow reads the same as its
+    /// block-bodied twin: the inner scope stays behind the nested-scope
+    /// boundary in both spellings.
+    #[test]
+    fn curried_concise_arrow_matches_its_block_twin() {
+        let concise = "const f = (a: number) => (b: number) => g(a ? b : 0);\n";
+        let block = "const f = (a: number) => { return (b: number) => g(a ? b : 0); };\n";
+        assert_eq!(measured(concise, "f"), (Some(0), Some(0), Vec::new()));
+        assert_eq!(measured(concise, "f"), measured(block, "f"));
+    }
+
+    /// Every extension the registry routes to this parser must be stripped
+    /// to form a module path; one left out makes its files unreachable by
+    /// any import.
+    #[test]
+    fn module_suffixes_cover_every_registered_extension() {
+        for language in ["typescript", "javascript"] {
+            let spec = crate::parsers::registry::spec(language).expect("registered");
+            for ext in spec.extensions {
+                let suffix = format!(".{ext}");
+                assert!(
+                    JSTS_MODULE_SUFFIXES.contains(&suffix.as_str()),
+                    "{language} extension {suffix} is parsed but not stripped from module paths"
+                );
+            }
+        }
     }
 }
