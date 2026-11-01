@@ -10,6 +10,8 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.35] - 2026-11-01
+
 ### Changed
 - **Engine floor moves to kglite 0.21.5** (from 0.21.4). The Python requirement
   is now `kglite>=0.21.5,<0.22` and the Rust requirements for `kglite` and

@@ -7,6 +7,29 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.35 — 2026-11-01: `.cjs`/`.mts`/`.cts` parsing, concise-arrow bodies, the kglite 0.21.5 engine move
+
+Released state: 32 `CORPORA` entries (was 31), each with a frozen golden.
+Release-profile `cargo test --workspace --release` passed against kglite
+0.21.5, including `golden_parity` and `rev_self_consistency`. Two builder
+changes moved the golden set, both consciously and both recorded in
+`crates/codingest/tests/goldens/README.md`:
+
+- **`js_module_exts` added.** The parser registry did not list `.cjs`, `.mts`
+  or `.cts`, so those files were skipped without a diagnostic, and no corpus
+  contained one. The new corpus pins all three plus a `.d.mts` file, the
+  `.test.cts` test flag and import resolution onto a `.mts` module by its own
+  and its emitted name. Captured additively: only the new digest appeared.
+  Dropping `cjs` from the registry or `.mts` from the module-suffix list each
+  turns `golden_parity` red.
+- **`ts_hof_binding` regenerated.** An expression-bodied arrow had null
+  `branch_count`/`max_nesting` and no CALLS edges. Dumping every corpus with
+  and without the fix, only `ts_hof_binding` differed: its one concise-bodied
+  Function gained `branch_count=0` and `max_nesting=0`, nothing else.
+
+The kglite 0.21.4 → 0.21.5 engine move is a query-path speedup and moved no
+digest.
+
 ## Release 0.2.33 — 2026-10-24: the kglite 0.21.2 engine move, every golden byte-identical
 
 Released state: unchanged corpus set (corpus digest `c449542e…`, 31 `CORPORA`
