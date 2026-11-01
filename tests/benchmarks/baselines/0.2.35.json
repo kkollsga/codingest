@@ -1,0 +1,178 @@
+{
+  "schema": 1,
+  "target": "tests/corpus",
+  "why_this_corpus": "frozen polyglot fixture tree: committed, offline, and its digest moves only on a deliberate fixture change, so a baseline stays comparable across releases. crates/codingest/src is the code under test and its digest moves nearly every release, which would make the gate REFUSE every time.",
+  "control_query": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+  "stored_value": "min of 3 runs per query (repeatable inner loop); build_secs is the mean of 3 runs (once-per-build cost has no floor to find)",
+  "build_gating": "recorded, not enforced: at 46 KB the build is dominated by one-time grammar init. Node/edge counts carry the build-side signal and are deterministic here (zero spread across three runs in both modes).",
+  "version": "0.2.35",
+  "captured_at_commit": "fdd1c6b805b58d15286b235981144d25f7cdee9f",
+  "captured_at": "2026-11-01",
+  "stability_across_3_runs": "worst per-query median spread was 0.002 ms docs-on and 0.001 ms docs-off across three post-warmup runs per mode (a warmup run per mode was discarded). First baseline of a new corpus epoch: the js_module_exts fixture (0.2.35) moved corpus_sha256 from c449542e… to a2e3b7ff…, so earlier baselines REFUSE against this one by design. Floor set to 0.005 ms = 2.5x the 0.002 ms worst spread, per the capture procedure (0.2.34 carried 0.01). The epoch move also re-picked the control's runtime anchor: three functions now tie at 7 callers and the q-ASC tie-break selects ts_callback/a.helper (was ts_closure_scope/src/deps.decode), so varlen_callers_1_3 reads 0.017 ms (was 0.024-0.026) — deterministic across repeated runs, 3.4x the floor.",
+  "corpora": [
+    {
+      "target": "tests/corpus",
+      "mode": "docs-on",
+      "include_docs": true,
+      "floors": {
+        "query_abs_ms": 0.005,
+        "build_secs": 0.05
+      },
+      "corpus_sha256": "a2e3b7ff5225741b20e4033473acc6a4e0110ded9d829336e3df19df30c33fdd",
+      "nodes": 594,
+      "edges": 923,
+      "build_secs": 0.0147,
+      "queries": [
+        {
+          "name": "count_functions (full-label scan + count)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        },
+        {
+          "name": "eq_filter_pub (equality property filter)",
+          "rows": 1,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "contains_new (CONTAINS string filter)",
+          "rows": 1,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+          "rows": 20,
+          "median_ms": 0.018,
+          "min_ms": 0.018
+        },
+        {
+          "name": "defs_per_file (grouped aggregation)",
+          "rows": 20,
+          "median_ms": 0.029,
+          "min_ms": 0.028
+        },
+        {
+          "name": "calls_edge_scan (1-hop edge scan + count)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        },
+        {
+          "name": "anchored_callers (anchored 1-hop, in-hub)",
+          "rows": 7,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "two_hop_into_hot (2-hop traversal + count)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        },
+        {
+          "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+          "rows": 1,
+          "median_ms": 0.017,
+          "min_ms": 0.017,
+          "control": true
+        },
+        {
+          "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+          "rows": 6,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        }
+      ]
+    },
+    {
+      "target": "tests/corpus",
+      "mode": "docs-off",
+      "include_docs": false,
+      "floors": {
+        "query_abs_ms": 0.005,
+        "build_secs": 0.05
+      },
+      "corpus_sha256": "a2e3b7ff5225741b20e4033473acc6a4e0110ded9d829336e3df19df30c33fdd",
+      "nodes": 587,
+      "edges": 902,
+      "build_secs": 0.013,
+      "queries": [
+        {
+          "name": "count_functions (full-label scan + count)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        },
+        {
+          "name": "eq_filter_pub (equality property filter)",
+          "rows": 1,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "contains_new (CONTAINS string filter)",
+          "rows": 1,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "top20_by_branch_count (ORDER BY + LIMIT)",
+          "rows": 20,
+          "median_ms": 0.018,
+          "min_ms": 0.018
+        },
+        {
+          "name": "defs_per_file (grouped aggregation)",
+          "rows": 20,
+          "median_ms": 0.03,
+          "min_ms": 0.028
+        },
+        {
+          "name": "calls_edge_scan (1-hop edge scan + count)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        },
+        {
+          "name": "anchored_callers (anchored 1-hop, in-hub)",
+          "rows": 7,
+          "median_ms": 0.004,
+          "min_ms": 0.004
+        },
+        {
+          "name": "two_hop_into_hot (2-hop traversal + count)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        },
+        {
+          "name": "varlen_callers_1_3 ([:CALLS*1..3] + count DISTINCT)",
+          "rows": 1,
+          "median_ms": 0.017,
+          "min_ms": 0.017,
+          "control": true
+        },
+        {
+          "name": "reverse_callees_of_hub (reverse-direction 1-hop)",
+          "rows": 6,
+          "median_ms": 0.003,
+          "min_ms": 0.003
+        },
+        {
+          "name": "method_calls_mix (Struct-HAS_METHOD->Fn-CALLS->Fn)",
+          "rows": 1,
+          "median_ms": 0.001,
+          "min_ms": 0.001
+        }
+      ]
+    }
+  ]
+}
