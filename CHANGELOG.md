@@ -10,6 +10,19 @@ ship time — it's the only place the version bumps.
 
 ## [Unreleased]
 
+## [0.2.36] - 2026-11-27
+
+### Changed
+- **Engine floor moves to kglite 0.21.8** (from 0.21.5). The Python requirement
+  is now `kglite>=0.21.8,<0.22` and the Rust requirements for `kglite` and
+  `kglite-mcp-server` are `0.21.8`. Upstream, 0.21.8 changes the Rust API so
+  node and edge getters return a `RecordRef`, and adds a 256-level cap on value
+  nesting (0.21.7). Codingest is unaffected beyond one test line, and graph
+  output is byte-identical: every golden digest passes unchanged.
+- Dependencies refreshed within their declared ranges (`cargo update`).
+  `tree-sitter` 0.27 and `tree-sitter-c-sharp` 0.24 are held back: parser
+  majors that could move graph output.
+
 ## [0.2.35] - 2026-11-01
 
 ### Changed

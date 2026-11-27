@@ -7,6 +7,17 @@ engine crate, so graphs from either builder are read through identical
 
 **Verdict: full feature parity, full performance parity. Zero graph discrepancies found. No fixes required.**
 
+## Release 0.2.36 — 2026-11-27: the kglite 0.21.8 engine move, no builder change
+
+Released state: unchanged corpus set (32 `CORPORA` entries), all green in the
+release-profile `cargo test --workspace --release` run against kglite 0.21.8,
+including `golden_parity` and `rev_self_consistency`. **No golden was
+regenerated and no digest moved** across the 0.21.5 → 0.21.8 move: verified by
+the gate, not assumed. The engine's Rust API change (node and edge getters
+return a `RecordRef`; `NodeView` is no longer `Clone`) reached one line, a
+test in `builder/mod.rs` that held a property borrow past its view; the
+builder, the writer and every parser are untouched.
+
 ## Release 0.2.35 — 2026-11-01: `.cjs`/`.mts`/`.cts` parsing, concise-arrow bodies, the kglite 0.21.5 engine move
 
 Released state: 32 `CORPORA` entries (was 31), each with a frozen golden.
