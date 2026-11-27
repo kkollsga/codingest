@@ -1239,10 +1239,7 @@ mod tests {
                     .map(|value| value.into_owned())
             })
             .expect("Project.languages");
-        assert_eq!(
-            &languages,
-            &Value::String("python, typescript, css".into())
-        );
+        assert_eq!(&languages, &Value::String("python, typescript, css".into()));
     }
 
     #[test]
