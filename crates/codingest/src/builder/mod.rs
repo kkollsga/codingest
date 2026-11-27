@@ -1234,10 +1234,13 @@ mod tests {
             .node_indices()
             .filter_map(|index| graph.node_view(index))
             .find(|node| node.node_type_str(&graph.interner) == "Project")
-            .and_then(|node| node.get_property("languages"))
+            .and_then(|node| {
+                node.get_property("languages")
+                    .map(|value| value.into_owned())
+            })
             .expect("Project.languages");
         assert_eq!(
-            languages.as_ref(),
+            &languages,
             &Value::String("python, typescript, css".into())
         );
     }
